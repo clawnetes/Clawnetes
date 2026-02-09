@@ -210,7 +210,7 @@ function App() {
         setProgress("Finalizing...");
         const instruction: string = await invoke("generate_pairing_code");
         setPairingCode(instruction);
-        setStep(11);
+        setStep(12);
       } else {
         setProgress("Installing OpenClaw (this may take a minute)...");
         setLogs("Installing OpenClaw (this may take a minute)...");
@@ -429,7 +429,15 @@ function App() {
                 </div>
                 <div className="form-group">
                   <label>SSH Username</label>
-                  <input autoCapitalize="none" placeholder="e.g. root or ubuntu" value={remoteUser} onChange={(e) => setRemoteUser(e.target.value)} />
+                  <input 
+                    autoCapitalize="none" 
+                    autoCorrect="off" 
+                    spellCheck="false" 
+                    autoComplete="off" 
+                    placeholder="e.g. root or ubuntu" 
+                    value={remoteUser} 
+                    onChange={(e) => setRemoteUser(e.target.value)} 
+                  />
                 </div>
                 
                 {sshStatus === "requesting_password" && (
@@ -499,7 +507,7 @@ function App() {
             </div>
           </div>
         );
-      case 2:
+      case 3:
         return (
           <div className="step-view">
             <h2>Security Baseline</h2>
@@ -511,12 +519,12 @@ function App() {
             </div>
             <p style={{fontWeight: 600}}>Do you understand the risks and wish to continue?</p>
             <div className="button-group">
-              <button className="primary" onClick={() => setStep(3)}>I Understand</button>
+              <button className="primary" onClick={() => setStep(4)}>I Understand</button>
               <button className="secondary" onClick={() => setStep(2)}>Back</button>
             </div>
           </div>
         );
-      case 3:
+      case 4:
         return (
           <div className="step-view">
             <h2>Configuration Mode</h2>
@@ -532,27 +540,36 @@ function App() {
               </div>
             </div>
             <div className="button-group">
-              <button className="primary" onClick={() => setStep(4)}>Continue</button>
-              <button className="secondary" onClick={() => setStep(2)}>Back</button>
+              <button className="primary" onClick={() => setStep(5)}>Continue</button>
+              <button className="secondary" onClick={() => setStep(3)}>Back</button>
             </div>
           </div>
         );
-      case 4:
+      case 5:
         return (
           <div className="step-view">
             <h2>Your Identity</h2>
             <p className="step-description">What should the agent call you?</p>
             <div className="form-group">
               <label>Your Name</label>
-              <input autoFocus autoCapitalize="none" placeholder="e.g. David" value={userName} onChange={(e) => setUserName(e.target.value)} />
+              <input 
+                autoFocus 
+                autoCapitalize="none" 
+                autoCorrect="off" 
+                spellCheck="false" 
+                autoComplete="off" 
+                placeholder="e.g. David" 
+                value={userName} 
+                onChange={(e) => setUserName(e.target.value)} 
+              />
             </div>
             <div className="button-group">
-              <button className="primary" disabled={!userName} onClick={() => setStep(5)}>Next</button>
-              <button className="secondary" onClick={() => setStep(3)}>Back</button>
+              <button className="primary" disabled={!userName} onClick={() => setStep(6)}>Next</button>
+              <button className="secondary" onClick={() => setStep(4)}>Back</button>
             </div>
           </div>
         );
-      case 5:
+      case 6:
         return (
           <div className="step-view">
             <h2>Agent Profile</h2>
@@ -571,12 +588,12 @@ function App() {
               </select>
             </div>
             <div className="button-group">
-              <button className="primary" disabled={!agentName} onClick={() => setStep(mode === "advanced" ? 6 : 7)}>Next</button>
-              <button className="secondary" onClick={() => setStep(4)}>Back</button>
+              <button className="primary" disabled={!agentName} onClick={() => setStep(mode === "advanced" ? 7 : 8)}>Next</button>
+              <button className="secondary" onClick={() => setStep(5)}>Back</button>
             </div>
           </div>
         );
-      case 6:
+      case 7:
         return (
           <div className="step-view">
             <h2>Gateway Settings</h2>
@@ -607,12 +624,12 @@ function App() {
               </select>
             </div>
             <div className="button-group">
-              <button className="primary" onClick={() => setStep(7)}>Continue</button>
-              <button className="secondary" onClick={() => setStep(5)}>Back</button>
+              <button className="primary" onClick={() => setStep(8)}>Continue</button>
+              <button className="secondary" onClick={() => setStep(6)}>Back</button>
             </div>
           </div>
         );
-      case 7:
+      case 8:
         return (
           <div className="step-view">
             <h2>Connect Brain</h2>
@@ -740,12 +757,12 @@ function App() {
             )}
 
             <div className="button-group">
-              <button className="primary" disabled={!isOAuthMethod(authMethod) && !apiKey} onClick={() => setStep(8)}>Next</button>
-              <button className="secondary" onClick={() => setStep(mode === "advanced" ? 6 : 5)}>Back</button>
+              <button className="primary" disabled={!isOAuthMethod(authMethod) && !apiKey} onClick={() => setStep(9)}>Next</button>
+              <button className="secondary" onClick={() => setStep(mode === "advanced" ? 7 : 6)}>Back</button>
             </div>
           </div>
         );
-      case 8:
+      case 9:
         return (
           <div className="step-view">
             <h2>Messaging Channels</h2>
@@ -758,12 +775,12 @@ function App() {
             
             <div className="button-group">
               <button className="primary" onClick={() => {
-                if (mode === "advanced") setStep(9);
+                if (mode === "advanced") setStep(10);
                 else handleInstall();
               }} disabled={loading}>
                 {mode === "advanced" ? "Continue" : (loading ? "Installing..." : "Finish Setup")}
               </button>
-              <button className="secondary" onClick={() => setStep(7)} disabled={loading}>Back</button>
+              <button className="secondary" onClick={() => setStep(8)} disabled={loading}>Back</button>
             </div>
             
             {(loading || error) && (
@@ -787,7 +804,7 @@ function App() {
             )}
           </div>
         );
-      case 9:
+      case 10:
         return (
           <div className="step-view">
             <h2>Runtime Environment</h2>
@@ -801,12 +818,12 @@ function App() {
               </select>
             </div>
             <div className="button-group">
-              <button className="primary" onClick={() => setStep(10)}>Next</button>
-              <button className="secondary" onClick={() => setStep(8)}>Back</button>
+              <button className="primary" onClick={() => setStep(11)}>Next</button>
+              <button className="secondary" onClick={() => setStep(9)}>Back</button>
             </div>
           </div>
         );
-      case 10:
+      case 11:
         return (
           <div className="step-view">
             <h2>Select Core Skills</h2>
@@ -827,13 +844,13 @@ function App() {
               <button className="primary" onClick={() => {
                 setCurrentServiceIdx(0);
                 setIsConfiguringService(false);
-                setStep(10.5);
+                setStep(11.5);
               }}>Continue</button>
-              <button className="secondary" onClick={() => setStep(9)}>Back</button>
+              <button className="secondary" onClick={() => setStep(10)}>Back</button>
             </div>
           </div>
         );
-      case 10.5:
+      case 11.5:
         return (
           <div className="step-view">
             <h2>Service Key: {servicesToConfigure[currentServiceIdx].name}</h2>
@@ -888,7 +905,7 @@ function App() {
                   setCurrentServiceIdx(currentServiceIdx - 1);
                   setIsConfiguringService(serviceKeys[servicesToConfigure[currentServiceIdx - 1].id] ? true : false);
                 } else {
-                  setStep(10);
+                  setStep(11);
                 }
               }} disabled={loading}>Back</button>
             </div>
@@ -907,7 +924,7 @@ function App() {
             )}
           </div>
         );
-      case 11:
+      case 12:
         return (
           <div className="step-view">
             <h2>Setup Complete! 🦞</h2>
@@ -926,6 +943,9 @@ function App() {
                    <input 
                      type="text"
                      autoCapitalize="none"
+                     autoCorrect="off"
+                     spellCheck="false"
+                     autoComplete="off"
                      placeholder="Enter code (e.g. 3RQ8EBFE)" 
                      value={pairingInput} 
                      onChange={(e) => setPairingInput(e.target.value.toUpperCase())} 
