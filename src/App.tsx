@@ -6,6 +6,13 @@ import "./App.css";
 function App() {
   const [step, setStep] = useState(1);
   const [mode, setMode] = useState("basic"); // "basic" or "advanced"
+  const [setupLocation, setSetupLocation] = useState<"local" | "remote">("local");
+  const [remoteIp, setRemoteIp] = useState("");
+  const [remoteUser, setRemoteUser] = useState("");
+  const [remotePassword, setRemotePassword] = useState("");
+  const [sshStatus, setSshStatus] = useState<"idle" | "checking" | "requesting_password" | "success" | "error">("idle");
+  const [sshError, setSshError] = useState("");
+
   const [checks, setChecks] = useState({ node: false, docker: false, openclaw: false });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -64,20 +71,31 @@ function App() {
 
   const stepsList = [
     { id: 0, name: "System State", hidden: true },
-    { id: 1, name: "System Check" },
-    { id: 2, name: "Security" },
-    { id: 3, name: "Mode" },
-    { id: 4, name: "Identity" },
-    { id: 5, name: "Agent" },
-    { id: 6, name: "Gateway", advanced: true },
-    { id: 7, name: "Brain" },
-    { id: 8, name: "Channels" },
-    { id: 9, name: "Runtime", advanced: true },
-    { id: 10, name: "Skills", advanced: true },
-    { id: 11, name: "Pairing" }
+    { id: 1, name: "Environment" },
+    { id: 2, name: "System Check" },
+    { id: 3, name: "Security" },
+    { id: 4, name: "Mode" },
+    { id: 5, name: "Identity" },
+    { id: 6, name: "Agent" },
+    { id: 7, name: "Gateway", advanced: true },
+    { id: 8, name: "Brain" },
+    { id: 9, name: "Channels" },
+    { id: 10, name: "Runtime", advanced: true },
+    { id: 11, name: "Skills", advanced: true },
+    { id: 12, name: "Pairing" }
   ];
 
-  useEffect(() => { checkSystem(); }, []);
+  useEffect(() => { 
+    // Initial check just to see if local is already installed
+    // but we don't force step 0 yet
+    invoke("check_prerequisites").then((res: any) => {
+      setChecks({
+        node: res.node_installed,
+        docker: res.docker_running,
+        openclaw: res.openclaw_installed
+      });
+    });
+  }, []);
 
   // Update default auth method when provider changes
   useEffect(() => {
@@ -88,17 +106,67 @@ function App() {
   }, [provider]);
 
   async function checkSystem() {
-    const res: any = await invoke("check_prerequisites");
-    setChecks({
-      node: res.node_installed,
-      docker: res.docker_running,
-      openclaw: res.openclaw_installed
-    });
-    const version: string = await invoke("get_openclaw_version");
-    setOpenClawVersion(version);
+    setLoading(true);
+    try {
+      if (setupLocation === "local") {
+        const res: any = await invoke("check_prerequisites");
+        setChecks({
+          node: res.node_installed,
+          docker: res.docker_running,
+          openclaw: res.openclaw_installed
+        });
+        const version: string = await invoke("get_openclaw_version");
+        setOpenClawVersion(version);
 
-    if (res.openclaw_installed) {
-      setStep(0);
+        if (res.openclaw_installed) {
+          setStep(0);
+        } else {
+          setStep(2);
+        }
+      } else {
+        // Remote check
+        const res: any = await invoke("check_remote_prerequisites", {
+          remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null }
+        });
+        setChecks({
+          node: res.node_installed,
+          docker: res.docker_running,
+          openclaw: res.openclaw_installed
+        });
+        const version: string = await invoke("get_remote_openclaw_version", {
+          remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null }
+        });
+        setOpenClawVersion(version);
+
+        // For remote, we go to step 2 regardless of installation status for now
+        // since maintenance is primarily local-focused in the current UI
+        setStep(2);
+      }
+    } catch (e) {
+      console.error("System check failed:", e);
+    }
+    setLoading(false);
+  }
+
+  async function handleSshCheck() {
+    if (!remoteIp || !remoteUser) return;
+    setSshStatus("checking");
+    setSshError("");
+    try {
+      const res: string = await invoke("test_ssh_connection", { 
+        ip: remoteIp, 
+        user: remoteUser, 
+        password: remotePassword || null 
+      });
+      
+      if (res === "auth_required") {
+        setSshStatus("requesting_password");
+      } else {
+        setSshStatus("success");
+      }
+    } catch (e: any) {
+      setSshStatus("error");
+      setSshError(e.toString());
     }
   }
 
@@ -107,61 +175,99 @@ function App() {
     setError(false);
     setProgress("Starting setup...");
     try {
-      setProgress("Installing OpenClaw (this may take a minute)...");
-      setLogs("Installing OpenClaw (this may take a minute)...");
-      if (!checks.openclaw) {
-        await invoke("install_openclaw");
-        const version: string = await invoke("get_openclaw_version");
-        setOpenClawVersion(version);
-      }
+      if (setupLocation === "remote") {
+        setProgress("Connecting and installing on remote server (this may take 2-3 minutes)...");
+        setLogs("Starting remote setup...");
+        const gatewayToken: string = await invoke("setup_remote_openclaw", {
+          remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null },
+          config: {
+            provider,
+            api_key: apiKey,
+            auth_method: authMethod,
+            model,
+            user_name: userName,
+            agent_name: agentName,
+            agent_vibe: agentVibe,
+            telegram_token: telegramToken,
+            gateway_port: gatewayPort,
+            gateway_bind: gatewayBind,
+            gateway_auth_mode: gatewayAuthMode,
+            tailscale_mode: tailscaleMode,
+            node_manager: nodeManager,
+            skills: selectedSkills,
+            service_keys: serviceKeys
+          }
+        });
 
-      setProgress("Configuring agent...");
-      setLogs("Configuring...");
-      
-      await invoke("configure_agent", {
-        config: {
-          provider,
-          api_key: apiKey,
-          auth_method: authMethod,
-          model,
-          user_name: userName,
-          agent_name: agentName,
-          agent_vibe: agentVibe,
-          telegram_token: telegramToken,
-          gateway_port: gatewayPort,
-          gateway_bind: gatewayBind,
-          gateway_auth_mode: gatewayAuthMode,
-          tailscale_mode: tailscaleMode,
-          node_manager: nodeManager,
-          skills: selectedSkills,
-          service_keys: serviceKeys
+        setProgress("Establishing SSH tunnel...");
+        await invoke("start_ssh_tunnel", {
+          remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null },
+          localPort: 18789,
+          remotePort: gatewayPort
+        });
+
+        setDashboardUrl(`http://127.0.0.1:18789/?token=${gatewayToken}`);
+        setProgress("Finalizing...");
+        const instruction: string = await invoke("generate_pairing_code");
+        setPairingCode(instruction);
+        setStep(11);
+      } else {
+        setProgress("Installing OpenClaw (this may take a minute)...");
+        setLogs("Installing OpenClaw (this may take a minute)...");
+        if (!checks.openclaw) {
+          await invoke("install_openclaw");
+          const version: string = await invoke("get_openclaw_version");
+          setOpenClawVersion(version);
         }
-      });
 
-      for (const skill of selectedSkills) {
-        setProgress(`Installing skill: ${skill}...`);
-        setLogs(`Installing skill: ${skill}...`);
-        try {
-          await invoke("install_skill", { name: skill });
-        } catch (e) {
-          console.error(`Failed to install skill ${skill}:`, e);
-          setLogs(prev => prev + `\nWarning: Failed to install skill ${skill}: ${e}`);
+        setProgress("Configuring agent...");
+        setLogs("Configuring...");
+        
+        await invoke("configure_agent", {
+          config: {
+            provider,
+            api_key: apiKey,
+            auth_method: authMethod,
+            model,
+            user_name: userName,
+            agent_name: agentName,
+            agent_vibe: agentVibe,
+            telegram_token: telegramToken,
+            gateway_port: gatewayPort,
+            gateway_bind: gatewayBind,
+            gateway_auth_mode: gatewayAuthMode,
+            tailscale_mode: tailscaleMode,
+            node_manager: nodeManager,
+            skills: selectedSkills,
+            service_keys: serviceKeys
+          }
+        });
+
+        for (const skill of selectedSkills) {
+          setProgress(`Installing skill: ${skill}...`);
+          setLogs(`Installing skill: ${skill}...`);
+          try {
+            await invoke("install_skill", { name: skill });
+          } catch (e) {
+            console.error(`Failed to install skill ${skill}:`, e);
+            setLogs(prev => prev + `\nWarning: Failed to install skill ${skill}: ${e}`);
+          }
         }
+
+        setProgress("Starting Gateway (this may take 20-30 seconds)...");
+        setLogs("Starting Gateway...");
+        await invoke("start_gateway");
+
+        setProgress("Finalizing setup...");
+        const instruction: string = await invoke("generate_pairing_code");
+        setPairingCode(instruction);
+
+        const url: string = await invoke("get_dashboard_url");
+        setDashboardUrl(url);
+
+        setProgress("");
+        setStep(11);
       }
-
-      setProgress("Starting Gateway (this may take 20-30 seconds)...");
-      setLogs("Starting Gateway...");
-      await invoke("start_gateway");
-
-      setProgress("Finalizing setup...");
-      const instruction: string = await invoke("generate_pairing_code");
-      setPairingCode(instruction);
-
-      const url: string = await invoke("get_dashboard_url");
-      setDashboardUrl(url);
-
-      setProgress("");
-      setStep(11);
     } catch (e) {
       setProgress("");
       setLogs("Error: " + e);
@@ -299,8 +405,73 @@ function App() {
       case 1:
         return (
           <div className="step-view">
-            <h2>System Check</h2>
-            <p className="step-description">We need to make sure your system is ready for OpenClaw.</p>
+            <h2>Target Environment</h2>
+            <p className="step-description">Where would you like to install and run OpenClaw?</p>
+            <div className="mode-card-container">
+              <div className={`mode-card ${setupLocation === "local" ? "active" : ""}`} onClick={() => setSetupLocation("local")}>
+                <h3>Local Machine</h3>
+                <p>Install on this computer (macOS). Best for personal use.</p>
+              </div>
+              <div className={`mode-card ${setupLocation === "remote" ? "active" : ""}`} onClick={() => setSetupLocation("remote")}>
+                <h3>Remote Server</h3>
+                <p>Install on a Linux server via SSH. Best for 24/7 availability.</p>
+              </div>
+            </div>
+
+            {setupLocation === "remote" && (
+              <div className="remote-config animate-fadeIn" style={{marginTop: "2rem"}}>
+                <div className="form-group">
+                  <label>Server IP Address</label>
+                  <input placeholder="e.g. 1.2.3.4" value={remoteIp} onChange={(e) => setRemoteIp(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label>SSH Username</label>
+                  <input placeholder="e.g. root or ubuntu" value={remoteUser} onChange={(e) => setRemoteUser(e.target.value)} />
+                </div>
+                
+                {sshStatus === "requesting_password" && (
+                  <div className="form-group animate-fadeIn">
+                    <label>SSH Password</label>
+                    <input type="password" placeholder="Enter password" value={remotePassword} onChange={(e) => setRemotePassword(e.target.value)} />
+                    <p className="input-hint">Using a password is less secure than SSH keys, but we support it for initial setup.</p>
+                  </div>
+                )}
+
+                {sshStatus === "error" && (
+                  <p className="error" style={{color: "var(--error)", fontSize: "0.9rem", marginTop: "1rem"}}>{sshError}</p>
+                )}
+
+                {sshStatus === "success" && (
+                  <p className="success" style={{color: "var(--success)", fontSize: "0.9rem", marginTop: "1rem"}}>✅ Connected to remote server!</p>
+                )}
+
+                <button 
+                  className="secondary" 
+                  style={{width: "100%", marginTop: "1rem"}} 
+                  onClick={handleSshCheck}
+                  disabled={sshStatus === "checking" || !remoteIp || !remoteUser}
+                >
+                  {sshStatus === "checking" ? "Connecting..." : (sshStatus === "requesting_password" ? "Retry with Password" : "Test Connection")}
+                </button>
+              </div>
+            )}
+
+            <div className="button-group" style={{marginTop: "2rem"}}>
+              <button 
+                className="primary" 
+                disabled={loading || (setupLocation === "remote" && sshStatus !== "success")} 
+                onClick={checkSystem}
+              >
+                {loading ? "Checking..." : "Continue"}
+              </button>
+            </div>
+          </div>
+        );
+      case 2:
+        return (
+          <div className="step-view">
+            <h2>System Check: {setupLocation === "local" ? "Local" : "Remote"}</h2>
+            <p className="step-description">Verifying requirements on {setupLocation === "local" ? "your machine" : remoteIp}.</p>
             <div className="check-item">
               <span className="check-status">{checks.node ? "✅" : "❌"}</span>
               Node.js {checks.node ? "detected" : "not found"}
@@ -309,16 +480,19 @@ function App() {
               <span className="check-status">{checks.openclaw ? "✅" : "⏳"}</span>
               OpenClaw {checks.openclaw ? "Installed" : "Ready to install"}
             </div>
-            {!checks.node && (
+            {setupLocation === "local" && !checks.node && (
               <p className="error" style={{marginTop: "1rem", color: "var(--error)"}}>
-                Please install Node.js (v18+) to continue.
+                Please install Node.js (v18+) on your local machine to continue.
+              </p>
+            )}
+            {setupLocation === "remote" && !checks.node && (
+              <p className="input-hint" style={{marginTop: "1rem", color: "var(--primary)"}}>
+                ℹ️ Node.js will be automatically installed on the remote server during setup.
               </p>
             )}
             <div className="button-group">
-              <button className="primary" disabled={!checks.node} onClick={() => setStep(2)}>Continue</button>
-              {checks.openclaw && (
-                <button className="secondary" onClick={() => setStep(0)}>Back to Maintenance</button>
-              )}
+              <button className="primary" disabled={setupLocation === "local" && !checks.node} onClick={() => setStep(3)}>Continue</button>
+              <button className="secondary" onClick={() => setStep(1)}>Back</button>
             </div>
           </div>
         );
@@ -335,7 +509,7 @@ function App() {
             <p style={{fontWeight: 600}}>Do you understand the risks and wish to continue?</p>
             <div className="button-group">
               <button className="primary" onClick={() => setStep(3)}>I Understand</button>
-              <button className="secondary" onClick={() => setStep(1)}>Back</button>
+              <button className="secondary" onClick={() => setStep(2)}>Back</button>
             </div>
           </div>
         );
