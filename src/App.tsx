@@ -34,6 +34,7 @@ function App() {
   const [maintenanceStatus, setMaintenanceStatus] = useState("");
   const [selectedMaint, setSelectedMaint] = useState<string>("repair");
   const [maintCompleted, setMaintCompleted] = useState(false);
+  const [tunnelActive, setTunnelActive] = useState(false);
 
   // Service Keys State
   const [serviceKeys, setServiceKeys] = useState<Record<string, string>>({});
@@ -138,9 +139,11 @@ function App() {
         });
         setOpenClawVersion(version);
 
-        // For remote, we go to step 2 regardless of installation status for now
-        // since maintenance is primarily local-focused in the current UI
-        setStep(2);
+        if (res.openclaw_installed) {
+          setStep(0);
+        } else {
+          setStep(2);
+        }
       }
     } catch (e) {
       console.error("System check failed:", e);
@@ -297,23 +300,78 @@ function App() {
     setLogs(`Starting maintenance: ${action}...\n`);
     try {
       let res: string;
-      if (action === "repair") {
-        res = await invoke("run_doctor_repair");
-        setMaintenanceStatus(`✅ Repair completed successfully.`);
-      } else if (action === "audit") {
-        res = await invoke("run_security_audit_fix");
-        setMaintenanceStatus(`✅ Security Audit completed successfully.`);
+      const remote = { ip: remoteIp, user: remoteUser, password: remotePassword || null };
+      
+      if (setupLocation === "remote") {
+        if (action === "repair") {
+          res = await invoke("run_remote_doctor_repair", { remote });
+          setMaintenanceStatus(`✅ Repair completed successfully on ${remoteIp}.`);
+        } else if (action === "audit") {
+          res = await invoke("run_remote_security_audit_fix", { remote });
+          setMaintenanceStatus(`✅ Security Audit completed successfully on ${remoteIp}.`);
+        } else if (action === "update") {
+          // Check version first
+          const current: string = await invoke("get_remote_openclaw_version", { remote });
+          setLogs(prev => prev + `Current version: ${current}\n`);
+          // This is a simplified check - in reality we'd compare with latest from npm
+          // For now we'll just inform and proceed with install
+          res = await invoke("update_remote_openclaw", { remote });
+          setMaintenanceStatus(`✅ OpenClaw updated to latest on ${remoteIp}.`);
+        } else {
+          res = await invoke("uninstall_remote_openclaw", { remote });
+          setChecks(prev => ({ ...prev, openclaw: false }));
+          setMaintenanceStatus(`✅ Uninstall completed successfully from ${remoteIp}.`);
+        }
       } else {
-        res = await invoke("uninstall_openclaw");
-        // Reset everything after uninstall
-        setChecks(prev => ({ ...prev, openclaw: false }));
-        setMaintenanceStatus(`✅ Uninstall completed successfully.`);
+        if (action === "repair") {
+          res = await invoke("run_doctor_repair");
+          setMaintenanceStatus(`✅ Repair completed successfully.`);
+        } else if (action === "audit") {
+          res = await invoke("run_security_audit_fix");
+          setMaintenanceStatus(`✅ Security Audit completed successfully.`);
+        } else if (action === "update") {
+          const current: string = await invoke("get_openclaw_version");
+          setLogs(prev => prev + `Current version: ${current}\n`);
+          res = await invoke("install_openclaw"); 
+          setMaintenanceStatus(`✅ OpenClaw updated to latest.`);
+        } else {
+          res = await invoke("uninstall_openclaw");
+          setChecks(prev => ({ ...prev, openclaw: false }));
+          setMaintenanceStatus(`✅ Uninstall completed successfully.`);
+        }
       }
       setLogs(prev => prev + (res || ""));
       setMaintCompleted(true);
     } catch (e) {
       setLogs(prev => prev + `\nError: ${e}`);
       setMaintenanceStatus(`❌ ${action} failed.`);
+    }
+    setLoading(false);
+  }
+
+  async function handleToggleTunnel() {
+    setLoading(true);
+    if (tunnelActive) {
+      try {
+        await invoke("stop_ssh_tunnel");
+        setTunnelActive(false);
+        setMaintenanceStatus("✅ SSH Tunnel disconnected.");
+      } catch (e) {
+        setMaintenanceStatus(`❌ Failed to stop tunnel: ${e}`);
+      }
+    } else {
+      setMaintenanceStatus("Establishing SSH tunnel...");
+      try {
+        await invoke("start_ssh_tunnel", {
+          remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null },
+          localPort: 18789,
+          remotePort: gatewayPort
+        });
+        setTunnelActive(true);
+        setMaintenanceStatus("✅ SSH Tunnel established on port 18789.");
+      } catch (e) {
+        setMaintenanceStatus(`❌ Failed to establish tunnel: ${e}`);
+      }
     }
     setLoading(false);
   }
@@ -340,7 +398,7 @@ function App() {
         return (
           <div className="step-view">
             <h2>Welcome Back</h2>
-            <p className="step-description">OpenClaw is already installed on your system. What would you like to do?</p>
+            <p className="step-description">OpenClaw is already installed on {setupLocation === "local" ? "your system" : `remote server ${remoteIp}`}. What would you like to do?</p>
             
             <div className="mode-card-container" style={{gridTemplateColumns: "1fr", gap: "1rem"}}>
               <div 
@@ -360,10 +418,18 @@ function App() {
               </div>
 
               <div 
+                className={`mode-card ${selectedMaint === "update" ? "active" : ""}`} 
+                onClick={() => !loading && setSelectedMaint("update")}
+              >
+                <h3>🚀 Upgrade OpenClaw Version</h3>
+                <p>Upgrade to the latest version of OpenClaw {setupLocation === "remote" ? "on the server" : ""}.</p>
+              </div>
+
+              <div 
                 className={`mode-card ${selectedMaint === "reconfigure" ? "active" : ""}`} 
                 onClick={() => !loading && setSelectedMaint("reconfigure")}
               >
-                <h3>⚙️ Re-configure Agent</h3>
+                <h3>⚙️ Reconfigure OpenClaw</h3>
                 <p>Proceed to the standard setup wizard to re-configure your agent and channels.</p>
               </div>
 
@@ -373,24 +439,51 @@ function App() {
                 onClick={() => !loading && setSelectedMaint("uninstall")}
               >
                 <h3 style={selectedMaint === "uninstall" ? {color: "var(--error)"} : {}}>🗑 Uninstall Completely</h3>
-                <p>Remove the OpenClaw CLI and all local configuration/data files.</p>
+                <p>Remove the OpenClaw CLI and all {setupLocation === "local" ? "local" : "remote"} configuration/data files.</p>
               </div>
             </div>
 
             {!loading && (
-              <div className="button-group" style={{gap: "10px"}}>
-                <button className="primary" style={{flex: 1}} onClick={() => {
-                  if (selectedMaint === "reconfigure") setStep(1);
-                  else if (selectedMaint === "uninstall") {
-                    if (confirm("Are you absolutely sure you want to completely remove OpenClaw and all its data?")) {
-                      handleMaintenanceAction("uninstall");
+              <div style={{marginTop: "2rem", display: "flex", flexDirection: "column", gap: "1rem"}}>
+                <div className="button-group" style={{marginTop: 0, gap: "10px"}}>
+                  <button className="primary" style={{flex: 1}} onClick={() => {
+                    if (selectedMaint === "reconfigure") setStep(3); // Skip environment & check
+                    else if (selectedMaint === "uninstall") {
+                      if (confirm(`Are you absolutely sure you want to completely remove OpenClaw from ${setupLocation === "local" ? "this system" : remoteIp}?`)) {
+                        handleMaintenanceAction("uninstall");
+                      }
+                    } else {
+                      handleMaintenanceAction(selectedMaint);
                     }
-                  } else {
-                    handleMaintenanceAction(selectedMaint);
-                  }
-                }}>Confirm Action</button>
-                {maintCompleted && (
-                  <button className="secondary" style={{flex: 1}} onClick={() => invoke("close_app")}>Exit Setup</button>
+                  }}>Confirm Action</button>
+                  {maintCompleted && (
+                    <button className="secondary" style={{flex: 1}} onClick={() => invoke("close_app")}>Exit Setup</button>
+                  )}
+                </div>
+
+                {setupLocation === "remote" && (
+                  <div className="button-group" style={{marginTop: 0, gap: "10px"}}>
+                    <button className="secondary" style={{flex: 1}} onClick={handleToggleTunnel}>
+                      {tunnelActive ? "🔓 Disconnect SSH Tunnel" : "🔗 Establish SSH Tunnel"}
+                    </button>
+                    <button className="primary" style={{flex: 1}} onClick={async () => {
+                      if (setupLocation === "remote") {
+                        try {
+                          const token = await invoke("get_remote_gateway_token", {
+                            remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null }
+                          });
+                          open(`http://127.0.0.1:18789/?token=${token}`);
+                        } catch (e) {
+                          setMaintenanceStatus(`❌ Error fetching remote token: ${e}`);
+                        }
+                      } else {
+                        const url = await invoke("get_dashboard_url");
+                        open(url as string);
+                      }
+                    }} disabled={!tunnelActive && setupLocation === "remote"}>
+                      🚀 Open Dashboard
+                    </button>
+                  </div>
                 )}
               </div>
             )}

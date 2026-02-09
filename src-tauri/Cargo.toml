@@ -15,6 +15,7 @@ serde_json = "1.0"
 dirs = "5.0"
 rand = "0.8"
 ssh2 = "0.9"
+lazy_static = "1.4"
 # Pin time to avoid rustc version issues
 time = "=0.3.36"
 

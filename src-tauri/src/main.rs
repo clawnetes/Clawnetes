@@ -8,6 +8,13 @@ use std::io::{Read, Write};
 use rand::Rng;
 use ssh2::Session;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+lazy_static::lazy_static! {
+    static ref TUNNEL_RUNNING: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+}
+
 #[derive(serde::Deserialize)]
 struct AgentConfig {
     provider: String,
@@ -271,6 +278,11 @@ Serve {}."#, config.user_name).replace("'", "'\\''");
 
 #[command]
 fn start_ssh_tunnel(remote: RemoteInfo, local_port: u16, remote_port: u16) -> Result<(), String> {
+    if TUNNEL_RUNNING.load(Ordering::SeqCst) {
+        return Err("Tunnel is already running".to_string());
+    }
+    
+    TUNNEL_RUNNING.store(true, Ordering::SeqCst);
     let remote_clone = RemoteInfo {
         ip: remote.ip.clone(),
         user: remote.user.clone(),
@@ -280,90 +292,102 @@ fn start_ssh_tunnel(remote: RemoteInfo, local_port: u16, remote_port: u16) -> Re
     thread::spawn(move || {
         let listener = match TcpListener::bind(format!("127.0.0.1:{}", local_port)) {
             Ok(l) => l,
-            Err(_) => return,
+            Err(_) => {
+                TUNNEL_RUNNING.store(false, Ordering::SeqCst);
+                return;
+            }
         };
+        let _ = listener.set_nonblocking(true);
 
-        for stream in listener.incoming() {
-            let mut stream = match stream {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
+        while TUNNEL_RUNNING.load(Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let remote_info = RemoteInfo {
+                        ip: remote_clone.ip.clone(),
+                        user: remote_clone.user.clone(),
+                        password: remote_clone.password.clone(),
+                    };
 
-            let remote_info = RemoteInfo {
-                ip: remote_clone.ip.clone(),
-                user: remote_clone.user.clone(),
-                password: remote_clone.password.clone(),
-            };
+                    thread::spawn(move || {
+                        let sess = match connect_ssh(&remote_info) {
+                            Ok(s) => s,
+                            Err(_) => return,
+                        };
 
-            thread::spawn(move || {
-                let sess = match connect_ssh(&remote_info) {
-                    Ok(s) => s,
-                    Err(_) => return,
-                };
+                        let mut remote_channel = match sess.channel_direct_tcpip("localhost", remote_port, None) {
+                            Ok(c) => c,
+                            Err(_) => return,
+                        };
 
-                let mut remote_channel = match sess.channel_direct_tcpip("localhost", remote_port, None) {
-                    Ok(c) => c,
-                    Err(_) => return,
-                };
+                        let _ = stream.set_nonblocking(true);
+                        sess.set_blocking(false);
 
-                // Set both to non-blocking for bidirectional loop
-                let _ = stream.set_nonblocking(true);
-                sess.set_blocking(false);
+                        let mut buf1 = [0; 16384];
+                        let mut buf2 = [0; 16384];
 
-                let mut buf1 = [0; 16384];
-                let mut buf2 = [0; 16384];
+                        loop {
+                            if !TUNNEL_RUNNING.load(Ordering::SeqCst) { break; }
+                            let mut active = false;
 
-                loop {
-                    let mut active = false;
-
-                    // Stream -> Remote
-                    match stream.read(&mut buf1) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            active = true;
-                            let mut sent = 0;
-                            while sent < n {
-                                match remote_channel.write(&buf1[sent..n]) {
-                                    Ok(m) => sent += m,
-                                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                        thread::sleep(Duration::from_millis(5));
+                            match stream.read(&mut buf1) {
+                                Ok(0) => break,
+                                Ok(n) => {
+                                    active = true;
+                                    let mut sent = 0;
+                                    while sent < n {
+                                        match remote_channel.write(&buf1[sent..n]) {
+                                            Ok(m) => sent += m,
+                                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                                thread::sleep(Duration::from_millis(5));
+                                            }
+                                            Err(_) => break,
+                                        }
                                     }
-                                    Err(_) => break,
                                 }
+                                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                                Err(_) => break,
+                            }
+
+                            match remote_channel.read(&mut buf2) {
+                                Ok(0) => break,
+                                Ok(n) => {
+                                    active = true;
+                                    let mut sent = 0;
+                                    while sent < n {
+                                        match stream.write(&buf2[sent..n]) {
+                                            Ok(m) => sent += m,
+                                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                                thread::sleep(Duration::from_millis(5));
+                                            }
+                                            Err(_) => break,
+                                        }
+                                    }
+                                }
+                                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                                Err(_) => break,
+                            }
+
+                            if !active {
+                                thread::sleep(Duration::from_millis(10));
                             }
                         }
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                        Err(_) => break,
-                    }
-
-                    // Remote -> Stream
-                    match remote_channel.read(&mut buf2) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            active = true;
-                            let mut sent = 0;
-                            while sent < n {
-                                match stream.write(&buf2[sent..n]) {
-                                    Ok(m) => sent += m,
-                                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                        thread::sleep(Duration::from_millis(5));
-                                    }
-                                    Err(_) => break,
-                                }
-                            }
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                        Err(_) => break,
-                    }
-
-                    if !active {
-                        thread::sleep(Duration::from_millis(10));
-                    }
+                    });
                 }
-            });
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(50));
+                }
+                Err(_) => break,
+            }
         }
+        TUNNEL_RUNNING.store(false, Ordering::SeqCst);
     });
 
+    Ok(())
+}
+
+#[command]
+fn stop_ssh_tunnel() -> Result<(), String> {
+    TUNNEL_RUNNING.store(false, Ordering::SeqCst);
     Ok(())
 }
 
@@ -387,6 +411,50 @@ async fn get_remote_openclaw_version(remote: RemoteInfo) -> Result<String, Strin
         Ok(v) => Ok(v.trim().to_string()),
         Err(_) => Ok("Not installed".to_string()),
     }
+}
+
+#[command]
+async fn run_remote_doctor_repair(remote: RemoteInfo) -> Result<String, String> {
+    let sess = connect_ssh(&remote)?;
+    execute_ssh(&sess, "openclaw doctor --repair --yes")
+}
+
+#[command]
+async fn run_remote_security_audit_fix(remote: RemoteInfo) -> Result<String, String> {
+    let sess = connect_ssh(&remote)?;
+    execute_ssh(&sess, "openclaw security audit --fix")
+}
+
+#[command]
+async fn uninstall_remote_openclaw(remote: RemoteInfo) -> Result<String, String> {
+    let sess = connect_ssh(&remote)?;
+    let _ = execute_ssh(&sess, "openclaw gateway stop");
+    execute_ssh(&sess, "sudo npm uninstall -g openclaw")?;
+    execute_ssh(&sess, "rm -rf ~/.openclaw")?;
+    Ok("OpenClaw has been completely uninstalled from the remote server.".to_string())
+}
+
+#[command]
+async fn update_remote_openclaw(remote: RemoteInfo) -> Result<String, String> {
+    let sess = connect_ssh(&remote)?;
+    execute_ssh(&sess, "sudo npm install -g openclaw")?;
+    execute_ssh(&sess, "openclaw gateway restart")?;
+    Ok("OpenClaw has been updated on the remote server.".to_string())
+}
+
+#[command]
+async fn get_remote_gateway_token(remote: RemoteInfo) -> Result<String, String> {
+    let sess = connect_ssh(&remote)?;
+    let content = execute_ssh(&sess, "cat ~/.openclaw/openclaw.json")?;
+    let json: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    
+    let token = json.get("gateway")
+        .and_then(|g| g.get("auth"))
+        .and_then(|a| a.get("token"))
+        .and_then(|t| t.as_str())
+        .ok_or("Could not find gateway token in remote config")?;
+        
+    Ok(token.to_string())
 }
 
 #[command]
@@ -924,7 +992,13 @@ fn main() {
             setup_remote_openclaw,
             start_ssh_tunnel,
             check_remote_prerequisites,
-            get_remote_openclaw_version
+            get_remote_openclaw_version,
+            run_remote_doctor_repair,
+            run_remote_security_audit_fix,
+            uninstall_remote_openclaw,
+            update_remote_openclaw,
+            get_remote_gateway_token,
+            stop_ssh_tunnel
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
