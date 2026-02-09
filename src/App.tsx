@@ -280,7 +280,10 @@ function App() {
     if (!pairingInput) return;
     setPairingStatus("Verifying...");
     try {
-      await invoke("approve_pairing", { code: pairingInput });
+      await invoke("approve_pairing", { 
+        code: pairingInput,
+        remote: setupLocation === "remote" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null } : null
+      });
       setPairingStatus("✅ Success! Bot paired.");
       setPairingInput("");
     } catch (e) {
@@ -426,7 +429,7 @@ function App() {
                 </div>
                 <div className="form-group">
                   <label>SSH Username</label>
-                  <input placeholder="e.g. root or ubuntu" value={remoteUser} onChange={(e) => setRemoteUser(e.target.value)} />
+                  <input autoCapitalize="none" placeholder="e.g. root or ubuntu" value={remoteUser} onChange={(e) => setRemoteUser(e.target.value)} />
                 </div>
                 
                 {sshStatus === "requesting_password" && (
@@ -541,7 +544,7 @@ function App() {
             <p className="step-description">What should the agent call you?</p>
             <div className="form-group">
               <label>Your Name</label>
-              <input autoFocus placeholder="e.g. David" value={userName} onChange={(e) => setUserName(e.target.value)} />
+              <input autoFocus autoCapitalize="none" placeholder="e.g. David" value={userName} onChange={(e) => setUserName(e.target.value)} />
             </div>
             <div className="button-group">
               <button className="primary" disabled={!userName} onClick={() => setStep(5)}>Next</button>
@@ -922,6 +925,7 @@ function App() {
                  <div className="form-group" style={{marginTop: "2rem"}}>
                    <input 
                      type="text"
+                     autoCapitalize="none"
                      placeholder="Enter code (e.g. 3RQ8EBFE)" 
                      value={pairingInput} 
                      onChange={(e) => setPairingInput(e.target.value.toUpperCase())} 

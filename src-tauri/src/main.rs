@@ -80,11 +80,11 @@ async fn test_ssh_connection(ip: String, user: String, password: Option<String>)
         if let Ok(_) = sess.userauth_password(&user, &pw) {
             return Ok("connected_password".to_string());
         } else {
-            return Err("Invalid SSH password.".to_string());
+            return Err("Invalid SSH password. Please try again.".to_string());
         }
     }
 
-    Err("auth_required".to_string())
+    Ok("auth_required".to_string())
 }
 
 #[derive(serde::Deserialize)]
@@ -222,6 +222,37 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
     let auth_profiles_val = serde_json::json!({ "version": 1, "profiles": profiles_map, "lastGood": { config.provider.clone(): profile_name }, "usageStats": {} });
     let auth_profiles_json = serde_json::to_string_pretty(&auth_profiles_val).map_err(|e| e.to_string())?.replace("'", "'\\''");
     execute_ssh(&sess, &format!("echo '{}' > {}/auth-profiles.json", auth_profiles_json, agents_dir))?;
+
+    // Identity Files
+    let identity_md = format!(r#"# IDENTITY.md - Who Am I?
+- **Name:** {}
+- **Vibe:** {}
+- **Emoji:** 🦞
+---
+Managed by ClawSetup."#, config.agent_name, config.agent_vibe).replace("'", "'\\''");
+    execute_ssh(&sess, &format!("echo '{}' > {}/IDENTITY.md", identity_md, workspace))?;
+
+    let user_md = format!(r#"# USER.md - About Your Human
+- **Name:** {}
+---"#, config.user_name).replace("'", "'\\''");
+    execute_ssh(&sess, &format!("echo '{}' > {}/USER.md", user_md, workspace))?;
+
+    let soul_md = format!(r#"# SOUL.md
+## Mission
+Serve {}."#, config.user_name).replace("'", "'\\''");
+    execute_ssh(&sess, &format!("echo '{}' > {}/SOUL.md", soul_md, workspace))?;
+
+    // Node Manager
+    if let Some(nm) = config.node_manager {
+        let _ = execute_ssh(&sess, &format!("openclaw config set skills.nodeManager {}", nm));
+    }
+
+    // Plugins
+    if let Some(ref token) = config.telegram_token {
+        if !token.is_empty() {
+            let _ = execute_ssh(&sess, "openclaw plugins enable telegram");
+        }
+    }
 
     // Skills
     if let Some(skills) = &config.skills {
@@ -777,9 +808,16 @@ fn generate_pairing_code() -> Result<String, String> {
 }
 
 #[command]
-fn approve_pairing(code: String) -> Result<String, String> {
+async fn approve_pairing(code: String, remote: Option<RemoteInfo>) -> Result<String, String> {
     // Run: openclaw pairing approve <code> --channel telegram
-    let output = shell_command(&format!("openclaw pairing approve {} --channel telegram", code));
+    let cmd = format!("openclaw pairing approve {} --channel telegram", code);
+    
+    let output = if let Some(r) = remote {
+        let sess = connect_ssh(&r)?;
+        execute_ssh(&sess, &cmd)
+    } else {
+        shell_command(&cmd)
+    };
     
     match output {
         Ok(out) => {
