@@ -4,6 +4,74 @@ import { open } from "@tauri-apps/api/shell";
 import { open as openDialog } from "@tauri-apps/api/dialog";
 import "./App.css";
 
+const MODELS_BY_PROVIDER: Record<string, Array<{ value: string; label: string }>> = {
+  anthropic: [
+    { value: "anthropic/claude-3-7-sonnet-latest", label: "Claude 3.7 Sonnet (Latest)" },
+    { value: "anthropic/claude-3-7-sonnet-20250219", label: "Claude 3.7 Sonnet (2025-02-19)" },
+    { value: "anthropic/claude-3-5-sonnet-latest", label: "Claude 3.5 Sonnet" },
+    { value: "anthropic/claude-3-5-haiku-latest", label: "Claude 3.5 Haiku" },
+    { value: "anthropic/claude-opus-4-6", label: "Claude Opus 4.6" },
+    { value: "anthropic/claude-opus-4-5", label: "Claude Opus 4.5" },
+    { value: "anthropic/claude-sonnet-4-5-20250929", label: "Claude Sonnet 4.5" },
+    { value: "anthropic/claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+    { value: "anthropic/claude-3-opus-20240229", label: "Claude 3 Opus" },
+  ],
+  openai: [
+    { value: "openai/gpt-4o", label: "GPT-4o" },
+    { value: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
+    { value: "openai/gpt-5", label: "GPT-5" },
+    { value: "openai/gpt-5-pro", label: "GPT-5 Pro" },
+    { value: "openai/o1", label: "o1" },
+    { value: "openai/o3-mini", label: "o3-mini" },
+    { value: "openai/o4-mini", label: "o4-mini" },
+    { value: "openai/gpt-4-turbo", label: "GPT-4 Turbo" },
+  ],
+  google: [
+    { value: "google/gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+    { value: "google/gemini-2.0-flash-lite", label: "Gemini 2.0 Flash Lite" },
+    { value: "google/gemini-1.5-pro", label: "Gemini 1.5 Pro" },
+    { value: "google/gemini-1.5-flash", label: "Gemini 1.5 Flash" },
+    { value: "google/gemini-3-pro-preview", label: "Gemini 3 Pro Preview" },
+    { value: "google/gemini-3-flash-preview", label: "Gemini 3 Flash Preview" },
+  ],
+  xai: [
+    { value: "xai/grok-3", label: "Grok-3" },
+    { value: "xai/grok-3-mini", label: "Grok-3 Mini" },
+    { value: "xai/grok-4", label: "Grok-4" },
+    { value: "xai/grok-2-latest", label: "Grok-2" },
+  ],
+  mistral: [
+    { value: "mistral/mistral-large-latest", label: "Mistral Large" },
+    { value: "mistral/mistral-medium-latest", label: "Mistral Medium" },
+    { value: "mistral/codestral-latest", label: "Codestral" },
+    { value: "mistral/pixtral-12b", label: "Pixtral 12B" },
+    { value: "mistral/mistral-nemo", label: "Mistral Nemo" },
+  ],
+  groq: [
+    { value: "groq/llama-3.3-70b-versatile", label: "Llama 3.3 70B" },
+    { value: "groq/deepseek-r1-distill-llama-70b", label: "DeepSeek R1 70B" },
+    { value: "groq/llama-3.1-8b-instant", label: "Llama 3.1 8B" },
+  ],
+  openrouter: [
+    { value: "openrouter/auto", label: "Auto (Best for Task)" },
+    { value: "openrouter/anthropic/claude-3.7-sonnet", label: "Claude 3.7 Sonnet" },
+    { value: "openrouter/openai/gpt-4o", label: "GPT-4o" },
+    { value: "openrouter/google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { value: "openrouter/deepseek/deepseek-r1", label: "DeepSeek R1" },
+    { value: "openrouter/meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B" },
+    { value: "openrouter/x-ai/grok-3", label: "Grok-3" },
+  ],
+  deepseek: [
+    { value: "openrouter/deepseek/deepseek-chat", label: "DeepSeek V3" },
+    { value: "openrouter/deepseek/deepseek-r1", label: "DeepSeek R1" },
+  ],
+  copilot: [
+    { value: "github-copilot/claude-3.7-sonnet", label: "Claude 3.7 Sonnet" },
+    { value: "github-copilot/gpt-4o", label: "GPT-4o" },
+    { value: "github-copilot/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+  ]
+};
+
 function App() {
   const [step, setStep] = useState(1);
   const [mode, setMode] = useState("basic"); // "basic" or "advanced"
@@ -20,7 +88,7 @@ function App() {
   const [apiKey, setApiKey] = useState("");
   const [authMethod, setAuthMethod] = useState("token"); 
   const [provider, setProvider] = useState("anthropic");
-  const [model, setModel] = useState("anthropic/claude-opus-4-6");
+  const [model, setModel] = useState("anthropic/claude-3-7-sonnet-latest");
   const [telegramToken, setTelegramToken] = useState("");
   const [progress, setProgress] = useState("");
   const [dashboardUrl, setDashboardUrl] = useState("http://127.0.0.1:18789");
@@ -1062,9 +1130,9 @@ function App() {
               <select value={provider} onChange={(e) => {
                 const p = e.target.value;
                 setProvider(p);
-                if (p === "anthropic") setModel("anthropic/claude-opus-4-6");
-                else if (p === "openai") setModel("openai/gpt-4o");
-                else if (p === "google") setModel("google/gemini-2.0-flash-exp");
+                if (MODELS_BY_PROVIDER[p] && MODELS_BY_PROVIDER[p].length > 0) {
+                  setModel(MODELS_BY_PROVIDER[p][0].value);
+                }
               }}>
                 <option value="anthropic">Anthropic</option>
                 <option value="openai">OpenAI</option>
@@ -1075,6 +1143,8 @@ function App() {
                   <>
                     <option value="deepseek">DeepSeek</option>
                     <option value="xai">xAI (Grok)</option>
+                    <option value="mistral">Mistral</option>
+                    <option value="groq">Groq</option>
                     <option value="copilot">Copilot</option>
                   </>
                 )}
@@ -1112,34 +1182,18 @@ function App() {
             <div className="form-group">
               <label>Primary Model</label>
               <select value={model} onChange={(e) => setModel(e.target.value)}>
-                {provider === "anthropic" && (
-                  <optgroup label="Anthropic">
-                    <option value="anthropic/claude-opus-4-6">Claude Opus 4.6</option>
-                    <option value="anthropic/claude-opus-4-5-20260201">Claude Opus 4.5</option>
-                    <option value="anthropic/claude-sonnet-4-5-20250929">Claude Sonnet 4.5</option>
-                    <option value="anthropic/claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
-                    <option value="anthropic/claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                {MODELS_BY_PROVIDER[provider] ? (
+                  <optgroup label={`${provider.charAt(0).toUpperCase() + provider.slice(1)} Models`}>
+                    {MODELS_BY_PROVIDER[provider].map((m) => (
+                      <option key={m.value} value={m.value}>{m.label}</option>
+                    ))}
                   </optgroup>
-                )}
-                {provider === "openai" && (
-                  <optgroup label="OpenAI">
-                    <option value="openai/gpt-4o">GPT-4o</option>
-                    <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
-                    <option value="openai/gpt-5-preview">GPT-5 Preview</option>
-                  </optgroup>
-                )}
-                {provider === "google" && (
-                  <optgroup label="Google">
-                    <option value="google/gemini-2.0-flash-exp">Gemini 2.0 Flash</option>
-                    <option value="google/gemini-1.5-pro-latest">Gemini 1.5 Pro</option>
-                    <option value="google/gemini-ultra-2.0">Gemini Ultra 2.0</option>
-                  </optgroup>
-                )}
-                {provider === "openrouter" && (
-                   <option value="openrouter/auto">Auto (OpenRouter)</option>
-                )}
-                {provider === "ollama" && (
-                   <option value="ollama/llama3.1">Llama 3.1 (Local)</option>
+                ) : (
+                  provider === "ollama" ? (
+                    <option value="ollama/llama3.1">Llama 3.1 (Local)</option>
+                  ) : (
+                    <option value={model}>{model}</option>
+                  )
                 )}
               </select>
             </div>
@@ -1486,11 +1540,13 @@ function App() {
                     setFallbackModels(newModels);
                   }}>
                     <option value="">Select model...</option>
-                    <option value="anthropic/claude-sonnet-4-5-20250929">Claude Sonnet 4.5</option>
-                    <option value="anthropic/claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
-                    <option value="openai/gpt-4o">GPT-4o</option>
-                    <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
-                    <option value="google/gemini-2.0-flash-exp">Gemini 2.0 Flash</option>
+                    {Object.entries(MODELS_BY_PROVIDER).map(([prov, models]) => (
+                      <optgroup key={prov} label={prov.charAt(0).toUpperCase() + prov.slice(1)}>
+                        {models.map(m => (
+                          <option key={`${prov}-${m.value}`} value={m.value}>{m.label}</option>
+                        ))}
+                      </optgroup>
+                    ))}
                   </select>
                 </div>
                 {fallbackModels[0] && (
@@ -1502,11 +1558,13 @@ function App() {
                       setFallbackModels(newModels);
                     }}>
                       <option value="">Select model...</option>
-                      <option value="anthropic/claude-sonnet-4-5-20250929">Claude Sonnet 4.5</option>
-                      <option value="anthropic/claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
-                      <option value="openai/gpt-4o">GPT-4o</option>
-                      <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
-                      <option value="google/gemini-2.0-flash-exp">Gemini 2.0 Flash</option>
+                      {Object.entries(MODELS_BY_PROVIDER).map(([prov, models]) => (
+                        <optgroup key={prov} label={prov.charAt(0).toUpperCase() + prov.slice(1)}>
+                          {models.map(m => (
+                            <option key={`${prov}-${m.value}`} value={m.value}>{m.label}</option>
+                          ))}
+                        </optgroup>
+                      ))}
                     </select>
                   </div>
                 )}
@@ -1659,19 +1717,13 @@ function App() {
                   setAgentConfigs(updated);
                 }}
               >
-                <optgroup label="Anthropic">
-                  <option value="anthropic/claude-opus-4-6">Claude Opus 4.6</option>
-                  <option value="anthropic/claude-sonnet-4-5-20250929">Claude Sonnet 4.5</option>
-                  <option value="anthropic/claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
-                </optgroup>
-                <optgroup label="OpenAI">
-                  <option value="openai/gpt-4o">GPT-4o</option>
-                  <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
-                </optgroup>
-                <optgroup label="Google">
-                  <option value="google/gemini-2.0-flash-exp">Gemini 2.0 Flash</option>
-                  <option value="google/gemini-1.5-pro-latest">Gemini 1.5 Pro</option>
-                </optgroup>
+                {Object.entries(MODELS_BY_PROVIDER).map(([prov, models]) => (
+                  <optgroup key={prov} label={prov.charAt(0).toUpperCase() + prov.slice(1)}>
+                    {models.map(m => (
+                      <option key={`${prov}-${m.value}`} value={m.value}>{m.label}</option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
             </div>
 
