@@ -444,10 +444,8 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
         // Correctly place fallbacks under the specific model configuration
         if let Some(fb) = config.fallback_models.as_ref() {
             if !fb.is_empty() {
-                if let Some(models) = defaults.get_mut("models").and_then(|m| m.as_object_mut()) {
-                    if let Some(primary_model_config) = models.get_mut(&config.model).and_then(|m| m.as_object_mut()) {
-                        primary_model_config.insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
-                    }
+                if let Some(primary_model_config) = defaults.get_mut("model").and_then(|m| m.as_object_mut()) {
+                    primary_model_config.insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
                 }
             }
         }
@@ -919,10 +917,8 @@ fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Result<Stri
         // Correctly place fallbacks under the specific model configuration
         if let Some(fb) = config.fallback_models.as_ref() {
             if !fb.is_empty() {
-                if let Some(models) = defaults.get_mut("models").and_then(|m| m.as_object_mut()) {
-                    if let Some(primary_model_config) = models.get_mut(&config.model).and_then(|m| m.as_object_mut()) {
-                        primary_model_config.insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
-                    }
+                if let Some(primary_model_config) = defaults.get_mut("model").and_then(|m| m.as_object_mut()) {
+                    primary_model_config.insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
                 }
             }
         }
