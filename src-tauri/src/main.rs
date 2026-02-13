@@ -361,61 +361,6 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
         auth_mode = "oauth".to_string();
     }
 
-    let heartbeat_section = match config.heartbeat_mode.as_deref() {
-        Some("never") => r#","heartbeat": { "enabled": false }"#.to_string(),
-        Some("idle") => format!(r#","heartbeat": {{ "mode": "idle", "timeout": {} }}"#, config.idle_timeout_ms.unwrap_or(3600000)),
-        Some(interval) => format!(r#","heartbeat": {{ "every": "{}" }}"#, interval),
-        _ => String::new()
-    };
-
-    let fallbacks_section = if let Some(fb) = config.fallback_models.as_ref() {
-        if !fb.is_empty() {
-            format!(r#","fallbacks": {}"#, serde_json::to_string(fb).unwrap())
-        } else {
-            String::new()
-        }
-    } else {
-        String::new()
-    };
-
-    let sandbox_section = if let Some(mode) = config.sandbox_mode.as_ref() {
-        let mapped = if mode == "full" { "all" } else if mode == "partial" { "non-main" } else if mode == "none" { "off" } else { mode };
-        format!(r#","sandbox": {{ "mode": "{}" }}"#, mapped)
-    } else {
-        String::new()
-    };
-
-    let tools_section = if let Some(mode) = config.tools_mode.as_ref() {
-        match mode.as_str() {
-            "allowlist" => {
-                if let Some(tools) = config.allowed_tools.as_ref() {
-                    format!(r#""allow": {}"#, serde_json::to_string(tools).unwrap())
-                } else {
-                    String::new()
-                }
-            },
-            "denylist" => {
-                if let Some(tools) = config.denied_tools.as_ref() {
-                    format!(r#""deny": {}"#, serde_json::to_string(tools).unwrap())
-                } else {
-                    String::new()
-                }
-            },
-            _ => String::new()
-        }
-    } else {
-        String::new()
-    };
-
-    let tools_block = if !tools_section.is_empty() {
-        format!(r#",
-  "tools": {{ {} }}"#, tools_section)
-    } else {
-        String::new()
-    };
-
-    let telegram_section = String::new();
-
     let gateway_port = config.gateway_port.unwrap_or(18789);
     let gateway_bind = config.gateway_bind.as_deref().unwrap_or("loopback");
     let gateway_auth_mode = config.gateway_auth_mode.as_deref().unwrap_or("token");
@@ -480,7 +425,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
         },
         "auth": {
             "profiles": {
-                profile_name: {
+                profile_name.clone(): {
                     "provider": config.provider,
                     "mode": auth_mode
                 }
@@ -877,61 +822,6 @@ fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Result<Stri
         auth_mode = "oauth".to_string();
     }
 
-    let heartbeat_section = match config.heartbeat_mode.as_deref() {
-        Some("never") => r#","heartbeat": { "enabled": false }"#.to_string(),
-        Some("idle") => format!(r#","heartbeat": {{ "mode": "idle", "timeout": {} }}"#, config.idle_timeout_ms.unwrap_or(3600000)),
-        Some(interval) => format!(r#","heartbeat": {{ "every": "{}" }}"#, interval),
-        _ => String::new()
-    };
-
-    let fallbacks_section = if let Some(fb) = config.fallback_models.as_ref() {
-        if !fb.is_empty() {
-            format!(r#","fallbacks": {}"#, serde_json::to_string(fb).unwrap())
-        } else {
-            String::new()
-        }
-    } else {
-        String::new()
-    };
-
-    let sandbox_section = if let Some(mode) = config.sandbox_mode.as_ref() {
-        let mapped = if mode == "full" { "all" } else if mode == "partial" { "non-main" } else if mode == "none" { "off" } else { mode };
-        format!(r#","sandbox": {{ "mode": "{}" }}"#, mapped)
-    } else {
-        String::new()
-    };
-
-    let tools_section = if let Some(mode) = config.tools_mode.as_ref() {
-        match mode.as_str() {
-            "allowlist" => {
-                if let Some(tools) = config.allowed_tools.as_ref() {
-                    format!(r#""allow": {}"#, serde_json::to_string(tools).unwrap())
-                } else {
-                    String::new()
-                }
-            },
-            "denylist" => {
-                if let Some(tools) = config.denied_tools.as_ref() {
-                    format!(r#""deny": {}"#, serde_json::to_string(tools).unwrap())
-                } else {
-                    String::new()
-                }
-            },
-            _ => String::new()
-        }
-    } else {
-        String::new()
-    };
-
-    let tools_block = if !tools_section.is_empty() {
-        format!(r#",
-  "tools": {{ {} }}"#, tools_section)
-    } else {
-        String::new()
-    };
-
-    let telegram_section = String::new();
-
     let gateway_port = config.gateway_port.unwrap_or(18789);
     let gateway_bind = config.gateway_bind.as_deref().unwrap_or("loopback");
     let gateway_auth_mode = config.gateway_auth_mode.as_deref().unwrap_or("token");
@@ -998,7 +888,7 @@ fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Result<Stri
         },
         "auth": {
             "profiles": {
-                profile_name: {
+                profile_name.clone(): {
                     "provider": config.provider,
                     "mode": auth_mode
                 }
