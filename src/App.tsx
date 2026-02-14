@@ -119,6 +119,7 @@ const MODELS_BY_PROVIDER: Record<string, Array<{ value: string; label: string }>
     { value: "mistral/mistral-nemo", label: "Mistral Nemo" },
   ],
   "openai": [
+    { value: "openai/gpt-5.3", label: "GPT-5.3" },
     { value: "openai/gpt-4o", label: "GPT-4o" },
     { value: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
     { value: "openai/gpt-5", label: "GPT-5" },

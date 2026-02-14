@@ -1,0 +1,13 @@
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/debug/deps/libssh2-45dfa4f909a3c787.rmeta: /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/lib.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/agent.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/channel.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/error.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/knownhosts.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/listener.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/session.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/sftp.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/util.rs
+
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/debug/deps/ssh2-45dfa4f909a3c787.d: /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/lib.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/agent.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/channel.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/error.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/knownhosts.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/listener.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/session.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/sftp.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/util.rs
+
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/lib.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/agent.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/channel.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/error.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/knownhosts.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/listener.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/session.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/sftp.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ssh2-0.9.5/src/util.rs:

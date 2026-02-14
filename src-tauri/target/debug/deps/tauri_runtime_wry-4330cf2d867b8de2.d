@@ -1,0 +1,9 @@
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/debug/deps/libtauri_runtime_wry-4330cf2d867b8de2.rmeta: /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/lib.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/webview.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/system_tray.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/global_shortcut.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/clipboard.rs
+
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/debug/deps/tauri_runtime_wry-4330cf2d867b8de2.d: /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/lib.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/webview.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/system_tray.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/global_shortcut.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/clipboard.rs
+
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/lib.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/webview.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/system_tray.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/global_shortcut.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-runtime-wry-0.14.11/src/clipboard.rs:

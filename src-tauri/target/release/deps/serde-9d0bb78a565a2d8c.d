@@ -1,0 +1,14 @@
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/deps/libserde-9d0bb78a565a2d8c.rmeta: /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/build/serde-8a9677ea1559bcda/out/private.rs
+
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/deps/libserde-9d0bb78a565a2d8c.rlib: /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/build/serde-8a9677ea1559bcda/out/private.rs
+
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/deps/serde-9d0bb78a565a2d8c.d: /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/build/serde-8a9677ea1559bcda/out/private.rs
+
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/mulugeta/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/build/serde-8a9677ea1559bcda/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/build/serde-8a9677ea1559bcda/out

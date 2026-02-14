@@ -1,0 +1,14 @@
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/deps/claw_setup-f42c673298719aa6: src/main.rs /Users/mulugeta/Documents/code/ClawSetup/src-tauri/../dist/assets/index-1be61442.js /Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/build/claw-setup-8367483b48f58edb/out/tauri-codegen-assets/2f48206b4ef3a7ba22fb7b8a12fe3f367b96b92f65957d0635629adcd1ddf283.js /Users/mulugeta/Documents/code/ClawSetup/src-tauri/../dist/assets/index-2bfa35cd.css /Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/build/claw-setup-8367483b48f58edb/out/tauri-codegen-assets/e5cca2a52e59e79b5e2882cc5946fc27ed73f28480e5f10e7fb8be83812eff52.css /Users/mulugeta/Documents/code/ClawSetup/src-tauri/../dist/index.html /Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/build/claw-setup-8367483b48f58edb/out/tauri-codegen-assets/a42fea935a96b3e2c6aeae2f2aae57b219793ab134f7e4023955aec981d6126a.html
+
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/deps/claw_setup-f42c673298719aa6.d: src/main.rs /Users/mulugeta/Documents/code/ClawSetup/src-tauri/../dist/assets/index-1be61442.js /Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/build/claw-setup-8367483b48f58edb/out/tauri-codegen-assets/2f48206b4ef3a7ba22fb7b8a12fe3f367b96b92f65957d0635629adcd1ddf283.js /Users/mulugeta/Documents/code/ClawSetup/src-tauri/../dist/assets/index-2bfa35cd.css /Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/build/claw-setup-8367483b48f58edb/out/tauri-codegen-assets/e5cca2a52e59e79b5e2882cc5946fc27ed73f28480e5f10e7fb8be83812eff52.css /Users/mulugeta/Documents/code/ClawSetup/src-tauri/../dist/index.html /Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/build/claw-setup-8367483b48f58edb/out/tauri-codegen-assets/a42fea935a96b3e2c6aeae2f2aae57b219793ab134f7e4023955aec981d6126a.html
+
+src/main.rs:
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/../dist/assets/index-1be61442.js:
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/build/claw-setup-8367483b48f58edb/out/tauri-codegen-assets/2f48206b4ef3a7ba22fb7b8a12fe3f367b96b92f65957d0635629adcd1ddf283.js:
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/../dist/assets/index-2bfa35cd.css:
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/build/claw-setup-8367483b48f58edb/out/tauri-codegen-assets/e5cca2a52e59e79b5e2882cc5946fc27ed73f28480e5f10e7fb8be83812eff52.css:
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/../dist/index.html:
+/Users/mulugeta/Documents/code/ClawSetup/src-tauri/target/release/build/claw-setup-8367483b48f58edb/out/tauri-codegen-assets/a42fea935a96b3e2c6aeae2f2aae57b219793ab134f7e4023955aec981d6126a.html:
+
+# env-dep:CARGO_PKG_AUTHORS=AI Models Compass
+# env-dep:CARGO_PKG_DESCRIPTION=Native setup wizard for OpenClaw

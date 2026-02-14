@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "skills": {
+    "filesystem": {
+      "version": "1.0.0",
+      "installedAt": 1770937785933
+    },
+    "1password": {
+      "version": "1.0.1",
+      "installedAt": 1771022198264
+    }
+  }
+}
