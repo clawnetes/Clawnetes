@@ -430,7 +430,6 @@ function App() {
     { id: 1, name: "Environment" },
     { id: 2, name: "System Check" },
     { id: 3, name: "Security" },
-    { id: 4, name: "Mode" },
     { id: 5, name: "Identity" },
     { id: 6, name: "Agent" },
     { id: 7, name: "Gateway", advanced: true },
@@ -1117,7 +1116,7 @@ function App() {
                   onClick={async () => {
                     if (selectedMaint === "reconfigure") {
                       // Go to Configuration Mode
-                      setStep(4);
+                      setStep(3);
                     } else if (selectedMaint === "uninstall") {
                       if (confirm("Are you absolutely sure you want to completely remove OpenClaw and all its data?")) {
                         handleMaintenanceAction("uninstall");
@@ -1353,29 +1352,8 @@ function App() {
             </div>
             <p style={{fontWeight: 600}}>Do you understand the risks and wish to continue?</p>
             <div className="button-group">
-              <button className="primary" onClick={() => setStep(4)}>I Understand</button>
+              <button className="primary" onClick={() => setStep(5)}>I Understand</button>
               <button className="secondary" onClick={() => setStep(2)}>Back</button>
-            </div>
-          </div>
-        );
-      case 4:
-        return (
-          <div className="step-view">
-            <h2>Configuration Mode</h2>
-            <p className="step-description">Choose how much control you want over the initial setup.</p>
-            <div className="mode-card-container">
-              <div className={`mode-card ${mode === "basic" ? "active" : ""}`} onClick={() => setMode("basic")}>
-                <h3>QuickStart</h3>
-                <p>Fastest setup with sane defaults. Recommended for first-time users.</p>
-              </div>
-              <div className={`mode-card ${mode === "advanced" ? "active" : ""}`} onClick={() => setMode("advanced")}>
-                <h3>Advanced</h3>
-                <p>Full control over gateway, networking, and pre-installed skills.</p>
-              </div>
-            </div>
-            <div className="button-group">
-              <button className="primary" onClick={() => setStep(5)}>Continue</button>
-              <button className="secondary" onClick={() => setStep(3)}>Back</button>
             </div>
           </div>
         );
@@ -1399,7 +1377,7 @@ function App() {
             </div>
             <div className="button-group">
               <button className="primary" disabled={!userName} onClick={() => setStep(6)}>Next</button>
-              <button className="secondary" onClick={() => setStep(4)}>Back</button>
+              <button className="secondary" onClick={() => setStep(3)}>Back</button>
             </div>
           </div>
         );
@@ -2482,14 +2460,35 @@ function App() {
                    )}
                  </div>
                )}
+
+               {pairingStatus.includes("Success") && (
+                  <div className="advanced-setup-prompt" style={{marginTop: "2rem", padding: "1.5rem", backgroundColor: "rgba(59, 130, 246, 0.1)", borderRadius: "12px", border: "1px solid var(--primary)"}}>
+                    <h3 style={{marginTop: 0, marginBottom: "0.5rem"}}>Configuration Complete</h3>
+                    <p style={{marginBottom: "1.5rem"}}>Your agent is paired and ready. Would you like to configure advanced settings (Gateway, Skills, Security, Multi-Agent) now?</p>
+                    <div className="button-group" style={{gap: "1rem"}}>
+                       <button className="primary" onClick={() => {
+                         setMode("advanced");
+                         setPairingStatus("");
+                         setStep(7);
+                       }}>
+                         Yes, Configure Advanced
+                       </button>
+                       <button className="secondary" onClick={() => invoke("close_app")}>
+                         No, Finish & Exit
+                       </button>
+                    </div>
+                  </div>
+               )}
             </div>
 
-            <div className="button-group" style={{flexDirection: "column", gap: "10px"}}>
-              <button className="primary" style={{width: "100%"}} onClick={() => open(dashboardUrl)}>
-                Open Web Dashboard {targetEnvironment === "cloud" && "(via Tunnel)"}
-              </button>
-              <button className="secondary" style={{width: "100%"}} onClick={() => invoke("close_app")}>Exit Setup</button>
-            </div>
+            {!pairingStatus.includes("Success") && (
+              <div className="button-group" style={{flexDirection: "column", gap: "10px"}}>
+                <button className="primary" style={{width: "100%"}} onClick={() => open(dashboardUrl)}>
+                  Open Web Dashboard {targetEnvironment === "cloud" && "(via Tunnel)"}
+                </button>
+                <button className="secondary" style={{width: "100%"}} onClick={() => invoke("close_app")}>Exit Setup</button>
+              </div>
+            )}
             <p style={{ marginTop: "2rem", fontSize: "0.85rem", color: "var(--text-muted)", textAlign: "center" }}>
               Terminal access: <code>openclaw tui</code> {targetEnvironment === "cloud" && `(SSH to ${remoteIp})`}
             </p>
