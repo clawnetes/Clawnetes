@@ -425,6 +425,7 @@ function App() {
   const [pairingInput, setPairingInput] = useState("");
   const [pairingStatus, setPairingStatus] = useState("");
   const [isPaired, setIsPaired] = useState(false);
+  const [theme, setTheme] = useState("dark");
 
   const availableSkills = [
     { id: "1password", name: "1Password", desc: "Set up and use 1Password CLI (op) for secrets management." },
@@ -490,16 +491,24 @@ function App() {
     { id: 8, name: "Brain" },
     { id: 9, name: "Channels" },
     { id: 10, name: "Runtime", advanced: true },
+    { id: 10.5, name: "Workspace", advanced: true },
     { id: 11, name: "Skills", advanced: true },
     { id: 12, name: "Security+", advanced: true },
     { id: 13, name: "Fallbacks", advanced: true },
     { id: 14, name: "Session", advanced: true },
     { id: 15, name: "Agents", advanced: true },
-    { id: 16, name: "Workspace", advanced: true },
     { id: 17, name: "Pairing" }
   ];
 
   useEffect(() => { checkSystem(true); }, []);
+
+  useEffect(() => {
+    if (theme === "light") {
+      document.body.classList.add("light-theme");
+    } else {
+      document.body.classList.remove("light-theme");
+    }
+  }, [theme]);
 
   // Update default auth method when provider changes
   useEffect(() => {
@@ -1738,7 +1747,7 @@ function App() {
               />
             </div>
             <div className="button-group">
-              <button className="primary" onClick={() => setStep(11)}>Next</button>
+              <button className="primary" onClick={() => setStep(10.5)}>Next</button>
               <button className="secondary" onClick={() => {
                 if (skipBasicConfig) {
                   setStep(7);
@@ -1874,7 +1883,7 @@ function App() {
                   handleInstall();
                 }
               }}>Continue</button>
-              <button className="secondary" onClick={() => setStep(10)}>Back</button>
+              <button className="secondary" onClick={() => setStep(10.5)}>Back</button>
             </div>
           </div>
         );
@@ -2056,43 +2065,43 @@ function App() {
                       
                       {/* Provider Selection */}
                       <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Provider</label>
-                      <select 
-                        style={{width: "100%", padding: "0.5rem", marginBottom: "0.5rem", borderRadius: "8px", border: "1px solid var(--border)", backgroundColor: "var(--bg-card)", color: "var(--text)"}}
-                        value={currentProvider || ""}
-                        onChange={(e) => {
-                          const newProv = e.target.value;
-                          if (!newProv) return;
-                          // Set default model for this provider
-                          if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
-                            const newModels = [...fallbackModels];
-                            newModels[idx] = MODELS_BY_PROVIDER[newProv][0].value;
-                            setFallbackModels(newModels);
-                          }
-                        }}
-                      >
-                        <option value="">Select Provider...</option>
-                        {Object.keys(MODELS_BY_PROVIDER).sort().map(p => (
-                          <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
-                        ))}
-                      </select>
+                      <div style={{maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem", marginBottom: "1rem"}}>
+                        <RadioCard
+                          value={currentProvider || ""}
+                          onChange={(newProv) => {
+                            if (!newProv) return;
+                            // Set default model for this provider
+                            if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
+                              const newModels = [...fallbackModels];
+                              newModels[idx] = MODELS_BY_PROVIDER[newProv][0].value;
+                              setFallbackModels(newModels);
+                            }
+                          }}
+                          columns={2}
+                          options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
+                            value: p,
+                            label: p.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+                            icon: PROVIDER_LOGOS[p]
+                          }))}
+                        />
+                      </div>
 
                       {/* Model Selection */}
                       {currentProvider && MODELS_BY_PROVIDER[currentProvider] && (
                         <>
                           <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Model</label>
-                          <select
-                            style={{width: "100%", padding: "0.5rem", marginBottom: "0.5rem", borderRadius: "8px", border: "1px solid var(--border)", backgroundColor: "var(--bg-card)", color: "var(--text)"}}
-                            value={currentModel}
-                            onChange={(e) => {
-                              const newModels = [...fallbackModels];
-                              newModels[idx] = e.target.value;
-                              setFallbackModels(newModels);
-                            }}
-                          >
-                            {MODELS_BY_PROVIDER[currentProvider].map(m => (
-                              <option key={m.value} value={m.value}>{m.label}</option>
-                            ))}
-                          </select>
+                          <div style={{maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem", marginBottom: "1rem"}}>
+                            <RadioCard
+                              value={currentModel}
+                              onChange={(val) => {
+                                const newModels = [...fallbackModels];
+                                newModels[idx] = val;
+                                setFallbackModels(newModels);
+                              }}
+                              columns={1}
+                              options={MODELS_BY_PROVIDER[currentProvider].map(m => ({ value: m.value, label: m.label }))}
+                            />
+                          </div>
                         </>
                       )}
 
@@ -2105,6 +2114,7 @@ function App() {
                             placeholder={`API Key for ${currentProvider}`}
                             value={serviceKeys[currentProvider] || ""}
                             onChange={(e) => setServiceKeys({...serviceKeys, [currentProvider]: e.target.value})}
+                            autoComplete="off"
                           />
                         </div>
                       )}
@@ -2194,6 +2204,7 @@ function App() {
                     const num = parseInt(e.target.value) || 1;
                     setNumAgents(Math.max(1, Math.min(5, num)));
                   }}
+                  autoComplete="off"
                 />
                 <p className="input-hint">You can configure 1-5 specialized agents</p>
               </div>
@@ -2219,10 +2230,12 @@ function App() {
                   setActiveWorkspaceTab("identity"); // Reset tab
                   setStep(15.5);
                 } else {
-                  setStep(16);
+                  handleInstall();
                 }
-              }}>Continue</button>
-              <button className="secondary" onClick={() => setStep(14)}>Back</button>
+              }} disabled={loading}>
+                {enableMultiAgent ? "Continue" : (loading ? "Installing..." : "Finish Installation")}
+              </button>
+              <button className="secondary" onClick={() => setStep(14)} disabled={loading}>Back</button>
             </div>
           </div>
         );
@@ -2250,6 +2263,7 @@ function App() {
                   setAgentConfigs(updated);
                 }}
                 placeholder="e.g., CodeBot"
+                autoComplete="off"
               />
             </div>
 
@@ -2257,52 +2271,54 @@ function App() {
             <div className="form-group" style={{padding: "1rem", border: "1px solid var(--border)", borderRadius: "12px", marginBottom: "1rem"}}>
               <label>Primary Model</label>
               
-              <div style={{display: "flex", gap: "10px", marginTop: "0.5rem"}}>
-                <div style={{flex: 1}}>
-                  <label style={{fontSize: "0.8rem", color: "var(--text-muted)"}}>Provider</label>
-                  <select
-                     style={{width: "100%", padding: "0.5rem", borderRadius: "8px", border: "1px solid var(--border)", backgroundColor: "var(--bg-card)", color: "var(--text)"}}
-                     value={currentAgentProvider}
-                     onChange={(e) => {
-                       const newProv = e.target.value;
-                       if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
-                         const updated = [...agentConfigs];
-                         updated[currentAgentConfigIdx].model = MODELS_BY_PROVIDER[newProv][0].value;
-                         setAgentConfigs(updated);
-                       }
-                     }}
-                  >
-                    {Object.keys(MODELS_BY_PROVIDER).sort().map(p => (
-                      <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
-                    ))}
-                  </select>
-                </div>
-                <div style={{flex: 1}}>
-                  <label style={{fontSize: "0.8rem", color: "var(--text-muted)"}}>Model</label>
-                  <select
-                     style={{width: "100%", padding: "0.5rem", borderRadius: "8px", border: "1px solid var(--border)", backgroundColor: "var(--bg-card)", color: "var(--text)"}}
-                     value={currentAgent.model}
-                     onChange={(e) => {
+              <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Provider</label>
+              <div style={{maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem", marginBottom: "1rem"}}>
+                <RadioCard
+                   value={currentAgentProvider}
+                   onChange={(newProv) => {
+                     if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
                        const updated = [...agentConfigs];
-                       updated[currentAgentConfigIdx].model = e.target.value;
+                       updated[currentAgentConfigIdx].model = MODELS_BY_PROVIDER[newProv][0].value;
                        setAgentConfigs(updated);
-                     }}
-                  >
-                    {MODELS_BY_PROVIDER[currentAgentProvider]?.map(m => (
-                      <option key={m.value} value={m.value}>{m.label}</option>
-                    ))}
-                  </select>
-                </div>
+                     }
+                   }}
+                   columns={2}
+                   options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
+                     value: p,
+                     label: p.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+                     icon: PROVIDER_LOGOS[p]
+                   }))}
+                />
               </div>
+              
+              {currentAgentProvider && MODELS_BY_PROVIDER[currentAgentProvider] && (
+                <>
+                  <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Model</label>
+                  <div style={{maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem", marginBottom: "1rem"}}>
+                    <RadioCard
+                       value={currentAgent.model}
+                       onChange={(val) => {
+                         const updated = [...agentConfigs];
+                         updated[currentAgentConfigIdx].model = val;
+                         setAgentConfigs(updated);
+                       }}
+                       columns={1}
+                       options={MODELS_BY_PROVIDER[currentAgentProvider].map(m => ({ value: m.value, label: m.label }))}
+                    />
+                  </div>
+                </>
+              )}
               
               {/* Auth for Agent Primary */}
               {currentAgentProvider && currentAgentProvider !== provider && !serviceKeys[currentAgentProvider] && !["ollama"].includes(currentAgentProvider) && (
                  <div style={{marginTop: "0.5rem"}}>
+                   <label style={{fontSize: "0.85rem", color: "var(--text-muted)"}}>API Key for {currentAgentProvider}</label>
                    <input
                      type="password"
                      placeholder={`API Key for ${currentAgentProvider}`}
                      value={serviceKeys[currentAgentProvider] || ""}
                      onChange={(e) => setServiceKeys({...serviceKeys, [currentAgentProvider]: e.target.value})}
+                     autoComplete="off"
                    />
                  </div>
               )}
@@ -2310,40 +2326,76 @@ function App() {
             
             {/* Fallback for Agent */}
              <div className="form-group" style={{padding: "1rem", border: "1px solid var(--border)", borderRadius: "12px", marginBottom: "1rem"}}>
-               <label>Fallback Model (Optional)</label>
-               <select
-                 style={{width: "100%", padding: "0.5rem", marginTop: "0.5rem", borderRadius: "8px", border: "1px solid var(--border)", backgroundColor: "var(--bg-card)", color: "var(--text)"}}
-                 value={currentAgent.fallbackModels[0] || ""}
-                 onChange={(e) => {
-                   const val = e.target.value;
-                   const updated = [...agentConfigs];
-                   if (val) updated[currentAgentConfigIdx].fallbackModels = [val];
-                   else updated[currentAgentConfigIdx].fallbackModels = [];
-                   setAgentConfigs(updated);
-                 }}
-               >
-                 <option value="">None</option>
-                 {Object.values(MODELS_BY_PROVIDER).flat().map(m => (
-                   <option key={m.value} value={m.value}>{m.label}</option>
-                 ))}
-               </select>
-               
-               {/* Auth for Agent Fallback */}
-               {currentAgent.fallbackModels[0] && (() => {
-                 const fbProv = currentAgent.fallbackModels[0].split('/')[0];
-                 if (fbProv && fbProv !== provider && fbProv !== currentAgentProvider && !serviceKeys[fbProv] && !["ollama"].includes(fbProv)) {
-                   return (
-                     <div style={{marginTop: "0.5rem"}}>
-                        <input
-                          type="password"
-                          placeholder={`API Key for ${fbProv}`}
-                          value={serviceKeys[fbProv] || ""}
-                          onChange={(e) => setServiceKeys({...serviceKeys, [fbProv]: e.target.value})}
-                        />
+               <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+                 <label>Fallback Model (Optional)</label>
+                 {currentAgent.fallbackModels[0] && (
+                   <button className="secondary small" style={{padding: "2px 8px", fontSize: "0.75rem", height: "auto"}} onClick={() => {
+                     const updated = [...agentConfigs];
+                     updated[currentAgentConfigIdx].fallbackModels = [];
+                     setAgentConfigs(updated);
+                   }}>Clear</button>
+                 )}
+               </div>
+
+               {(() => {
+                 const currentFallbackModel = currentAgent.fallbackModels[0] || "";
+                 const currentFallbackProvider = currentFallbackModel.split('/')[0];
+                 
+                 return (
+                   <>
+                     <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Provider</label>
+                     <div style={{maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem", marginBottom: "1rem"}}>
+                       <RadioCard
+                         value={currentFallbackProvider || ""}
+                         onChange={(newProv) => {
+                           if (!newProv) return;
+                           if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
+                             const updated = [...agentConfigs];
+                             updated[currentAgentConfigIdx].fallbackModels = [MODELS_BY_PROVIDER[newProv][0].value];
+                             setAgentConfigs(updated);
+                           }
+                         }}
+                         columns={2}
+                         options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
+                           value: p,
+                           label: p.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+                           icon: PROVIDER_LOGOS[p]
+                         }))}
+                       />
                      </div>
-                   );
-                 }
-                 return null;
+
+                     {currentFallbackProvider && MODELS_BY_PROVIDER[currentFallbackProvider] && (
+                       <>
+                         <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Model</label>
+                         <div style={{maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem", marginBottom: "1rem"}}>
+                           <RadioCard
+                             value={currentFallbackModel}
+                             onChange={(val) => {
+                               const updated = [...agentConfigs];
+                               updated[currentAgentConfigIdx].fallbackModels = [val];
+                               setAgentConfigs(updated);
+                             }}
+                             columns={1}
+                             options={MODELS_BY_PROVIDER[currentFallbackProvider].map(m => ({ value: m.value, label: m.label }))}
+                           />
+                         </div>
+                       </>
+                     )}
+
+                     {currentFallbackProvider && currentFallbackProvider !== provider && currentFallbackProvider !== currentAgentProvider && !serviceKeys[currentFallbackProvider] && !["ollama"].includes(currentFallbackProvider) && (
+                       <div style={{marginTop: "0.5rem"}}>
+                          <label style={{fontSize: "0.85rem", color: "var(--text-muted)"}}>API Key for {currentFallbackProvider}</label>
+                          <input
+                            type="password"
+                            placeholder={`API Key for ${currentFallbackProvider}`}
+                            value={serviceKeys[currentFallbackProvider] || ""}
+                            onChange={(e) => setServiceKeys({...serviceKeys, [currentFallbackProvider]: e.target.value})}
+                            autoComplete="off"
+                          />
+                       </div>
+                     )}
+                   </>
+                 );
                })()}
              </div>
 
@@ -2474,11 +2526,10 @@ function App() {
                   setCurrentAgentConfigIdx(currentAgentConfigIdx + 1);
                   setActiveWorkspaceTab("identity");
                 } else {
-                  setCurrentAgentConfigIdx(0);
-                  setStep(16); // Go to Main Agent Workspace
+                  handleInstall();
                 }
-              }}>
-                {currentAgentConfigIdx < agentConfigs.length - 1 ? "Next Agent" : "Continue to Main Agent Workspace"}
+              }} disabled={loading}>
+                {currentAgentConfigIdx < agentConfigs.length - 1 ? "Next Agent" : (loading ? "Installing..." : "Finish Installation")}
               </button>
               <button className="secondary" onClick={() => {
                 if (currentAgentConfigIdx > 0) {
@@ -2487,12 +2538,12 @@ function App() {
                 } else {
                   setStep(15);
                 }
-              }}>Back</button>
+              }} disabled={loading}>Back</button>
             </div>
           </div>
         );
 
-      case 16:
+      case 10.5:
         return (
           <div className="step-view">
             <h2>Customize Workspace</h2>
@@ -2557,31 +2608,11 @@ function App() {
               >
                 {savingWorkspace ? "Saving..." : "💾 Save Changes"}
               </button>
-              <button className="primary" onClick={handleInstall} disabled={loading} style={{flex: 1}}>
-                {loading ? "Verifying & Restarting..." : "Finish Installation"}
+              <button className="primary" onClick={() => setStep(11)} style={{flex: 1}}>
+                Next
               </button>
-              <button className="secondary" onClick={() => setStep(enableMultiAgent ? 15.5 : 15)} disabled={loading} style={{flex: "0 0 auto"}}>Back</button>
+              <button className="secondary" onClick={() => setStep(10)} style={{flex: "0 0 auto"}}>Back</button>
             </div>
-
-            {(loading || error) && (
-              <div className="progress-container">
-                {loading && (
-                  <div className="progress-bar">
-                    <div className="progress-fill" style={{width: progress.includes("Gateway") ? "80%" : (progress.includes("skill") ? "50%" : "20%")}} />
-                  </div>
-                )}
-                <p style={{fontSize: "0.9rem", color: error ? "var(--error)" : "var(--primary)"}}>{error ? "Installation Failed" : progress}</p>
-                <div className="logs-container">
-                  <pre>{logs}</pre>
-                </div>
-              </div>
-            )}
-
-            {error && (
-              <div style={{marginTop: "2rem"}}>
-                <button className="primary" style={{backgroundColor: "var(--error)", width: "100%"}} onClick={() => invoke("close_app")}>Exit Installation</button>
-              </div>
-            )}
           </div>
         );
       case 17:
@@ -2727,6 +2758,16 @@ function App() {
               </li>
             ))}
         </ul>
+        <div style={{marginTop: "auto", paddingTop: "1rem"}}>
+          <button 
+            className="secondary" 
+            style={{width: "100%", justifyContent: "space-between", padding: "0.5rem 1rem"}}
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            <span style={{fontSize: "0.85rem"}}>Theme</span>
+            <span>{theme === "dark" ? "🌙" : "☀️"}</span>
+          </button>
+        </div>
       </aside>
 
       <main className="main-content">

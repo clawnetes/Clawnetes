@@ -13,6 +13,20 @@
   --sidebar-width: 260px;
 }
 
+body.light-theme {
+  --primary: #FF4B2B;
+  --primary-hover: #E63E1D;
+  --bg-dark: #F3F4F6;
+  --bg-card: #FFFFFF;
+  --bg-input: #FFFFFF;
+  --border: #E5E7EB;
+  --text-main: #1F2937;
+  --text-muted: #6B7280;
+  --accent: #3b82f6;
+  --success: #10b981;
+  --error: #ef4444;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
