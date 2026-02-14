@@ -2619,7 +2619,6 @@ function App() {
         return (
           <div className="step-view">
             <h2>Setup Complete! 🦞</h2>
-            <p style={{fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem"}}>OpenClaw {openClawVersion}</p>
             <p className="step-description">
               OpenClaw is running {targetEnvironment === "cloud" ? `on ${remoteIp}` : "locally"} and ready for your commands.
             </p>
