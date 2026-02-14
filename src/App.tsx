@@ -202,6 +202,58 @@ const PROVIDER_LOGOS: Record<string, string> = {
   "zai": "/images/zhipu.svg"
 };
 
+const SKILL_ICONS: Record<string, string> = {
+  "1password": "/images/1password.svg",
+  "apple-notes": "/images/apple-notes.svg",
+  "apple-reminders": "/images/checklist.svg",
+  "bear-notes": "/images/bear.svg",
+  "blogwatcher": "/images/terminal.svg",
+  "blucli": "/images/terminal.svg",
+  "bluebubbles": "/images/message.svg",
+  "camsnap": "/images/camera.svg",
+  "clawhub": "/images/terminal.svg",
+  "coding-agent": "/images/code.svg",
+  "eightctl": "/images/moon.svg",
+  "gemini": "/images/google.svg",
+  "gifgrep": "/images/terminal.svg",
+  "github": "/images/github.svg",
+  "gog": "/images/google-drive.svg",
+  "goplaces": "/images/google-maps.svg",
+  "healthcheck": "/images/terminal.svg",
+  "himalaya": "/images/terminal.svg",
+  "imsg": "/images/message.svg",
+  "local-places": "/images/google-maps.svg",
+  "mcporter": "/images/terminal.svg",
+  "model-usage": "/images/chart.svg",
+  "nano-banana-pro": "/images/google.svg",
+  "nano-pdf": "/images/pdf.svg",
+  "notion": "/images/notion.svg",
+  "obsidian": "/images/obsidian.svg",
+  "openai-image-gen": "/images/openai.svg",
+  "openai-whisper": "/images/openai.svg",
+  "openai-whisper-api": "/images/openai.svg",
+  "openhue": "/images/philips-hue.svg",
+  "oracle": "/images/terminal.svg",
+  "ordercli": "/images/terminal.svg",
+  "peekaboo": "/images/camera.svg",
+  "sag": "/images/mic.svg",
+  "session-logs": "/images/chart.svg",
+  "sherpa-onnx-tts": "/images/mic.svg",
+  "skill-creator": "/images/code.svg",
+  "slack": "/images/slack.svg",
+  "songsee": "/images/chart.svg",
+  "sonoscli": "/images/sonos.svg",
+  "spotify-player": "/images/spotify.svg",
+  "summarize": "/images/pdf.svg",
+  "things-mac": "/images/checklist.svg",
+  "tmux": "/images/terminal.svg",
+  "trello": "/images/trello.svg",
+  "video-frames": "/images/camera.svg",
+  "voice-call": "/images/mic.svg",
+  "wacli": "/images/whatsapp.svg",
+  "weather": "/images/weather.svg"
+};
+
 function RadioCard({ 
   options, 
   value, 
@@ -1721,7 +1773,24 @@ function App() {
                     }}
                   >
                     <div className="skill-header" style={{display: "flex", justifyContent: "space-between", alignItems: "flex-start"}}>
-                      <div className="skill-name" style={{fontWeight: 700}}>{skill.name}</div>
+                      <div style={{display: "flex", alignItems: "center"}}>
+                        {SKILL_ICONS[skill.id] && (
+                          <img 
+                            src={SKILL_ICONS[skill.id]} 
+                            alt="" 
+                            style={{
+                              width: "20px", 
+                              height: "20px", 
+                              objectFit: "contain", 
+                              borderRadius: "4px", 
+                              backgroundColor: "white", 
+                              padding: "2px",
+                              marginRight: "8px"
+                            }} 
+                          />
+                        )}
+                        <div className="skill-name" style={{fontWeight: 700}}>{skill.name}</div>
+                      </div>
                       <div className={`radio-circle ${selectedSkills.includes(skill.id) ? "checked" : ""}`} style={{
                         width: "18px",
                         height: "18px",
@@ -2316,7 +2385,24 @@ function App() {
                     }}
                     style={{padding: "0.75rem"}}
                   >
-                    <div className="skill-name" style={{fontSize: "0.85rem"}}>{skill.name}</div>
+                    <div style={{display: "flex", alignItems: "center"}}>
+                      {SKILL_ICONS[skill.id] && (
+                        <img 
+                          src={SKILL_ICONS[skill.id]} 
+                          alt="" 
+                          style={{
+                            width: "16px", 
+                            height: "16px", 
+                            objectFit: "contain", 
+                            borderRadius: "3px", 
+                            backgroundColor: "white", 
+                            padding: "1px", 
+                            marginRight: "6px"
+                          }} 
+                        />
+                      )}
+                      <div className="skill-name" style={{fontSize: "0.85rem"}}>{skill.name}</div>
+                    </div>
                   </div>
                 ))}
               </div>
