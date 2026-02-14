@@ -355,22 +355,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
     if auth_mode == "setup-token" { auth_mode = "token".to_string(); }
     else if auth_mode == "antigravity" || auth_mode == "gemini_cli" || auth_mode == "codex" { auth_mode = "oauth".to_string(); }
 
-    let telegram_section = if let Some(ref token) = config.telegram_token {
-        if !token.is_empty() {
-             // Basic telegram config
-             let mut section = format!(r#",
-  "plugins": {{ "entries": {{ "telegram": {{ "enabled": true }} }} }},
-  "channels": {{ "telegram": {{ "accounts": {{ "main": {{ "botToken": "{}", "name": "Primary Bot""#, token);
-             
-             // Only reset dmPolicy if NOT preserving state
-             if config.preserve_state != Some(true) {
-                 section.push_str(r#", "dmPolicy": "pairing""#);
-             }
-             
-             section.push_str(r#" }} }} }} }}"#);
-             section
-        } else { String::new() }
-    } else { String::new() };
+    // Telegram config will be added to the JSON object
 
     let gateway_port = config.gateway_port.unwrap_or(18789);
     let gateway_bind = config.gateway_bind.unwrap_or_else(|| "loopback".to_string());
@@ -428,8 +413,8 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
         }
     }
 
-    let defaults_json = serde_json::to_string(&defaults_obj).unwrap();
-
+    // defaults_json removed
+    
     // Build agents list
     let mut agents_list = Vec::new();
     let mut has_main = false;
@@ -485,17 +470,60 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
         agents_list.insert(0, main_obj);
     }
 
-    let agents_list_json = serde_json::to_string(&agents_list).unwrap();
+    // Construct auth profiles map dynamically to support variable keys
+    let mut auth_profiles = serde_json::Map::new();
+    auth_profiles.insert(profile_name.clone(), serde_json::json!({
+        "provider": config.provider,
+        "mode": auth_mode
+    }));
 
-    let config_json_raw = format!(r#"{{
-  "messages": {{ "ackReactionScope": "group-mentions" }},
-  "agents": {{ "defaults": {}, "list": {} }},
-  "gateway": {{ "mode": "local", "port": {}, "bind": "{}", "auth": {{ "mode": "{}", "token": "{}" }}, "tailscale": {{ "mode": "{}", "resetOnExit": false }} }},
-  "auth": {{ "profiles": {{ "{}": {{ "provider": "{}", "mode": "{}" }} }} }}{}
-}}"#, defaults_json, agents_list_json, gateway_port, gateway_bind, gateway_auth_mode, gateway_token, tailscale_mode, profile_name, config.provider, auth_mode, telegram_section);
+    let mut config_val = serde_json::json!({
+        "messages": { "ackReactionScope": "group-mentions" },
+        "agents": {
+            "defaults": defaults_obj,
+            "list": agents_list
+        },
+        "gateway": {
+            "mode": "local",
+            "port": gateway_port,
+            "bind": gateway_bind,
+            "auth": { "mode": gateway_auth_mode, "token": gateway_token },
+            "tailscale": { "mode": tailscale_mode, "resetOnExit": false }
+        },
+        "auth": {
+            "profiles": auth_profiles
+        }
+    });
 
-    // Add tools config if present
-    let mut config_val: serde_json::Value = serde_json::from_str(&config_json_raw).map_err(|e| e.to_string())?;
+    // Add Telegram if enabled
+    if let Some(ref token) = config.telegram_token {
+        if !token.is_empty() {
+            if let Some(obj) = config_val.as_object_mut() {
+                obj.insert("plugins".to_string(), serde_json::json!({
+                    "entries": { "telegram": { "enabled": true } }
+                }));
+                
+                let mut channel_config = serde_json::json!({
+                    "botToken": token,
+                    "name": "Primary Bot"
+                });
+                
+                if config.preserve_state != Some(true) {
+                    if let Some(c) = channel_config.as_object_mut() {
+                        c.insert("dmPolicy".to_string(), serde_json::Value::String("pairing".to_string()));
+                    }
+                }
+
+                obj.insert("channels".to_string(), serde_json::json!({
+                    "telegram": {
+                        "accounts": {
+                            "main": channel_config
+                        }
+                    }
+                }));
+            }
+        }
+    }
     if let Some(tm) = config.tools_mode.as_deref() {
         let mut tools_obj = serde_json::Map::new();
         match tm {
