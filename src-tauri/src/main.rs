@@ -258,6 +258,13 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
     let os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
     let is_root = execute_ssh(&sess, "id -u")?.trim() == "0";
     let sudo_prefix = if is_root { "" } else { "sudo " };
+    
+    // Prefix for openclaw commands (ensure brew env is loaded on Mac)
+    let nvm_prefix = if os_type == "Darwin" {
+        "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; "
+    } else {
+        ""
+    };
 
     if os_type == "Linux" {
         // Check if node exists
@@ -325,6 +332,11 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
     let openclaw_root = format!("{}/.openclaw", remote_home);
     let workspace = format!("{}/workspace", openclaw_root);
     let agents_dir = format!("{}/agents/main/agent", openclaw_root);
+
+    // Run gateway install FIRST to scaffold directories and defaults
+    // We ignore errors here in case it's already installed or if we're about to overwrite it anyway
+    let _ = execute_ssh(&sess, &format!("{}openclaw gateway stop || true", nvm_prefix));
+    let _ = execute_ssh(&sess, &format!("{}openclaw gateway install --force", nvm_prefix));
 
     execute_ssh(&sess, &format!("mkdir -p {} && mkdir -p {}", workspace, agents_dir))?;
 
@@ -405,12 +417,69 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
 
     let defaults_json = serde_json::to_string(&defaults_obj).unwrap();
 
+    // Build agents list
+    let mut agents_list = Vec::new();
+    let mut has_main = false;
+
+    if let Some(agents) = &config.agents {
+        for agent in agents {
+            if agent.id == "main" {
+                has_main = true;
+            }
+            
+            let mut agent_obj = serde_json::json!({
+                "id": agent.id,
+                "name": agent.name,
+                "workspace": format!("{}/.openclaw/agents/{}/workspace", remote_home, agent.id),
+                "agentDir": format!("{}/.openclaw/agents/{}/agent", remote_home, agent.id),
+                "model": {
+                    "primary": agent.model
+                }
+            });
+            
+            if let Some(fb) = &agent.fallback_models {
+                if !fb.is_empty() {
+                    if let Some(model_obj) = agent_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
+                        model_obj.insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
+                    }
+                }
+            }
+            
+            agents_list.push(agent_obj);
+        }
+    }
+
+    if !has_main {
+        let mut main_obj = serde_json::json!({
+            "id": "main",
+            "default": true,
+            "name": config.agent_name,
+            "workspace": workspace,
+            "agentDir": agents_dir,
+            "model": {
+                "primary": config.model
+            }
+        });
+        
+        if let Some(fb) = &config.fallback_models {
+            if !fb.is_empty() {
+                if let Some(model_obj) = main_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
+                    model_obj.insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
+                }
+            }
+        }
+        
+        agents_list.insert(0, main_obj);
+    }
+
+    let agents_list_json = serde_json::to_string(&agents_list).unwrap();
+
     let config_json_raw = format!(r#"{{
   "messages": {{ "ackReactionScope": "group-mentions" }},
-  "agents": {{ "defaults": {} }},
+  "agents": {{ "defaults": {}, "list": {} }},
   "gateway": {{ "mode": "local", "port": {}, "bind": "{}", "auth": {{ "mode": "{}", "token": "{}" }}, "tailscale": {{ "mode": "{}", "resetOnExit": false }} }},
   "auth": {{ "profiles": {{ "{}": {{ "provider": "{}", "mode": "{}" }} }} }}{}
-}}"#, defaults_json, gateway_port, gateway_bind, gateway_auth_mode, gateway_token, tailscale_mode, profile_name, config.provider, auth_mode, telegram_section);
+}}"#, defaults_json, agents_list_json, gateway_port, gateway_bind, gateway_auth_mode, gateway_token, tailscale_mode, profile_name, config.provider, auth_mode, telegram_section);
 
     // Add tools config if present
     let mut config_val: serde_json::Value = serde_json::from_str(&config_json_raw).map_err(|e| e.to_string())?;
@@ -487,12 +556,7 @@ Serve {}."#, config.user_name)
     }).replace("'", "'\\''");
     execute_ssh(&sess, &format!("echo '{}' > {}/SOUL.md", soul_md, workspace))?;
 
-    // Prefix for openclaw commands (ensure brew env is loaded on Mac)
-    let nvm_prefix = if os_type == "Darwin" {
-        "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; "
-    } else {
-        ""
-    };
+    // Prefix for openclaw commands is defined at top of function
     
     if let Some(nm) = config.node_manager {
         let _ = execute_ssh(&sess, &format!("{}openclaw config set skills.nodeManager {}", nvm_prefix, nm));
@@ -553,7 +617,6 @@ Serve {}."#, config.user_name)
 
     // Start Gateway
     execute_ssh(&sess, &format!("{}openclaw gateway stop || true", nvm_prefix))?;
-    execute_ssh(&sess, &format!("{}openclaw gateway install --force", nvm_prefix))?;
     execute_ssh(&sess, &format!("{}openclaw gateway start", nvm_prefix))?;
 
     Ok(gateway_token)
@@ -830,6 +893,11 @@ fn install_openclaw() -> Result<String, String> {
 #[command]
 fn configure_agent(config: AgentConfig) -> Result<String, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
+    
+    // Run gateway install --force FIRST to scaffold
+    let _ = shell_command("openclaw gateway stop");
+    let _ = shell_command("openclaw gateway install --force");
+
     let openclaw_root = home.join(".openclaw");
     let workspace = openclaw_root.join("workspace");
     let agents_dir = openclaw_root.join("agents").join("main").join("agent");
@@ -865,22 +933,49 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
             if agent.id == "main" {
                 has_main = true;
             }
-            agents_list.push(serde_json::json!({
+            
+            let mut agent_obj = serde_json::json!({
                 "id": agent.id,
                 "name": agent.name,
                 "workspace": format!("{}/.openclaw/agents/{}/workspace", home.to_string_lossy(), agent.id),
-                "agentDir": format!("{}/.openclaw/agents/{}/agent", home.to_string_lossy(), agent.id)
-            }));
+                "agentDir": format!("{}/.openclaw/agents/{}/agent", home.to_string_lossy(), agent.id),
+                "model": {
+                    "primary": agent.model
+                }
+            });
+            
+            if let Some(fb) = &agent.fallback_models {
+                if !fb.is_empty() {
+                    if let Some(model_obj) = agent_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
+                        model_obj.insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
+                    }
+                }
+            }
+            
+            agents_list.push(agent_obj);
         }
     }
 
     if !has_main {
-        agents_list.insert(0, serde_json::json!({
+        let mut main_obj = serde_json::json!({
             "id": "main",
             "name": config.agent_name,
             "workspace": format!("{}/.openclaw/workspace", home.to_string_lossy()),
-            "agentDir": format!("{}/.openclaw/agents/main/agent", home.to_string_lossy())
-        }));
+            "agentDir": format!("{}/.openclaw/agents/main/agent", home.to_string_lossy()),
+            "model": {
+                "primary": config.model
+            }
+        });
+        
+        if let Some(fb) = &config.fallback_models {
+            if !fb.is_empty() {
+                if let Some(model_obj) = main_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
+                    model_obj.insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
+                }
+            }
+        }
+        
+        agents_list.insert(0, main_obj);
     }
 
     let mut config_json = serde_json::json!({
@@ -1138,26 +1233,13 @@ Serve {}."#, config.user_name)
 fn start_gateway() -> Result<String, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
     let openclaw_root = home.join(".openclaw");
-    let config_path = openclaw_root.join("openclaw.json");
+    // config_path removed as unused
 
     let _ = shell_command("openclaw gateway stop");
     thread::sleep(Duration::from_secs(2));
 
-    let our_config = if config_path.exists() {
-        Some(fs::read_to_string(&config_path).map_err(|e| e.to_string())?)
-    } else {
-        None
-    };
-
-    let install_output = shell_command("openclaw gateway install --force")?;
-
-    if install_output.to_lowercase().contains("error") || install_output.to_lowercase().contains("failed") {
-        return Err(format!("Gateway installation may have failed: {}", install_output));
-    }
-
-    if let Some(old_config) = our_config {
-        fs::write(&config_path, old_config).map_err(|e| e.to_string())?;
-    }
+    // Removed gateway install --force logic to prevent overwriting custom config.
+    // Installation is now handled in configure_agent / setup_remote_openclaw.
 
     let start_output = shell_command("openclaw gateway start")?;
 

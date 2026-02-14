@@ -322,6 +322,7 @@ function App() {
   const [tailscaleMode, setTailscaleMode] = useState("off");
   const [nodeManager, setNodeManager] = useState("npm");
   const [selectedSkills, setSelectedSkills] = useState<string[]>(["filesystem", "terminal"]);
+  const [skipBasicConfig, setSkipBasicConfig] = useState(false);
 
   // NEW: Security Best Practices (Step 11)
   const [sandboxMode, setSandboxMode] = useState("full");
@@ -1456,7 +1457,13 @@ function App() {
               />
             </div>
             <div className="button-group">
-              <button className="primary" onClick={() => setStep(8)}>Continue</button>
+              <button className="primary" onClick={() => {
+                if (skipBasicConfig) {
+                  setStep(10);
+                } else {
+                  setStep(8);
+                }
+              }}>Continue</button>
               <button className="secondary" onClick={() => setStep(6)}>Back</button>
             </div>
           </div>
@@ -1656,7 +1663,13 @@ function App() {
             </div>
             <div className="button-group">
               <button className="primary" onClick={() => setStep(11)}>Next</button>
-              <button className="secondary" onClick={() => setStep(9)}>Back</button>
+              <button className="secondary" onClick={() => {
+                if (skipBasicConfig) {
+                  setStep(7);
+                } else {
+                  setStep(9);
+                }
+              }}>Back</button>
             </div>
           </div>
         );
@@ -1939,38 +1952,72 @@ function App() {
 
             {enableFallbacks && (
               <>
-                <div className="form-group" style={{marginTop: "1.5rem"}}>
-                  <label>Fallback Model 1</label>
-                  <div style={{maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
-                    <RadioCard
-                      value={fallbackModels[0] || ""}
-                      onChange={val => {
-                        const newModels = [...fallbackModels];
-                        newModels[0] = val;
-                        setFallbackModels(newModels);
-                      }}
-                      columns={1}
-                      options={Object.values(MODELS_BY_PROVIDER).flat().map(m => ({ value: m.value, label: m.label }))}
-                    />
-                  </div>
-                </div>
-                {fallbackModels[0] && (
-                  <div className="form-group" style={{marginTop: "1.5rem"}}>
-                    <label>Fallback Model 2 (Optional)</label>
-                    <div style={{maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
-                      <RadioCard
-                        value={fallbackModels[1] || ""}
-                        onChange={val => {
-                          const newModels = [...fallbackModels];
-                          newModels[1] = val;
-                          setFallbackModels(newModels);
+                {[0, 1].map(idx => {
+                  const currentModel = fallbackModels[idx] || "";
+                  const currentProvider = currentModel.split('/')[0];
+                  const needsAuth = currentProvider && currentProvider !== provider && !serviceKeys[currentProvider];
+                  
+                  return (
+                    <div key={idx} className="form-group" style={{marginTop: "1.5rem", padding: "1rem", border: "1px solid var(--border)", borderRadius: "12px"}}>
+                      <label>Fallback Model {idx + 1} {idx === 1 && "(Optional)"}</label>
+                      
+                      {/* Provider Selection */}
+                      <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Provider</label>
+                      <select 
+                        style={{width: "100%", padding: "0.5rem", marginBottom: "0.5rem", borderRadius: "8px", border: "1px solid var(--border)", backgroundColor: "var(--bg-card)", color: "var(--text)"}}
+                        value={currentProvider || ""}
+                        onChange={(e) => {
+                          const newProv = e.target.value;
+                          if (!newProv) return;
+                          // Set default model for this provider
+                          if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
+                            const newModels = [...fallbackModels];
+                            newModels[idx] = MODELS_BY_PROVIDER[newProv][0].value;
+                            setFallbackModels(newModels);
+                          }
                         }}
-                        columns={1}
-                        options={Object.values(MODELS_BY_PROVIDER).flat().map(m => ({ value: m.value, label: m.label }))}
-                      />
+                      >
+                        <option value="">Select Provider...</option>
+                        {Object.keys(MODELS_BY_PROVIDER).sort().map(p => (
+                          <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
+                        ))}
+                      </select>
+
+                      {/* Model Selection */}
+                      {currentProvider && MODELS_BY_PROVIDER[currentProvider] && (
+                        <>
+                          <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Model</label>
+                          <select
+                            style={{width: "100%", padding: "0.5rem", marginBottom: "0.5rem", borderRadius: "8px", border: "1px solid var(--border)", backgroundColor: "var(--bg-card)", color: "var(--text)"}}
+                            value={currentModel}
+                            onChange={(e) => {
+                              const newModels = [...fallbackModels];
+                              newModels[idx] = e.target.value;
+                              setFallbackModels(newModels);
+                            }}
+                          >
+                            {MODELS_BY_PROVIDER[currentProvider].map(m => (
+                              <option key={m.value} value={m.value}>{m.label}</option>
+                            ))}
+                          </select>
+                        </>
+                      )}
+
+                      {/* Auth Selection */}
+                      {currentModel && currentProvider && currentProvider !== provider && !["ollama"].includes(currentProvider) && (
+                        <div style={{marginTop: "0.5rem"}}>
+                          <label style={{fontSize: "0.85rem", color: "var(--text-muted)"}}>API Key for {currentProvider}</label>
+                          <input
+                            type="password"
+                            placeholder={`API Key for ${currentProvider}`}
+                            value={serviceKeys[currentProvider] || ""}
+                            onChange={(e) => setServiceKeys({...serviceKeys, [currentProvider]: e.target.value})}
+                          />
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )}
+                  );
+                })}
               </>
             )}
 
@@ -2066,9 +2113,9 @@ function App() {
                   const configs = Array.from({ length: numAgents }, (_, i) => ({
                     id: `agent-${i + 1}`,
                     name: `Agent ${i + 1}`,
-                    model: model,
+                    model: model, // Default to main model
                     fallbackModels: [],
-                    skills: [...selectedSkills],
+                    skills: [], // Start empty
                     vibe: agentVibe,
                     identityMd: "",
                     userMd: "",
@@ -2076,6 +2123,7 @@ function App() {
                   }));
                   setAgentConfigs(configs);
                   setCurrentAgentConfigIdx(0);
+                  setActiveWorkspaceTab("identity"); // Reset tab
                   setStep(15.5);
                 } else {
                   setStep(16);
@@ -2092,10 +2140,12 @@ function App() {
           return null;
         }
         const currentAgent = agentConfigs[currentAgentConfigIdx];
+        const currentAgentProvider = currentAgent.model.split('/')[0];
+
         return (
           <div className="step-view">
             <h2>Configure Agent {currentAgentConfigIdx + 1} of {agentConfigs.length}</h2>
-            <p className="step-description">Set up the model, skills, and personality for this agent.</p>
+            <p className="step-description">Set up the model, skills, and personality for {currentAgent.name || "this agent"}.</p>
 
             <div className="form-group">
               <label>Agent Name</label>
@@ -2110,21 +2160,99 @@ function App() {
               />
             </div>
 
-            <div className="form-group">
+            {/* Primary Model Config */}
+            <div className="form-group" style={{padding: "1rem", border: "1px solid var(--border)", borderRadius: "12px", marginBottom: "1rem"}}>
               <label>Primary Model</label>
-              <div style={{maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
-                <RadioCard
-                  value={currentAgent.model}
-                  onChange={(val) => {
-                    const updated = [...agentConfigs];
-                    updated[currentAgentConfigIdx].model = val;
-                    setAgentConfigs(updated);
-                  }}
-                  columns={1}
-                  options={Object.values(MODELS_BY_PROVIDER).flat().map(m => ({ value: m.value, label: m.label }))}
-                />
+              
+              <div style={{display: "flex", gap: "10px", marginTop: "0.5rem"}}>
+                <div style={{flex: 1}}>
+                  <label style={{fontSize: "0.8rem", color: "var(--text-muted)"}}>Provider</label>
+                  <select
+                     style={{width: "100%", padding: "0.5rem", borderRadius: "8px", border: "1px solid var(--border)", backgroundColor: "var(--bg-card)", color: "var(--text)"}}
+                     value={currentAgentProvider}
+                     onChange={(e) => {
+                       const newProv = e.target.value;
+                       if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
+                         const updated = [...agentConfigs];
+                         updated[currentAgentConfigIdx].model = MODELS_BY_PROVIDER[newProv][0].value;
+                         setAgentConfigs(updated);
+                       }
+                     }}
+                  >
+                    {Object.keys(MODELS_BY_PROVIDER).sort().map(p => (
+                      <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{flex: 1}}>
+                  <label style={{fontSize: "0.8rem", color: "var(--text-muted)"}}>Model</label>
+                  <select
+                     style={{width: "100%", padding: "0.5rem", borderRadius: "8px", border: "1px solid var(--border)", backgroundColor: "var(--bg-card)", color: "var(--text)"}}
+                     value={currentAgent.model}
+                     onChange={(e) => {
+                       const updated = [...agentConfigs];
+                       updated[currentAgentConfigIdx].model = e.target.value;
+                       setAgentConfigs(updated);
+                     }}
+                  >
+                    {MODELS_BY_PROVIDER[currentAgentProvider]?.map(m => (
+                      <option key={m.value} value={m.value}>{m.label}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
+              
+              {/* Auth for Agent Primary */}
+              {currentAgentProvider && currentAgentProvider !== provider && !serviceKeys[currentAgentProvider] && !["ollama"].includes(currentAgentProvider) && (
+                 <div style={{marginTop: "0.5rem"}}>
+                   <input
+                     type="password"
+                     placeholder={`API Key for ${currentAgentProvider}`}
+                     value={serviceKeys[currentAgentProvider] || ""}
+                     onChange={(e) => setServiceKeys({...serviceKeys, [currentAgentProvider]: e.target.value})}
+                   />
+                 </div>
+              )}
             </div>
+            
+            {/* Fallback for Agent */}
+             <div className="form-group" style={{padding: "1rem", border: "1px solid var(--border)", borderRadius: "12px", marginBottom: "1rem"}}>
+               <label>Fallback Model (Optional)</label>
+               <select
+                 style={{width: "100%", padding: "0.5rem", marginTop: "0.5rem", borderRadius: "8px", border: "1px solid var(--border)", backgroundColor: "var(--bg-card)", color: "var(--text)"}}
+                 value={currentAgent.fallbackModels[0] || ""}
+                 onChange={(e) => {
+                   const val = e.target.value;
+                   const updated = [...agentConfigs];
+                   if (val) updated[currentAgentConfigIdx].fallbackModels = [val];
+                   else updated[currentAgentConfigIdx].fallbackModels = [];
+                   setAgentConfigs(updated);
+                 }}
+               >
+                 <option value="">None</option>
+                 {Object.values(MODELS_BY_PROVIDER).flat().map(m => (
+                   <option key={m.value} value={m.value}>{m.label}</option>
+                 ))}
+               </select>
+               
+               {/* Auth for Agent Fallback */}
+               {currentAgent.fallbackModels[0] && (() => {
+                 const fbProv = currentAgent.fallbackModels[0].split('/')[0];
+                 if (fbProv && fbProv !== provider && fbProv !== currentAgentProvider && !serviceKeys[fbProv] && !["ollama"].includes(fbProv)) {
+                   return (
+                     <div style={{marginTop: "0.5rem"}}>
+                        <input
+                          type="password"
+                          placeholder={`API Key for ${fbProv}`}
+                          value={serviceKeys[fbProv] || ""}
+                          onChange={(e) => setServiceKeys({...serviceKeys, [fbProv]: e.target.value})}
+                        />
+                     </div>
+                   );
+                 }
+                 return null;
+               })()}
+             </div>
 
             <div className="form-group" style={{marginTop: "1.5rem"}}>
               <label>Agent Vibe</label>
@@ -2147,8 +2275,8 @@ function App() {
 
             <div className="form-group">
               <label>Skills</label>
-              <div className="skills-grid" style={{marginTop: "0.5rem"}}>
-                {availableSkills.slice(0, 6).map(skill => (
+              <div className="skills-grid" style={{marginTop: "0.5rem", maxHeight: "200px", overflowY: "auto"}}>
+                {availableSkills.map(skill => (
                   <div
                     key={skill.id}
                     className={`skill-card ${currentAgent.skills.includes(skill.id) ? "active" : ""}`}
@@ -2170,39 +2298,8 @@ function App() {
               </div>
             </div>
 
-            <div className="button-group">
-              <button className="primary" onClick={() => {
-                if (currentAgentConfigIdx < agentConfigs.length - 1) {
-                  setCurrentAgentConfigIdx(currentAgentConfigIdx + 1);
-                } else {
-                  setCurrentAgentConfigIdx(0);
-                  setStep(15.6);
-                }
-              }}>
-                {currentAgentConfigIdx < agentConfigs.length - 1 ? "Next Agent" : "Configure Workspaces"}
-              </button>
-              <button className="secondary" onClick={() => {
-                if (currentAgentConfigIdx > 0) {
-                  setCurrentAgentConfigIdx(currentAgentConfigIdx - 1);
-                } else {
-                  setStep(15);
-                }
-              }}>Back</button>
-            </div>
-          </div>
-        );
-      case 15.6:
-        // Per-Agent Workspace Loop
-        if (!enableMultiAgent || currentAgentConfigIdx >= agentConfigs.length) {
-          setStep(17);
-          return null;
-        }
-        const workspaceAgent = agentConfigs[currentAgentConfigIdx];
-        return (
-          <div className="step-view">
-            <h2>Workspace: {workspaceAgent.name}</h2>
-            <p className="step-description">Customize workspace files for {workspaceAgent.name} (Agent {currentAgentConfigIdx + 1}/{agentConfigs.length})</p>
-
+            {/* Workspace Config */}
+            <h3 style={{marginTop: "2rem"}}>Agent Workspace</h3>
             <div className="workspace-tabs">
               {[
                 {id: "identity", label: "IDENTITY.md"},
@@ -2223,40 +2320,40 @@ function App() {
               {activeWorkspaceTab === "identity" && (
                 <textarea
                   className="markdown-editor"
-                  rows={10}
-                  value={workspaceAgent.identityMd}
+                  rows={8}
+                  value={currentAgent.identityMd}
                   onChange={e => {
                     const updated = [...agentConfigs];
                     updated[currentAgentConfigIdx].identityMd = e.target.value;
                     setAgentConfigs(updated);
                   }}
-                  placeholder={`# IDENTITY.md - Who Am I?\n- **Name:** ${workspaceAgent.name}\n- **Vibe:** ${workspaceAgent.vibe}\n- **Emoji:** 🦞\n`}
+                  placeholder={`# IDENTITY.md\n- **Name:** ${currentAgent.name}\n- **Vibe:** ${currentAgent.vibe}\n- **Emoji:** 🦞`}
                 />
               )}
               {activeWorkspaceTab === "user" && (
                 <textarea
                   className="markdown-editor"
-                  rows={10}
-                  value={workspaceAgent.userMd}
+                  rows={8}
+                  value={currentAgent.userMd}
                   onChange={e => {
                     const updated = [...agentConfigs];
                     updated[currentAgentConfigIdx].userMd = e.target.value;
                     setAgentConfigs(updated);
                   }}
-                  placeholder={`# USER.md - About Your Human\n- **Name:** ${userName}\n`}
+                  placeholder={`# USER.md\n- **Name:** ${userName}\n`}
                 />
               )}
               {activeWorkspaceTab === "soul" && (
                 <textarea
                   className="markdown-editor"
-                  rows={10}
-                  value={workspaceAgent.soulMd}
+                  rows={8}
+                  value={currentAgent.soulMd}
                   onChange={e => {
                     const updated = [...agentConfigs];
                     updated[currentAgentConfigIdx].soulMd = e.target.value;
                     setAgentConfigs(updated);
                   }}
-                  placeholder={`# SOUL.md\n## Mission\nServe ${userName}.\n`}
+                  placeholder={`# SOUL.md\n## Mission\nServe ${userName}.`}
                 />
               )}
             </div>
@@ -2267,37 +2364,24 @@ function App() {
                   setCurrentAgentConfigIdx(currentAgentConfigIdx + 1);
                   setActiveWorkspaceTab("identity");
                 } else {
-                  handleInstall();
+                  setCurrentAgentConfigIdx(0);
+                  setStep(16); // Go to Main Agent Workspace
                 }
               }}>
-                {currentAgentConfigIdx < agentConfigs.length - 1 ? "Next Agent Workspace" : (loading ? "Installing..." : "Finish Installation")}
+                {currentAgentConfigIdx < agentConfigs.length - 1 ? "Next Agent" : "Continue to Main Agent Workspace"}
               </button>
               <button className="secondary" onClick={() => {
                 if (currentAgentConfigIdx > 0) {
                   setCurrentAgentConfigIdx(currentAgentConfigIdx - 1);
                   setActiveWorkspaceTab("identity");
                 } else {
-                  setCurrentAgentConfigIdx(agentConfigs.length - 1);
-                  setStep(15.5);
+                  setStep(15);
                 }
-              }} disabled={loading}>Back</button>
+              }}>Back</button>
             </div>
-
-            {(loading || error) && (
-              <div className="progress-container" style={{marginTop: "2rem"}}>
-                {loading && (
-                  <div className="progress-bar">
-                    <div className="progress-fill" style={{width: progress.includes("Gateway") ? "80%" : (progress.includes("skill") ? "50%" : "20%")}} />
-                  </div>
-                )}
-                <p style={{fontSize: "0.9rem", color: error ? "var(--error)" : "var(--primary)"}}>{error ? "Installation Failed" : progress}</p>
-                <div className="logs-container">
-                  <pre>{logs}</pre>
-                </div>
-              </div>
-            )}
           </div>
         );
+
       case 16:
         return (
           <div className="step-view">
@@ -2364,9 +2448,9 @@ function App() {
                 {savingWorkspace ? "Saving..." : "💾 Save Changes"}
               </button>
               <button className="primary" onClick={handleInstall} disabled={loading} style={{flex: 1}}>
-                {loading ? "Installing..." : "Finish Installation"}
+                {loading ? "Verifying & Restarting..." : "Finish Installation"}
               </button>
-              <button className="secondary" onClick={() => setStep(15)} disabled={loading} style={{flex: "0 0 auto"}}>Back</button>
+              <button className="secondary" onClick={() => setStep(enableMultiAgent ? 15.5 : 15)} disabled={loading} style={{flex: "0 0 auto"}}>Back</button>
             </div>
 
             {(loading || error) && (
@@ -2466,15 +2550,19 @@ function App() {
                     <h3 style={{marginTop: 0, marginBottom: "0.5rem"}}>Configuration Complete</h3>
                     <p style={{marginBottom: "1.5rem"}}>Your agent is paired and ready. Would you like to configure advanced settings (Gateway, Skills, Security, Multi-Agent) now?</p>
                     <div className="button-group" style={{gap: "1rem"}}>
-                       <button className="primary" onClick={() => {
+                       <button className="primary" onClick={() => open(dashboardUrl)}>
+                         Open Web Dashboard
+                       </button>
+                       <button className="secondary" onClick={() => {
                          setMode("advanced");
                          setPairingStatus("");
+                         setSkipBasicConfig(true);
                          setStep(7);
                        }}>
-                         Yes, Configure Advanced
+                         Configure Advanced
                        </button>
                        <button className="secondary" onClick={() => invoke("close_app")}>
-                         No, Finish & Exit
+                         Exit Setup
                        </button>
                     </div>
                   </div>
@@ -2509,6 +2597,7 @@ function App() {
           {stepsList
             .filter(s => !s.hidden)
             .filter(s => mode === "advanced" || !s.advanced)
+            .filter(s => !skipBasicConfig || (s.id !== 8 && s.id !== 9))
             .map((s, idx) => (
               <li key={s.id} className={`step-indicator ${getStepStatus(s.id)}`}>
                 <span className="step-number">{idx + 1}</span>
