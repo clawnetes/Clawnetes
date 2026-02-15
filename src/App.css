@@ -64,7 +64,7 @@ body {
 }
 
 .logo {
-  font-size: 1.25rem;
+  font-size: 1.15rem;
   font-weight: 800;
   color: var(--primary);
   display: flex;
@@ -87,7 +87,7 @@ body {
   padding: 0.5rem 0.75rem;
   border-radius: 9999px;
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   font-weight: 500;
   transition: all 0.2s ease;
 }
@@ -109,7 +109,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.7rem;
+  font-size: 0.6rem;
   flex-shrink: 0;
 }
 
@@ -141,7 +141,7 @@ body {
 }
 
 h2 {
-  font-size: 1.5rem;
+  font-size: 1.35rem;
   font-weight: 700;
   margin-bottom: 0.75rem;
 }
@@ -150,7 +150,7 @@ h2 {
   color: var(--text-muted);
   margin-bottom: 1.5rem;
   line-height: 1.5;
-  font-size: 0.95rem;
+  font-size: 0.85rem;
 }
 
 /* Form Elements */
@@ -160,7 +160,7 @@ h2 {
 
 label {
   display: block;
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   font-weight: 600;
   color: var(--text-muted);
   margin-bottom: 0.4rem;
@@ -173,9 +173,9 @@ input, select, textarea {
   background-color: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 0.75rem 0.875rem;
+  padding: 0.6rem 0.75rem;
   color: var(--text-main);
-  font-size: 0.95rem;
+  font-size: 0.85rem;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
@@ -186,7 +186,7 @@ input:focus, select:focus {
 }
 
 .input-hint {
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   color: var(--text-muted);
   margin-top: 0.4rem;
 }
@@ -202,9 +202,9 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.75rem 1.5rem;
+  padding: 0.5rem 1rem;
   border-radius: 9999px;
-  font-size: 0.95rem;
+  font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
@@ -250,7 +250,7 @@ button:disabled {
 
 .security-alert p {
   margin-bottom: 1rem;
-  font-size: 0.95rem;
+  font-size: 0.85rem;
   line-height: 1.5;
 }
 
@@ -275,12 +275,12 @@ button:disabled {
 }
 
 .mode-card h3 {
-  font-size: 1.1rem;
+  font-size: 1.0rem;
   margin-bottom: 0.5rem;
 }
 
 .mode-card p {
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
 }
 
@@ -310,7 +310,7 @@ button:disabled {
 }
 
 .skill-card .skill-desc {
-  font-size: 0.8rem;
+  font-size: 0.7rem;
   color: var(--text-muted);
 }
 
@@ -319,7 +319,7 @@ button:disabled {
   border-radius: 12px;
   padding: 1rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   color: #00ff00;
   max-height: 200px;
   overflow-y: auto;
@@ -356,7 +356,7 @@ button:disabled {
 
 .pairing-code-display {
   font-family: ui-monospace, monospace;
-  font-size: 2rem;
+  font-size: 1.8rem;
   letter-spacing: 4px;
   color: var(--primary);
   margin: 1.5rem 0;
@@ -384,14 +384,14 @@ button:disabled {
 }
 
 .workspace-tabs .tab {
-  padding: 0.75rem 1.5rem;
+  padding: 0.6rem 1.2rem;
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--text-muted);
   cursor: pointer;
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   transition: all 0.2s;
 }
 
@@ -413,7 +413,7 @@ button:disabled {
   padding: 1rem;
   color: var(--text-main);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   line-height: 1.6;
   resize: vertical;
   min-height: 300px;
@@ -480,7 +480,7 @@ button:disabled {
 
 .radio-card-label {
   font-weight: 600;
-  font-size: 1rem;
+  font-size: 0.9rem;
   margin-bottom: 0.25rem;
   display: flex;
   align-items: center;
@@ -488,7 +488,7 @@ button:disabled {
 }
 
 .radio-card-desc {
-  font-size: 0.8rem;
+  font-size: 0.7rem;
   color: var(--text-muted);
 }
 
@@ -503,12 +503,12 @@ button:disabled {
 }
 
 .welcome-logo {
-  font-size: 4rem;
+  font-size: 3.8rem;
   margin-bottom: 1rem;
 }
 
 .welcome-title {
-  font-size: 2.5rem;
+  font-size: 2.3rem;
   font-weight: 800;
   margin-bottom: 1rem;
   background: linear-gradient(135deg, #FF4B2B 0%, #FF416C 100%);
@@ -517,7 +517,7 @@ button:disabled {
 }
 
 .welcome-text {
-  font-size: 1.1rem;
+  font-size: 1.0rem;
   color: var(--text-muted);
   max-width: 400px;
   margin-bottom: 3rem;

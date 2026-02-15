@@ -202,6 +202,8 @@ const PROVIDER_LOGOS: Record<string, string> = {
   "zai": "/images/zhipu.svg"
 };
 
+const EMOJI_OPTIONS = ["🦞", "🤖", "🧠", "⚡", "🔮", "🦉", "🦊", "🐯", "🦁", "🦄", "👽", "👾", "🐉", "🦕", "🦍", "🐕", "🐈", "🐙", "🍄", "🌎"];
+
 const SKILL_ICONS: Record<string, string> = {
   "1password": "/images/1password.svg",
   "apple-notes": "/images/apple-notes.svg",
@@ -342,6 +344,7 @@ function App() {
   const [userName, setUserName] = useState("");
   const [agentName, setAgentName] = useState("");
   const [agentVibe, setAgentVibe] = useState("Professional");
+  const [agentEmoji, setAgentEmoji] = useState("🦞");
   const [apiKey, setApiKey] = useState("");
   const [authMethod, setAuthMethod] = useState("token"); 
   const [provider, setProvider] = useState("anthropic");
@@ -400,6 +403,7 @@ function App() {
     fallbackModels: string[];
     skills: string[];
     vibe: string;
+    emoji: string;
     identityMd: string;
     userMd: string;
     soulMd: string;
@@ -728,6 +732,13 @@ function App() {
           privateKeyPath: remotePrivateKeyPath || null
         };
 
+        const defaultIdentity = `# IDENTITY.md - Who Am I?
+- **Name:** ${agentName}
+- **Vibe:** ${agentVibe}
+- **Emoji:** ${agentEmoji}
+---
+Managed by ClawSetup.`;
+
         await invoke("setup_remote_openclaw", {
           remote: remoteConfig,
           config: {
@@ -759,7 +770,7 @@ function App() {
             heartbeat_mode: mode === "advanced" ? heartbeatMode : null,
             idle_timeout_ms: mode === "advanced" && heartbeatMode === "idle" ? idleTimeoutMs : null,
             // Workspace customization
-            identity_md: mode === "advanced" && identityMd ? identityMd : null,
+            identity_md: (mode === "advanced" && identityMd) ? identityMd : defaultIdentity,
             user_md: mode === "advanced" && userMd ? userMd : null,
             soul_md: mode === "advanced" && soulMd ? soulMd : null,
             // Multi-agent support
@@ -770,7 +781,12 @@ function App() {
               fallback_models: a.fallbackModels.length > 0 ? a.fallbackModels : null,
               skills: a.skills.length > 0 ? a.skills : null,
               vibe: a.vibe,
-              identity_md: a.identityMd || null,
+              identity_md: a.identityMd || `# IDENTITY.md - Who Am I?
+- **Name:** ${a.name}
+- **Vibe:** ${a.vibe}
+- **Emoji:** ${a.emoji || "🦞"}
+---
+Managed by ClawSetup.`,
               user_md: a.userMd || null,
               soul_md: a.soulMd || null
             })) : null,
@@ -852,6 +868,13 @@ function App() {
         setProgress("Configuring agent...");
         setLogs("Configuring...");
 
+        const defaultIdentity = `# IDENTITY.md - Who Am I?
+- **Name:** ${agentName}
+- **Vibe:** ${agentVibe}
+- **Emoji:** ${agentEmoji}
+---
+Managed by ClawSetup.`;
+
         await invoke("configure_agent", {
           config: {
             provider,
@@ -877,7 +900,7 @@ function App() {
             fallback_models: mode === "advanced" && enableFallbacks ? fallbackModels.filter(m => m) : null,
             heartbeat_mode: mode === "advanced" ? heartbeatMode : null,
             idle_timeout_ms: mode === "advanced" && heartbeatMode === "idle" ? idleTimeoutMs : null,
-            identity_md: mode === "advanced" && identityMd ? identityMd : null,
+            identity_md: (mode === "advanced" && identityMd) ? identityMd : defaultIdentity,
             user_md: mode === "advanced" && userMd ? userMd : null,
             soul_md: mode === "advanced" && soulMd ? soulMd : null,
             // Multi-agent support
@@ -888,7 +911,12 @@ function App() {
               fallback_models: a.fallbackModels.length > 0 ? a.fallbackModels : null,
               skills: a.skills.length > 0 ? a.skills : null,
               vibe: a.vibe,
-              identity_md: a.identityMd || null,
+              identity_md: a.identityMd || `# IDENTITY.md - Who Am I?
+- **Name:** ${a.name}
+- **Vibe:** ${a.vibe}
+- **Emoji:** ${a.emoji || "🦞"}
+---
+Managed by ClawSetup.`,
               user_md: a.userMd || null,
               soul_md: a.soulMd || null
             })) : null,
@@ -1475,6 +1503,29 @@ function App() {
             <div className="form-group">
               <label>Agent Name</label>
               <input autoFocus placeholder="e.g. Jeeves" value={agentName} onChange={(e) => setAgentName(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Agent Emoji</label>
+              <div className="emoji-grid" style={{display: "flex", gap: "0.5rem", flexWrap: "wrap"}}>
+                {EMOJI_OPTIONS.map(e => (
+                  <button 
+                    key={e}
+                    className={`emoji-btn`}
+                    onClick={() => setAgentEmoji(e)}
+                    style={{
+                      fontSize: "1.25rem", 
+                      padding: "0.4rem", 
+                      borderRadius: "8px", 
+                      border: agentEmoji === e ? "2px solid var(--primary)" : "1px solid var(--border)",
+                      background: agentEmoji === e ? "rgba(255, 75, 43, 0.1)" : "var(--bg-card)",
+                      cursor: "pointer",
+                      minWidth: "40px"
+                    }}
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="form-group">
               <label>Agent Vibe</label>
@@ -2221,6 +2272,7 @@ function App() {
                     fallbackModels: [],
                     skills: [], // Start empty
                     vibe: agentVibe,
+                    emoji: agentEmoji,
                     identityMd: "",
                     userMd: "",
                     soulMd: ""
@@ -2265,6 +2317,34 @@ function App() {
                 placeholder="e.g., CodeBot"
                 autoComplete="off"
               />
+            </div>
+
+            <div className="form-group">
+              <label>Agent Emoji</label>
+              <div className="emoji-grid" style={{display: "flex", gap: "0.5rem", flexWrap: "wrap"}}>
+                {EMOJI_OPTIONS.map(e => (
+                  <button 
+                    key={e}
+                    className={`emoji-btn`}
+                    onClick={() => {
+                      const updated = [...agentConfigs];
+                      updated[currentAgentConfigIdx].emoji = e;
+                      setAgentConfigs(updated);
+                    }}
+                    style={{
+                      fontSize: "1.25rem", 
+                      padding: "0.4rem", 
+                      borderRadius: "8px", 
+                      border: currentAgent.emoji === e ? "2px solid var(--primary)" : "1px solid var(--border)",
+                      background: currentAgent.emoji === e ? "rgba(255, 75, 43, 0.1)" : "var(--bg-card)",
+                      cursor: "pointer",
+                      minWidth: "40px"
+                    }}
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Primary Model Config */}
@@ -2489,7 +2569,7 @@ function App() {
                     updated[currentAgentConfigIdx].identityMd = e.target.value;
                     setAgentConfigs(updated);
                   }}
-                  placeholder={`# IDENTITY.md\n- **Name:** ${currentAgent.name}\n- **Vibe:** ${currentAgent.vibe}\n- **Emoji:** 🦞`}
+                  placeholder={`# IDENTITY.md\n- **Name:** ${currentAgent.name}\n- **Vibe:** ${currentAgent.vibe}\n- **Emoji:** ${currentAgent.emoji}`}
                 />
               )}
               {activeWorkspaceTab === "user" && (
@@ -2572,7 +2652,7 @@ function App() {
                   rows={12}
                   value={identityMd}
                   onChange={e => setIdentityMd(e.target.value)}
-                  placeholder={`# IDENTITY.md - Who Am I?\n- **Name:** ${agentName}\n- **Vibe:** ${agentVibe}\n- **Emoji:** 🦞\n\nAdd more details about your agent's identity...`}
+                  placeholder={`# IDENTITY.md - Who Am I?\n- **Name:** ${agentName}\n- **Vibe:** ${agentVibe}\n- **Emoji:** ${agentEmoji}\n\nAdd more details about your agent's identity...`}
                 />
               )}
               {activeWorkspaceTab === "user" && (
