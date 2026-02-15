@@ -875,7 +875,30 @@ Managed by ClawSetup.`,
     const isUpdate = !!initialConfigRef.current;
     setProgress(isUpdate ? "Applying changes..." : "Starting setup...");
 
+    const remoteConfig = targetEnvironment === "cloud" ? {
+      ip: remoteIp,
+      user: remoteUser,
+      password: remotePassword || null,
+      privateKeyPath: remotePrivateKeyPath || null
+    } : null;
+
+    // Check pairing status live before applying config to ensure we don't overwrite it
+    let actualIsPaired = isPaired;
+    if (checks.openclaw || isUpdate) {
+      try {
+        const status: boolean = await invoke("check_pairing_status", { remote: remoteConfig });
+        if (status) {
+          actualIsPaired = true;
+          setIsPaired(true);
+        }
+      } catch (e) {
+        console.warn("Pre-install pairing check failed:", e);
+      }
+    }
+
     const configPayload = constructConfigPayload();
+    // Ensure we preserve state if we found it was paired
+    configPayload.preserve_state = actualIsPaired;
 
     if (initialConfigRef.current) {
         const initialPayload = transformInitialToPayload(initialConfigRef.current);
@@ -894,13 +917,6 @@ Managed by ClawSetup.`,
         // Remote installation flow
         setProgress(isUpdate ? "Updating remote configuration..." : "Setting up OpenClaw on remote server...");
         setLogs(isUpdate ? "Updating remote configuration..." : "Installing OpenClaw on remote server...");
-
-        const remoteConfig = {
-          ip: remoteIp,
-          user: remoteUser,
-          password: remotePassword || null,
-          privateKeyPath: remotePrivateKeyPath || null
-        };
 
         await invoke("setup_remote_openclaw", {
           remote: remoteConfig,
@@ -954,7 +970,7 @@ Managed by ClawSetup.`,
         }
 
         setProgress("Finalizing setup...");
-        if (!isPaired) {
+        if (!actualIsPaired) {
           const instruction: string = await invoke("generate_pairing_code");
           setPairingCode(instruction);
         }
@@ -1001,7 +1017,7 @@ Managed by ClawSetup.`,
         await invoke("start_gateway");
 
         setProgress("Finalizing setup...");
-        if (!isPaired) {
+        if (!actualIsPaired) {
           const instruction: string = await invoke("generate_pairing_code");
           setPairingCode(instruction);
         }
