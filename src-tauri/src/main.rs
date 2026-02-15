@@ -1628,14 +1628,16 @@ fn check_pairing_status(remote: Option<RemoteInfo>) -> Result<bool, String> {
 async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig, String> {
     // Helper to extract values from markdown
     fn extract_md_value(content: &str, key: &str) -> String {
+        let pattern = format!("**{}:**", key);
+
         for line in content.lines() {
             let trimmed = line.trim();
-            // Look for lines that match the pattern: - **Key:** value or **Key:** value
-            if trimmed.contains(&format!("**{}:**", key)) || trimmed.contains(&format!("- **{}:**", key)) {
-                if let Some(colon_pos) = trimmed.find(':') {
-                    let value = &trimmed[colon_pos + 1..];
-                    return value.trim().to_string();
-                }
+            // Look for the pattern **Key:** in the line
+            if let Some(pattern_pos) = trimmed.find(&pattern) {
+                // Extract everything after the pattern
+                let value_start = pattern_pos + pattern.len();
+                let value = &trimmed[value_start..];
+                return value.trim().to_string();
             }
         }
         String::new()
