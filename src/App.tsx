@@ -256,6 +256,22 @@ const SKILL_ICONS: Record<string, string> = {
   "weather": "/images/weather.svg"
 };
 
+function updateIdentityField(content: string, key: "Name" | "Vibe" | "Emoji", value: string) {
+  if (!content) return content;
+  const regex = new RegExp(`(- \\*\\*${key}:\\*\\* )(.*)`, "g");
+  return content.replace(regex, `$1${value}`);
+}
+
+function updateSoulMission(content: string, name: string) {
+  if (!content) return content;
+  // Matches "Serve [Name]." or "Serve [Name]" at start of line or after whitespace
+  const regex = /(Serve )(.*?)(\.?)$/gm;
+  if (regex.test(content)) {
+      return content.replace(regex, `$1${name}.`);
+  }
+  return content;
+}
+
 function RadioCard({ 
   options, 
   value, 
@@ -915,8 +931,8 @@ Managed by ClawSetup.`,
     try {
       if (targetEnvironment === "cloud") {
         // Remote installation flow
-        setProgress(isUpdate ? "Updating remote configuration..." : "Setting up OpenClaw on remote server...");
-        setLogs(isUpdate ? "Updating remote configuration..." : "Installing OpenClaw on remote server...");
+        setProgress(isUpdate ? "Updating remote configuration..." : "Deploying to remote server...");
+        setLogs(isUpdate ? "Updating remote configuration..." : "Preparing remote environment...");
 
         await invoke("setup_remote_openclaw", {
           remote: remoteConfig,
@@ -958,11 +974,18 @@ Managed by ClawSetup.`,
             remote: remoteConfig
           });
           if (!tunnelWorking) {
-            throw new Error("Tunnel established but HTTP connectivity test failed");
+            // If we get here with the new binary, verify_tunnel_connectivity should have returned Err, not Ok(false).
+            // So if we get Ok(false), it means we are definitely running the old binary.
+            throw new Error("Backend update pending. Please restart the application (Ctrl+C and npm run tauri dev) to apply the latest fixes.");
           }
         } catch (e) {
           setProgress("");
-          setLogs("Error: Tunnel verification failed - " + e);
+          const errStr = String(e);
+          if (errStr.includes("Backend update pending")) {
+             setLogs("Error: " + errStr);
+          } else {
+             setLogs("Error: Tunnel verification failed - " + errStr);
+          }
           setError(true);
           setTunnelActive(false);
           setLoading(false);
@@ -1660,7 +1683,16 @@ Managed by ClawSetup.`,
                 autoComplete="off" 
                 placeholder="e.g. David" 
                 value={userName} 
-                onChange={(e) => setUserName(e.target.value)} 
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setUserName(val);
+                  if (userMd) {
+                    setUserMd(updateIdentityField(userMd, "Name", val));
+                  }
+                  if (soulMd) {
+                    setSoulMd(updateSoulMission(soulMd, val));
+                  }
+                }} 
               />
             </div>
             <div className="button-group">
@@ -1676,7 +1708,13 @@ Managed by ClawSetup.`,
             <p className="step-description">Give your agent a name and a personality.</p>
             <div className="form-group">
               <label>Agent Name</label>
-              <input autoFocus placeholder="e.g. Jeeves" value={agentName} onChange={(e) => setAgentName(e.target.value)} />
+              <input autoFocus placeholder="e.g. Jeeves" value={agentName} onChange={(e) => {
+                const val = e.target.value;
+                setAgentName(val);
+                if (identityMd) {
+                  setIdentityMd(updateIdentityField(identityMd, "Name", val));
+                }
+              }} />
             </div>
             <div className="form-group">
               <label>Agent Emoji</label>
@@ -1685,7 +1723,12 @@ Managed by ClawSetup.`,
                   <button 
                     key={e}
                     className={`emoji-btn`}
-                    onClick={() => setAgentEmoji(e)}
+                    onClick={() => {
+                      setAgentEmoji(e);
+                      if (identityMd) {
+                        setIdentityMd(updateIdentityField(identityMd, "Emoji", e));
+                      }
+                    }}
                     style={{
                       fontSize: "1.25rem", 
                       padding: "0.4rem", 
@@ -1705,7 +1748,12 @@ Managed by ClawSetup.`,
               <label>Agent Vibe</label>
               <RadioCard
                 value={agentVibe}
-                onChange={setAgentVibe}
+                onChange={(val) => {
+                  setAgentVibe(val);
+                  if (identityMd) {
+                    setIdentityMd(updateIdentityField(identityMd, "Vibe", val));
+                  }
+                }}
                 columns={2}
                 options={[
                   { value: "Professional", label: "Professional" },
@@ -2451,8 +2499,12 @@ Managed by ClawSetup.`,
               <input
                 value={currentAgent.name}
                 onChange={(e) => {
+                  const val = e.target.value;
                   const updated = [...agentConfigs];
-                  updated[currentAgentConfigIdx].name = e.target.value;
+                  updated[currentAgentConfigIdx].name = val;
+                  if (updated[currentAgentConfigIdx].identityMd) {
+                      updated[currentAgentConfigIdx].identityMd = updateIdentityField(updated[currentAgentConfigIdx].identityMd, "Name", val);
+                  }
                   setAgentConfigs(updated);
                 }}
                 placeholder="e.g., CodeBot"
@@ -2470,6 +2522,9 @@ Managed by ClawSetup.`,
                     onClick={() => {
                       const updated = [...agentConfigs];
                       updated[currentAgentConfigIdx].emoji = e;
+                      if (updated[currentAgentConfigIdx].identityMd) {
+                          updated[currentAgentConfigIdx].identityMd = updateIdentityField(updated[currentAgentConfigIdx].identityMd, "Emoji", e);
+                      }
                       setAgentConfigs(updated);
                     }}
                     style={{
@@ -2627,6 +2682,9 @@ Managed by ClawSetup.`,
                 onChange={(val) => {
                   const updated = [...agentConfigs];
                   updated[currentAgentConfigIdx].vibe = val;
+                  if (updated[currentAgentConfigIdx].identityMd) {
+                      updated[currentAgentConfigIdx].identityMd = updateIdentityField(updated[currentAgentConfigIdx].identityMd, "Vibe", val);
+                  }
                   setAgentConfigs(updated);
                 }}
                 columns={2}
@@ -2767,8 +2825,8 @@ Managed by ClawSetup.`,
       case 16:
         return (
           <div className="step-view">
-            <h2>Review Configuration</h2>
-            <p className="step-description">Review your changes before applying.</p>
+            <h2>{initialConfigRef.current ? "Review Configuration" : "Deploy Your AI Agent"}</h2>
+            <p className="step-description">{initialConfigRef.current ? "Review your changes before applying." : "Your agent is ready to be deployed."}</p>
             
             <div className="status-card" style={{
               padding: "1.5rem", 
@@ -2779,12 +2837,12 @@ Managed by ClawSetup.`,
               textAlign: "center"
             }}>
                <div style={{fontSize: "2rem", marginBottom: "1rem"}}>
-                 {hasChanges ? "📝" : "✅"}
+                 {hasChanges ? (initialConfigRef.current ? "📝" : "🚀") : "✅"}
                </div>
-               <h3>{hasChanges ? "Configuration Updated" : "No Changes Detected"}</h3>
+               <h3>{hasChanges ? (initialConfigRef.current ? "Configuration Updated" : "Ready to Deploy") : "No Changes Detected"}</h3>
                <p style={{color: "var(--text-muted)"}}>
                  {hasChanges 
-                   ? "You have modified the agent configuration. Click below to apply these changes." 
+                   ? (initialConfigRef.current ? "You have modified the agent configuration. Click below to apply these changes." : "Your configuration is complete. Click below to deploy your agent.")
                    : "Your configuration matches the current active settings."}
                </p>
             </div>
@@ -2806,7 +2864,7 @@ Managed by ClawSetup.`,
             <div className="button-group">
               {hasChanges ? (
                 <button className="primary" onClick={handleInstall} disabled={loading}>
-                  {loading ? "Updating..." : "Update Configuration"}
+                  {loading ? (initialConfigRef.current ? "Updating..." : "Installing...") : (initialConfigRef.current ? "Update Configuration" : "Finish Setup")}
                 </button>
               ) : (
                 <button className="primary" onClick={() => setStep(17)}>

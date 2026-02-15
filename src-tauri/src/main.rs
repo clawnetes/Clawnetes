@@ -1,4 +1,5 @@
 use tauri::command;
+// Updated: Force rebuild trigger
 use std::process::Command;
 use std::fs;
 use std::thread;
@@ -295,11 +296,12 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
     let is_root = execute_ssh(&sess, "id -u")?.trim() == "0";
     let sudo_prefix = if is_root { "" } else { "sudo " };
     
-    // Prefix for openclaw commands (ensure brew env is loaded on Mac)
+    // Prefix for openclaw commands (ensure brew/nvm env is loaded)
     let nvm_prefix = if os_type == "Darwin" {
         "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; "
     } else {
-        ""
+        // Linux: Source profile and try to load NVM explicitly
+        "export PATH=\"$PATH:/usr/local/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; "
     };
 
     if os_type == "Linux" {
@@ -344,24 +346,30 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
          }
     }
 
-    // 2. Install OpenClaw
-    let install_claw_cmd = if os_type == "Linux" {
-        format!("{}npm install -g openclaw", sudo_prefix)
-    } else {
-        // MacOS: rely on brew environment
-        "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; npm install -g openclaw".to_string()
-    };
-        
-    execute_ssh(&sess, &install_claw_cmd)
-        .map_err(|e| format!("Failed to install OpenClaw: {}", e))?;
-    
-    // Ensure openclaw is in path for verification
-    let verify_cmd = if os_type == "Linux" {
-        "openclaw --version".to_string()
+    // 2. Install OpenClaw (Skip if already installed)
+    // We must use the prefix to ensure we find it if it's in a user path (nvm/brew)
+    let check_claw_cmd = if os_type == "Linux" {
+        // Try to load nvm if present for the check
+        "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; openclaw --version".to_string()
     } else {
         "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; openclaw --version".to_string()
     };
-    execute_ssh(&sess, &verify_cmd)?;
+
+    if execute_ssh(&sess, &check_claw_cmd).is_err() {
+        let install_claw_cmd = if os_type == "Linux" {
+            format!("{}npm install -g openclaw", sudo_prefix)
+        } else {
+            // MacOS: rely on brew environment
+            "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; npm install -g openclaw".to_string()
+        };
+            
+        execute_ssh(&sess, &install_claw_cmd)
+            .map_err(|e| format!("Failed to install OpenClaw: {}", e))?;
+    }
+    
+    // Ensure openclaw is in path for verification
+    // Reuse the same command structure for verification
+    execute_ssh(&sess, &check_claw_cmd)?;
 
     // 3. Configure
     let remote_home = execute_ssh(&sess, "echo $HOME")?.trim().to_string();
@@ -548,7 +556,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
                     }
                 } else {
                     if let Some(c) = channel_config.as_object_mut() {
-                        c.insert("dmPolicy".to_string(), serde_json::Value::String("allow".to_string()));
+                        c.insert("dmPolicy".to_string(), serde_json::Value::String("allowlist".to_string()));
                     }
                 }
 
@@ -1247,7 +1255,7 @@ Serve {}."#, config.user_name)
             if config.preserve_state != Some(true) {
                 let _ = shell_command("openclaw config set channels.telegram.accounts.main.dmPolicy pairing");
             } else {
-                let _ = shell_command("openclaw config set channels.telegram.accounts.main.dmPolicy allow");
+                let _ = shell_command("openclaw config set channels.telegram.accounts.main.dmPolicy allowlist");
             }
             let _ = shell_command("openclaw config set channels.telegram.accounts.main.name \"Primary Bot\"");
         }
@@ -1318,11 +1326,21 @@ Serve {}."#, config.user_name)
 #[command]
 fn start_gateway() -> Result<String, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    let _ = home; // Mark as unused if not needed, or remove completely if not used at all
     // config_path removed as unused
 
     let _ = shell_command("openclaw gateway stop");
     thread::sleep(Duration::from_secs(2));
+
+    // Ensure service is loaded on macOS (fix for "Could not find service" error)
+    #[cfg(target_os = "macos")]
+    {
+        let plist_path = home.join("Library/LaunchAgents/ai.openclaw.gateway.plist");
+        if plist_path.exists() {
+            // Use 'launchctl bootstrap' to load the service into the gui domain
+            // We use shell_command so $(id -u) is expanded by zsh
+            let _ = shell_command(&format!("launchctl bootstrap gui/$(id -u) \"{}\"", plist_path.to_string_lossy()));
+        }
+    }
 
     // Removed gateway install --force logic to prevent overwriting custom config.
     // Installation is now handled in configure_agent / setup_remote_openclaw.
@@ -1452,22 +1470,52 @@ fn get_dashboard_url(is_remote: bool, remote: Option<RemoteInfo>) -> Result<Stri
 
 #[command]
 fn verify_tunnel_connectivity(remote: RemoteInfo) -> Result<bool, String> {
-    // Retry loop: 5 attempts, 2 seconds between each
-    for _ in 0..5 {
-        thread::sleep(Duration::from_secs(2));
+    let mut last_error = String::from("No attempts made");
+    
+    // Retry loop: 30 attempts, 2 seconds between each (60s total)
+    for i in 0..30 {
+        if i > 0 { thread::sleep(Duration::from_secs(2)); }
 
-        if TcpStream::connect("127.0.0.1:18789").is_err() {
+        // 1. Basic TCP check to local tunnel port
+        if let Err(e) = TcpStream::connect("127.0.0.1:18789") {
+            last_error = format!("Local tunnel port 18789 not reachable: {}", e);
             continue;
         }
         
-        // Get token (this is expensive to do every loop, but safe)
+        // 2. SSH into remote to get token AND check if gateway is actually running
         let sess = match connect_ssh(&remote) {
             Ok(s) => s,
-            Err(_) => continue,
+            Err(e) => {
+                last_error = format!("SSH connection failed during verification: {}", e);
+                continue;
+            }
         };
+
+        // Check remote gateway status first
+        // We use a generous grep to see if the process exists
+        let check_process = execute_ssh(&sess, "ps aux | grep openclaw | grep -v grep");
+        if let Ok(output) = check_process {
+            if output.trim().is_empty() {
+                // Try the CLI status command as backup
+                let status_cmd = execute_ssh(&sess, "openclaw gateway status");
+                if let Ok(status) = status_cmd {
+                     if status.to_lowercase().contains("stopped") || status.to_lowercase().contains("error") {
+                         last_error = format!("Remote gateway is not running. Status: {}", status.trim());
+                         continue;
+                     }
+                } else {
+                     last_error = "Remote openclaw process not found".to_string();
+                     continue;
+                }
+            }
+        }
+
         let content = match execute_ssh(&sess, "cat ~/.openclaw/openclaw.json") {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(e) => {
+                last_error = format!("Failed to read remote config: {}", e);
+                continue;
+            }
         };
         
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -1478,20 +1526,35 @@ fn verify_tunnel_connectivity(remote: RemoteInfo) -> Result<bool, String> {
             {
                 let client = reqwest::blocking::Client::builder()
                     .timeout(Duration::from_secs(5))
+                    // Important: Start with no proxy to avoid local env interference
+                    .no_proxy()
                     .build()
                     .unwrap_or_else(|_| reqwest::blocking::Client::new());
 
                 let url = format!("http://127.0.0.1:18789/?token={}", token);
-                if let Ok(resp) = client.head(&url).send() {
-                    if resp.status().is_success() || resp.status().is_redirection() {
-                        return Ok(true);
+                
+                match client.head(&url).send() {
+                    Ok(resp) => {
+                        if resp.status().is_success() || resp.status().is_redirection() {
+                            return Ok(true);
+                        } else {
+                            last_error = format!("HTTP Error: Status {}", resp.status());
+                        }
+                    },
+                    Err(e) => {
+                        last_error = format!("HTTP Connection failed: {}", e);
                     }
                 }
+            } else {
+                last_error = "Could not find token in remote openclaw.json".to_string();
             }
+        } else {
+            last_error = "Failed to parse remote openclaw.json".to_string();
         }
     }
     
-    Ok(false)
+    // If we get here, all retries failed. Return the last specific error.
+    Err(format!("Tunnel verification failed after 60s. Last error: {}", last_error))
 }
 
 fn shell_command(cmd: &str) -> Result<String, String> {
