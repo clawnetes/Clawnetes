@@ -1035,6 +1035,89 @@ Managed by ClawSetup.`,
     setLoading(false);
   }
 
+  async function loadExistingConfig() {
+    setLoading(true);
+    setMaintenanceStatus("Loading existing configuration...");
+    try {
+      const remoteConfig = targetEnvironment === "cloud" ? {
+        ip: remoteIp,
+        user: remoteUser,
+        password: remotePassword || null,
+        privateKeyPath: remotePrivateKeyPath || null
+      } : null;
+
+      const config: any = await invoke("get_current_config", { remote: remoteConfig });
+      
+      // Populate state
+      setProvider(config.provider);
+      setApiKey(config.api_key);
+      setAuthMethod(config.auth_method);
+      setModel(config.model);
+      setUserName(config.user_name);
+      setAgentName(config.agent_name);
+      setAgentVibe(config.agent_vibe);
+      setAgentEmoji(config.agent_emoji || "🦞");
+      setTelegramToken(config.telegram_token);
+      
+      setGatewayPort(config.gateway_port);
+      setGatewayBind(config.gateway_bind);
+      setGatewayAuthMode(config.gateway_auth_mode);
+      setTailscaleMode(config.tailscale_mode);
+      setNodeManager(config.node_manager);
+      
+      setSelectedSkills(config.skills);
+      // Service keys might be partial, merge them?
+      setServiceKeys(config.service_keys);
+      
+      setSandboxMode(config.sandbox_mode);
+      setToolsMode(config.tools_mode);
+      setAllowedTools(config.allowed_tools);
+      setDeniedTools(config.denied_tools);
+      
+      setFallbackModels(config.fallback_models);
+      setEnableFallbacks(config.fallback_models.length > 0);
+      
+      setHeartbeatMode(config.heartbeat_mode);
+      setIdleTimeoutMs(config.idle_timeout_ms);
+      
+      setIdentityMd(config.identity_md);
+      setUserMd(config.user_md);
+      setSoulMd(config.soul_md);
+      setInitialWorkspace({
+        identity: config.identity_md,
+        user: config.user_md,
+        soul: config.soul_md
+      });
+
+      setEnableMultiAgent(config.enable_multi_agent);
+      if (config.enable_multi_agent && config.agent_configs) {
+          setNumAgents(config.agent_configs.length);
+          setAgentConfigs(config.agent_configs.map((a: any) => ({
+              id: a.id,
+              name: a.name,
+              model: a.model,
+              fallbackModels: a.fallback_models || [],
+              skills: a.skills || [],
+              vibe: a.vibe,
+              emoji: a.emoji || "🦞",
+              identityMd: a.identity_md || "",
+              userMd: a.user_md || "",
+              soulMd: a.soul_md || ""
+          })));
+      }
+
+      setMaintenanceStatus("✅ Configuration loaded.");
+      setMode("advanced"); // Switch to advanced mode to show all settings
+      return true;
+    } catch (e) {
+      console.error("Failed to load config:", e);
+      setMaintenanceStatus(`❌ Failed to load config: ${e}`);
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleToggleTunnel() {
     setLoading(true);
     if (tunnelActive) {
@@ -1229,8 +1312,13 @@ Managed by ClawSetup.`,
                   style={{flex: 1}}
                   onClick={async () => {
                     if (selectedMaint === "reconfigure") {
-                      // Go to Configuration Mode
-                      setStep(3);
+                      // Load existing config first
+                      const loaded = await loadExistingConfig();
+                      if (loaded) {
+                         // Go to Configuration Mode (Step 3 or 5 depending on preference)
+                         // Step 3 is security check, usually good to show again.
+                         setStep(3); 
+                      }
                     } else if (selectedMaint === "uninstall") {
                       if (confirm("Are you absolutely sure you want to completely remove OpenClaw and all its data?")) {
                         handleMaintenanceAction("uninstall");

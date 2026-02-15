@@ -1,0 +1,809 @@
+function App() {
+  const [step, setStep] = useState(0.5); // Start at Welcome page
+  const [mode, setMode] = useState("basic"); // "basic" or "advanced"
+  
+  // Environment selection
+  const [targetEnvironment, setTargetEnvironment] = useState("local");
+
+  // SSH Remote Configuration
+  const [remoteIp, setRemoteIp] = useState("");
+  const [remoteUser, setRemoteUser] = useState("");
+  const [remotePassword, setRemotePassword] = useState("");
+  const [remotePrivateKeyPath, setRemotePrivateKeyPath] = useState("");
+  const [sshStatus, setSshStatus] = useState<"idle" | "checking" | "requesting_password" | "success" | "error">("idle");
+  const [sshError, setSshError] = useState("");
+  const [tunnelActive, setTunnelActive] = useState(false);
+
+  const [checks, setChecks] = useState({ node: false, docker: false, openclaw: false });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+  const [logs, setLogs] = useState("");
+  const [pairingCode, setPairingCode] = useState("");
+  const [installingNode, setInstallingNode] = useState(false);
+  const [nodeInstallError, setNodeInstallError] = useState("");
+
+  // Form Data
+  const [userName, setUserName] = useState("");
+  const [agentName, setAgentName] = useState("");
+  const [agentVibe, setAgentVibe] = useState("Professional");
+  const [agentEmoji, setAgentEmoji] = useState("🦞");
+  const [apiKey, setApiKey] = useState("");
+  const [authMethod, setAuthMethod] = useState("token"); 
+  const [provider, setProvider] = useState("anthropic");
+  const [model, setModel] = useState("anthropic/claude-opus-4-6");
+  const [telegramToken, setTelegramToken] = useState("");
+  const [progress, setProgress] = useState("");
+  const [dashboardUrl, setDashboardUrl] = useState("http://127.0.0.1:18789");
+  const [openClawVersion, setOpenClawVersion] = useState("Checking...");
+  const [maintenanceStatus, setMaintenanceStatus] = useState("");
+  const [selectedMaint, setSelectedMaint] = useState<string>("repair");
+  const [maintCompleted, setMaintCompleted] = useState(false);
+
+  // Service Keys State
+  const [serviceKeys, setServiceKeys] = useState<Record<string, string>>({});
+  const [currentServiceIdx, setCurrentServiceIdx] = useState(0);
+  const [isConfiguringService, setIsConfiguringService] = useState<boolean | null>(false);
+
+  const servicesToConfigure = [
+    { id: "goplaces", name: "Google Places", placeholder: "API Key" },
+    { id: "notion", name: "Notion", placeholder: "Internal Integration Token" },
+    { id: "elevenlabs", name: "ElevenLabs (SAG)", placeholder: "API Key" },
+    { id: "nano-banana", name: "Nano Banana Pro", placeholder: "API Key" },
+    { id: "openai-images", name: "OpenAI Image Gen", placeholder: "API Key" }
+  ];
+
+  // Advanced Form Data
+  const [gatewayPort, setGatewayPort] = useState(18789);
+  const [gatewayBind, setGatewayBind] = useState("loopback");
+  const [gatewayAuthMode, setGatewayAuthMode] = useState("token");
+  const [tailscaleMode, setTailscaleMode] = useState("off");
+  const [nodeManager, setNodeManager] = useState("npm");
+  const [selectedSkills, setSelectedSkills] = useState<string[]>(["filesystem", "terminal"]);
+  const [skipBasicConfig, setSkipBasicConfig] = useState(false);
+
+  // NEW: Security Best Practices (Step 11)
+  const [sandboxMode, setSandboxMode] = useState("full");
+  const [toolsMode, setToolsMode] = useState("allowlist");
+  const [allowedTools, setAllowedTools] = useState<string[]>(["filesystem", "terminal", "browser"]);
+  const [deniedTools, setDeniedTools] = useState<string[]>([]);
+
+  // NEW: Fallback Models (Step 12)
+  const [enableFallbacks, setEnableFallbacks] = useState(false);
+  const [fallbackModels, setFallbackModels] = useState<string[]>([]);
+
+  // NEW: Session Management (Step 13)
+  const [heartbeatMode, setHeartbeatMode] = useState("1h");
+  const [idleTimeoutMs, setIdleTimeoutMs] = useState(3600000);
+
+  // NEW: Multi-Agent (Step 15)
+  const [enableMultiAgent, setEnableMultiAgent] = useState(false);
+  const [numAgents, setNumAgents] = useState(1);
+  const [agentConfigs, setAgentConfigs] = useState<Array<{
+    id: string;
+    name: string;
+    model: string;
+    fallbackModels: string[];
+    skills: string[];
+    vibe: string;
+    emoji: string;
+    identityMd: string;
+    userMd: string;
+    soulMd: string;
+  }>>([]);
+  const [currentAgentConfigIdx, setCurrentAgentConfigIdx] = useState(0);
+  // const [isConfiguringAgent, setIsConfiguringAgent] = useState(false);
+
+  // NEW: Workspace Customization (Step 16)
+  const [identityMd, setIdentityMd] = useState("");
+  const [userMd, setUserMd] = useState("");
+  const [soulMd, setSoulMd] = useState("");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState("identity");
+  const [initialWorkspace, setInitialWorkspace] = useState({ identity: "", user: "", soul: "" });
+  const [workspaceModified, setWorkspaceModified] = useState(false);
+  const [savingWorkspace, setSavingWorkspace] = useState(false);
+
+  // NEW: Custom Skills
+  const [customSkillName, setCustomSkillName] = useState("");
+  const [customSkillContent, setCustomSkillContent] = useState("");
+  const [showCustomSkillForm, setShowCustomSkillForm] = useState(false);
+
+  // Chat Interface (Step 18)
+  const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string }>>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [isChatting, setIsChatting] = useState(false);
+
+  // Pairing Data
+  const [pairingInput, setPairingInput] = useState("");
+  const [pairingStatus, setPairingStatus] = useState("");
+  const [isPaired, setIsPaired] = useState(false);
+  const [theme, setTheme] = useState("light");
+
+  const availableSkills = [
+    { id: "1password", name: "1Password", desc: "Set up and use 1Password CLI (op) for secrets management." },
+    { id: "apple-notes", name: "Apple Notes", desc: "Manage Apple Notes on macOS (create, view, edit, search)." },
+    { id: "apple-reminders", name: "Apple Reminders", desc: "Manage Apple Reminders on macOS (list, add, complete)." },
+    { id: "bear-notes", name: "Bear Notes", desc: "Create, search, and manage Bear notes via grizzly CLI." },
+    { id: "blogwatcher", name: "Blogwatcher", desc: "Monitor blogs and RSS/Atom feeds for updates." },
+    { id: "blucli", name: "BluOS", desc: "BluOS CLI for discovery, playback, and volume control." },
+    { id: "bluebubbles", name: "BlueBubbles", desc: "Send or manage iMessages via BlueBubbles.", requiresAuth: true, authPlaceholder: "Server URL & Password" },
+    { id: "camsnap", name: "CamSnap", desc: "Capture frames or clips from RTSP/ONVIF cameras." },
+    { id: "clawhub", name: "ClawHub", desc: "Search, install, update, and publish agent skills." },
+    { id: "coding-agent", name: "Coding Agent", desc: "Run Codex, Claude Code, or OpenCode programmatic agents." },
+    { id: "eightctl", name: "Eight Sleep", desc: "Control Eight Sleep pods (status, temperature, alarms)." },
+    { id: "gemini", name: "Gemini CLI", desc: "Gemini CLI for one-shot Q&A, summaries, and generation." },
+    { id: "gifgrep", name: "GifGrep", desc: "Search GIF providers, download results, and extract frames." },
+    { id: "github", name: "GitHub", desc: "Interact with GitHub using the gh CLI (issues, PRs, runs)." },
+    { id: "gog", name: "Google Workspace", desc: "CLI for Gmail, Calendar, Drive, Docs, Sheets, and Contacts." },
+    { id: "goplaces", name: "Google Places", desc: "Query Google Places API for search and details.", requiresAuth: true, authPlaceholder: "API Key" },
+    { id: "healthcheck", name: "Healthcheck", desc: "Host security hardening and risk-tolerance configuration." },
+    { id: "himalaya", name: "Himalaya (Email)", desc: "CLI to manage emails via IMAP/SMTP." },
+    { id: "imsg", name: "iMessage", desc: "Native macOS iMessage/SMS CLI for chats and sending." },
+    { id: "local-places", name: "Local Places", desc: "Search for places via Google Places API proxy." },
+    { id: "mcporter", name: "MCPorter", desc: "List, configure, and call MCP servers/tools directly." },
+    { id: "model-usage", name: "Model Usage", desc: "Summarize per-model usage/cost for Codex or Claude." },
+    { id: "nano-banana-pro", name: "Nano Banana Pro", desc: "Generate or edit images via Gemini 3 Pro Image.", requiresAuth: true, authPlaceholder: "API Key" },
+    { id: "nano-pdf", name: "Nano PDF", desc: "Edit PDFs with natural-language instructions." },
+    { id: "notion", name: "Notion", desc: "Create and manage Notion pages and databases.", requiresAuth: true, authPlaceholder: "Integration Token" },
+    { id: "obsidian", name: "Obsidian", desc: "Work with Obsidian vaults via obsidian-cli." },
+    { id: "openai-image-gen", name: "OpenAI Images", desc: "Batch-generate images via OpenAI Images API.", requiresAuth: true, authPlaceholder: "API Key" },
+    { id: "openai-whisper", name: "Whisper (Local)", desc: "Local speech-to-text with the Whisper CLI (no API key)." },
+    { id: "openai-whisper-api", name: "Whisper API", desc: "Transcribe audio via OpenAI Audio API.", requiresAuth: true, authPlaceholder: "API Key" },
+    { id: "openhue", name: "Philips Hue", desc: "Control Philips Hue lights/scenes via OpenHue CLI." },
+    { id: "oracle", name: "Oracle", desc: "Best practices for using the oracle CLI." },
+    { id: "ordercli", name: "OrderCLI", desc: "Foodora-only CLI for checking past/active orders." },
+    { id: "peekaboo", name: "Peekaboo", desc: "Capture and automate macOS UI." },
+    { id: "sag", name: "ElevenLabs TTS", desc: "ElevenLabs text-to-speech with mac-style say UX.", requiresAuth: true, authPlaceholder: "API Key" },
+    { id: "session-logs", name: "Session Logs", desc: "Search and analyze your own session logs." },
+    { id: "sherpa-onnx-tts", name: "Sherpa ONNX TTS", desc: "Local text-to-speech via sherpa-onnx (offline)." },
+    { id: "skill-creator", name: "Skill Creator", desc: "Create or update AgentSkills." },
+    { id: "slack", name: "Slack", desc: "Control Slack (messages, reactions, pins).", requiresAuth: true, authPlaceholder: "Bot Token" },
+    { id: "songsee", name: "SongSee", desc: "Generate spectrograms and feature-panel visualizations." },
+    { id: "sonoscli", name: "Sonos", desc: "Control Sonos speakers (status, playback, volume)." },
+    { id: "spotify-player", name: "Spotify", desc: "Terminal Spotify playback/search via spogo." },
+    { id: "summarize", name: "Summarize", desc: "Summarize text/transcripts from URLs and files." },
+    { id: "things-mac", name: "Things 3", desc: "Manage Things 3 on macOS (add, list, search tasks)." },
+    { id: "tmux", name: "Tmux", desc: "Remote-control tmux sessions for interactive CLIs." },
+    { id: "trello", name: "Trello", desc: "Manage Trello boards, lists, and cards.", requiresAuth: true, authPlaceholder: "API Key & Token" },
+    { id: "video-frames", name: "Video Frames", desc: "Extract frames or short clips from videos." },
+    { id: "voice-call", name: "Voice Call", desc: "Start voice calls via the OpenClaw voice-call plugin." },
+    { id: "wacli", name: "WhatsApp", desc: "Send WhatsApp messages via wacli CLI." },
+    { id: "weather", name: "Weather", desc: "Get current weather and forecasts." }
+  ];
+
+  const stepsList = [
+    { id: 0, name: "System State", hidden: true },
+    { id: 0.5, name: "Welcome", hidden: true },
+    { id: 1, name: "Environment" },
+    { id: 2, name: "System Check" },
+    { id: 3, name: "Security" },
+    { id: 5, name: "Identity" },
+    { id: 6, name: "Agent" },
+    { id: 7, name: "Gateway", advanced: true },
+    { id: 8, name: "Brain" },
+    { id: 9, name: "Channels" },
+    { id: 10, name: "Runtime", advanced: true },
+    { id: 10.5, name: "Workspace", advanced: true },
+    { id: 11, name: "Skills", advanced: true },
+    { id: 12, name: "Security+", advanced: true },
+    { id: 13, name: "Fallbacks", advanced: true },
+    { id: 14, name: "Session", advanced: true },
+    { id: 15, name: "Agents", advanced: true },
+    { id: 17, name: "Pairing" },
+    { id: 18, name: "Chat", hidden: true }
+  ];
+
+  useEffect(() => { checkSystem(true); }, []);
+
+  useEffect(() => {
+    if (step === 18) {
+      const initChat = async () => {
+        // Auto-start tunnel for remote
+        if (targetEnvironment === "cloud" && !tunnelActive) {
+          if (!remoteIp || !remoteUser) return;
+          try {
+            setMaintenanceStatus("Starting tunnel...");
+            if (sshStatus !== "success") {
+               await invoke("test_ssh_connection", { remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } });
+               setSshStatus("success");
+            }
+            await invoke("start_ssh_tunnel", { remote: { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } });
+            setTunnelActive(true);
+            setMaintenanceStatus("✅ Tunnel active.");
+          } catch (e) {
+            setMaintenanceStatus(`❌ Tunnel failed: ${e}`);
+          }
+        }
+
+        // Ensure Chat API is enabled (fixes 405 error)
+        try {
+           const remoteConfig = targetEnvironment === "cloud" ? {
+             ip: remoteIp,
+             user: remoteUser,
+             password: remotePassword || null,
+             privateKeyPath: remotePrivateKeyPath || null
+           } : null;
+           
+           await invoke("ensure_chat_enabled", { remote: remoteConfig });
+        } catch (e) {
+           console.error("Failed to ensure chat enabled:", e);
+        }
+      };
+      initChat();
+    }
+  }, [step, targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath, sshStatus, tunnelActive]);
+
+  async function installLocalNode() {
+  useEffect(() => {
+    if (provider === "anthropic") setAuthMethod("token");
+    else if (provider === "google") setAuthMethod("token");
+    else if (provider === "openai") setAuthMethod("token");
+    else setAuthMethod("token");
+  }, [provider]);
+
+  // Workspace change detection
+  useEffect(() => {
+    const modified =
+      identityMd !== initialWorkspace.identity ||
+      userMd !== initialWorkspace.user ||
+      soulMd !== initialWorkspace.soul;
+    setWorkspaceModified(modified);
+  }, [identityMd, userMd, soulMd, initialWorkspace]);
+
+  async function installLocalNode() {
+    setInstallingNode(true);
+    setNodeInstallError("");
+    try {
+      await invoke("install_local_nodejs");
+      await checkSystem(false);
+    } catch (e: any) {
+      setNodeInstallError("Failed to install: " + e);
+    } finally {
+      setInstallingNode(false);
+    }
+  }
+
+  async function checkSystem(skipRedirect = false) {
+    // Always check local system on initial load
+    const res: any = await invoke("check_prerequisites");
+    setChecks({
+      node: res.node_installed,
+      docker: res.docker_running,
+      openclaw: res.openclaw_installed
+    });
+    const version: string = await invoke("get_openclaw_version");
+    setOpenClawVersion(version);
+
+    if (res.openclaw_installed && !skipRedirect) {
+      setStep(18);
+      return true; // Indicate that we're going to maintenance
+    } else if (!skipRedirect) {
+      setStep(0.5); // Go to Welcome page if not installed
+    }
+    return res.openclaw_installed; // Return installation status
+  }
+
+  async function checkRemoteSystem(skipRedirect = false) {
+    // Check remote system (called from Step 1 when cloud environment is selected)
+    if (sshStatus === "success") {
+      const remote = {
+        ip: remoteIp,
+        user: remoteUser,
+        password: remotePassword || null,
+        privateKeyPath: remotePrivateKeyPath || null
+      };
+      
+      const res: any = await invoke("check_remote_prerequisites", { remote });
+      setChecks({
+        node: res.node_installed,
+        docker: res.docker_running,
+        openclaw: res.openclaw_installed
+      });
+      const version: string = await invoke("get_remote_openclaw_version", { remote });
+      setOpenClawVersion(version);
+
+      // If OpenClaw is already installed remotely, go to maintenance screen (unless skipping)
+      if (res.openclaw_installed && !skipRedirect) {
+        setStep(18);
+        return true; // Indicate that we're going to maintenance
+      }
+      return res.openclaw_installed; // Return installation status
+    }
+    return false;
+  }
+
+  function formatSshError(error: string): string {
+    const errorLower = error.toLowerCase();
+
+    // Authentication errors
+    if (errorLower.includes("no identities found in the ssh agent")) {
+      return "SSH agent has no keys loaded. Try using a password or specifying a key file.";
+    }
+    if (errorLower.includes("all authentication methods failed") || errorLower.includes("ssh authentication failed")) {
+      return "Authentication failed. Please check your username, password, or SSH key.";
+    }
+    if (errorLower.includes("public key auth failed") || errorLower.includes("publickey")) {
+      return "SSH key authentication failed. Check that your key is correct and has proper permissions.";
+    }
+    if (errorLower.includes("password auth failed") || errorLower.includes("authentication failed")) {
+      return "Password authentication failed. Please check your password.";
+    }
+    if (errorLower.includes("permission denied")) {
+      return "Permission denied. Check your username and authentication credentials.";
+    }
+
+    // Connection errors
+    if (errorLower.includes("connection refused")) {
+      return "Connection refused. Check that SSH is running on the server (port 22).";
+    }
+    if (errorLower.includes("connection timed out") || errorLower.includes("timeout")) {
+      return "Connection timed out. Check the IP address and network connectivity.";
+    }
+    if (errorLower.includes("no route to host")) {
+      return "Cannot reach the server. Check the IP address and network settings.";
+    }
+    if (errorLower.includes("network is unreachable")) {
+      return "Network unreachable. Check your internet connection.";
+    }
+    if (errorLower.includes("cannot reach")) {
+      return "Cannot connect to the server. Check the IP address and port.";
+    }
+
+    // Handshake errors
+    if (errorLower.includes("handshake failed")) {
+      return "SSH handshake failed. The server may not support SSH protocol.";
+    }
+
+    // Key file errors
+    if (errorLower.includes("no such file") || errorLower.includes("file not found")) {
+      return "SSH key file not found. Check the file path.";
+    }
+    if (errorLower.includes("invalid format") || errorLower.includes("bad key")) {
+      return "Invalid SSH key format. Ensure the key file is a valid private key.";
+    }
+
+    // Default: show a simplified version
+    const firstLine = error.split('\n')[0];
+    if (firstLine.length > 100) {
+      return "Connection failed. Please check your settings and try again.";
+    }
+    return firstLine.replace(/Error: /g, '').trim();
+  }
+
+  async function handleSshCheck() {
+    if (!remoteIp || !remoteUser) {
+      setSshError("Please provide IP address and username");
+      setTimeout(() => setSshError(""), 30000);
+      return;
+    }
+
+    setSshStatus("checking");
+    setSshError("");
+
+    try {
+      // Changed to use object parameter to match backend
+      const checkPromise = invoke("test_ssh_connection", {
+        remote: {
+          ip: remoteIp,
+          user: remoteUser,
+          password: remotePassword || null,
+          privateKeyPath: remotePrivateKeyPath || null
+        }
+      });
+
+      // Timeout after 15 seconds
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Connection timed out")), 15000)
+      );
+
+      await Promise.race([checkPromise, timeoutPromise]);
+
+      setSshStatus("success");
+      setSshError("");
+    } catch (e) {
+      setSshStatus("idle"); // Reset to idle on error so user can retry
+      const friendlyError = formatSshError(String(e));
+      setSshError(friendlyError);
+      setTimeout(() => setSshError(""), 30000);
+    }
+  }
+
+  async function handleSaveWorkspace(agentId?: string) {
+    setSavingWorkspace(true);
+    try {
+      await invoke("save_workspace_files", {
+        agentId: agentId || null,
+        identity: identityMd,
+        user: userMd,
+        soul: soulMd
+      });
+      // Update initial workspace to current values
+      setInitialWorkspace({
+        identity: identityMd,
+        user: userMd,
+        soul: soulMd
+      });
+      setWorkspaceModified(false);
+    } catch (e) {
+      console.error("Failed to save workspace:", e);
+      alert("Failed to save workspace: " + e);
+    }
+    setSavingWorkspace(false);
+  }
+
+  async function handleInstall() {
+    setLoading(true);
+    setError(false);
+    setProgress("Starting setup...");
+
+    const mappedSandboxMode = sandboxMode === "full" ? "all" : (sandboxMode === "partial" ? "non-main" : "off");
+
+    try {
+      if (targetEnvironment === "cloud") {
+        // Remote installation flow
+        setProgress("Setting up OpenClaw on remote server...");
+        setLogs("Installing OpenClaw on remote server...");
+
+        const remoteConfig = {
+          ip: remoteIp,
+          user: remoteUser,
+          password: remotePassword || null,
+          privateKeyPath: remotePrivateKeyPath || null
+        };
+
+        await invoke("setup_remote_openclaw", {
+          remote: remoteConfig,
+          config: {
+            provider,
+            api_key: apiKey,
+            auth_method: authMethod,
+            model,
+            user_name: userName,
+            agent_name: agentName,
+            agent_vibe: agentVibe,
+            telegram_token: telegramToken,
+            // Gateway settings
+            gateway_port: gatewayPort,
+            gateway_bind: gatewayBind,
+            gateway_auth_mode: gatewayAuthMode,
+            tailscale_mode: tailscaleMode,
+            // Runtime settings
+            node_manager: nodeManager,
+            skills: selectedSkills,
+            service_keys: serviceKeys,
+            // Advanced security settings
+            sandbox_mode: mode === "advanced" ? sandboxMode : null,
+            tools_mode: mode === "advanced" ? toolsMode : null,
+            allowed_tools: mode === "advanced" && toolsMode === "allowlist" ? allowedTools : null,
+            denied_tools: mode === "advanced" && toolsMode === "denylist" ? deniedTools : null,
+            // Fallback models
+            fallback_models: mode === "advanced" && enableFallbacks ? fallbackModels.filter(m => m) : null,
+            // Session management
+            heartbeat_mode: mode === "advanced" ? heartbeatMode : null,
+            idle_timeout_ms: mode === "advanced" && heartbeatMode === "idle" ? idleTimeoutMs : null,
+            // Workspace customization
+            identity_md: mode === "advanced" && identityMd ? identityMd : null,
+            user_md: mode === "advanced" && userMd ? userMd : null,
+            soul_md: mode === "advanced" && soulMd ? soulMd : null,
+            // Multi-agent support
+            agents: enableMultiAgent ? agentConfigs.map(a => ({
+              id: a.id,
+              name: a.name,
+              model: a.model,
+              fallback_models: a.fallbackModels.length > 0 ? a.fallbackModels : null,
+              skills: a.skills.length > 0 ? a.skills : null,
+              vibe: a.vibe,
+              identity_md: a.identityMd || null,
+              user_md: a.userMd || null,
+              soul_md: a.soulMd || null
+            })) : null,
+            preserve_state: isPaired
+          }
+        });
+
+        // Install skills on remote server
+        for (const skill of selectedSkills) {
+          setProgress(`Installing skill on remote: ${skill}...`);
+          setLogs(`Installing skill: ${skill}...`);
+          try {
+            await invoke("install_remote_skill", {
+              remote: remoteConfig,
+              name: skill
+            });
+          } catch (e) {
+            console.error(`Failed to install skill ${skill}:`, e);
+            setLogs(prev => prev + `\nWarning: Failed to install skill ${skill}: ${e}`);
+          }
+        }
+
+        setProgress("Establishing SSH tunnel...");
+        setLogs("Creating SSH tunnel to remote gateway...");
+        try {
+          await invoke("start_ssh_tunnel", { remote: remoteConfig });
+        } catch (e: any) {
+          if (String(e).includes("SSH tunnel is already running")) {
+            setLogs(prev => prev + "\nTunnel already active.");
+          } else {
+            throw e;
+          }
+        }
+        setTunnelActive(true);
+
+        // Verify tunnel is working with HTTP connectivity test
+        setProgress("Verifying tunnel connectivity...");
+        try {
+          const tunnelWorking: boolean = await invoke("verify_tunnel_connectivity", {
+            remote: remoteConfig
+          });
+          if (!tunnelWorking) {
+            throw new Error("Tunnel established but HTTP connectivity test failed");
+          }
+        } catch (e) {
+          setProgress("");
+          setLogs("Error: Tunnel verification failed - " + e);
+          setError(true);
+          setTunnelActive(false);
+          setLoading(false);
+          return;
+        }
+
+        setProgress("Finalizing setup...");
+        if (!isPaired) {
+          const instruction: string = await invoke("generate_pairing_code");
+          setPairingCode(instruction);
+        }
+
+        // Get dashboard URL (tunneled)
+        const url: string = await invoke("get_dashboard_url", {
+          isRemote: true,
+          remote: remoteConfig
+        });
+        setDashboardUrl(url);
+
+        setProgress("");
+        setStep(17);
+      } else {
+        // Local installation flow
+        setProgress("Installing OpenClaw (this may take a minute)...");
+        setLogs("Installing OpenClaw (this may take a minute)...");
+        if (!checks.openclaw) {
+          await invoke("install_openclaw");
+          const version: string = await invoke("get_openclaw_version");
+          setOpenClawVersion(version);
+        }
+
+        setProgress("Configuring agent...");
+        setLogs("Configuring...");
+
+        await invoke("configure_agent", {
+          config: {
+            provider,
+            api_key: apiKey,
+            auth_method: authMethod,
+            model,
+            user_name: userName,
+            agent_name: agentName,
+            agent_vibe: agentVibe,
+            telegram_token: telegramToken,
+            gateway_port: gatewayPort,
+            gateway_bind: gatewayBind,
+            gateway_auth_mode: gatewayAuthMode,
+            tailscale_mode: tailscaleMode,
+            node_manager: nodeManager,
+            skills: selectedSkills,
+            service_keys: serviceKeys,
+            // NEW: Advanced settings
+            sandbox_mode: mode === "advanced" ? mappedSandboxMode : null,
+            tools_mode: mode === "advanced" ? toolsMode : null,
+            allowed_tools: mode === "advanced" && toolsMode === "allowlist" ? allowedTools : null,
+            denied_tools: mode === "advanced" && toolsMode === "denylist" ? deniedTools : null,
+            fallback_models: mode === "advanced" && enableFallbacks ? fallbackModels.filter(m => m) : null,
+            heartbeat_mode: mode === "advanced" ? heartbeatMode : null,
+            idle_timeout_ms: mode === "advanced" && heartbeatMode === "idle" ? idleTimeoutMs : null,
+            identity_md: mode === "advanced" && identityMd ? identityMd : null,
+            user_md: mode === "advanced" && userMd ? userMd : null,
+            soul_md: mode === "advanced" && soulMd ? soulMd : null,
+            // Multi-agent support
+            agents: enableMultiAgent ? agentConfigs.map(a => ({
+              id: a.id,
+              name: a.name,
+              model: a.model,
+              fallback_models: a.fallbackModels.length > 0 ? a.fallbackModels : null,
+              skills: a.skills.length > 0 ? a.skills : null,
+              vibe: a.vibe,
+              identity_md: a.identityMd || null,
+              user_md: a.userMd || null,
+              soul_md: a.soulMd || null
+            })) : null,
+            preserve_state: isPaired
+          }
+        });
+
+        for (const skill of selectedSkills) {
+          setProgress(`Installing skill: ${skill}...`);
+          setLogs(`Installing skill: ${skill}...`);
+          try {
+            await invoke("install_skill", { name: skill });
+          } catch (e) {
+            console.error(`Failed to install skill ${skill}:`, e);
+            setLogs(prev => prev + `\nWarning: Failed to install skill ${skill}: ${e}`);
+          }
+        }
+
+        setProgress("Starting Gateway (this may take 20-30 seconds)...");
+        setLogs("Starting Gateway...");
+        await invoke("start_gateway");
+
+        setProgress("Finalizing setup...");
+        if (!isPaired) {
+          const instruction: string = await invoke("generate_pairing_code");
+          setPairingCode(instruction);
+        }
+
+        const url: string = await invoke("get_dashboard_url", {
+          isRemote: false,
+          remote: null
+        });
+        setDashboardUrl(url);
+
+        setProgress("");
+        setStep(17);
+      }
+    } catch (e) {
+      setProgress("");
+      setLogs("Error: " + e);
+      setError(true);
+    }
+    setLoading(false);
+  }
+
+  async function handlePairing() {
+    if (!pairingInput) return;
+    setPairingStatus("Verifying...");
+    try {
+      const remoteConfig = targetEnvironment === "cloud" ? {
+        ip: remoteIp,
+        user: remoteUser,
+        password: remotePassword || null,
+        privateKeyPath: remotePrivateKeyPath || null
+      } : null;
+
+      await invoke("approve_pairing", {
+        code: pairingInput,
+        remote: remoteConfig
+      });
+      setPairingStatus("✅ Success! Bot paired.");
+      setIsPaired(true);
+      setPairingInput("");
+    } catch (e) {
+      setPairingStatus("❌ Error: " + e);
+    }
+  }
+
+  async function handleMaintenanceAction(action: string) {
+    setLoading(true);
+    setMaintenanceStatus(`Running ${action}...`);
+    setLogs(`Starting maintenance: ${action}...\n`);
+    try {
+      let res: string;
+
+      // Build remote config if cloud environment
+      const remoteConfig = targetEnvironment === "cloud" && sshStatus === "success" ? {
+        ip: remoteIp,
+        user: remoteUser,
+        password: remotePassword || null,
+        privateKeyPath: remotePrivateKeyPath || null
+      } : null;
+
+      if (action === "repair") {
+        res = remoteConfig
+          ? await invoke("run_remote_doctor_repair", { remote: remoteConfig })
+          : await invoke("run_doctor_repair");
+        setMaintenanceStatus(`✅ Repair completed successfully.`);
+      } else if (action === "audit") {
+        res = remoteConfig
+          ? await invoke("run_remote_security_audit_fix", { remote: remoteConfig })
+          : await invoke("run_security_audit_fix");
+        setMaintenanceStatus(`✅ Security Audit completed successfully.`);
+      } else if (action === "update") {
+        if (remoteConfig) {
+           res = await invoke("update_remote_openclaw", { remote: remoteConfig });
+           setMaintenanceStatus(`✅ Remote OpenClaw updated.`);
+        } else {
+           res = await invoke("install_openclaw"); // Re-run install to update
+           setMaintenanceStatus(`✅ OpenClaw updated.`);
+        }
+      } else {
+        res = remoteConfig
+          ? await invoke("uninstall_remote_openclaw", { remote: remoteConfig })
+          : await invoke("uninstall_openclaw");
+        // Reset everything after uninstall
+        setChecks(prev => ({ ...prev, openclaw: false }));
+        setMaintenanceStatus(`✅ Uninstall completed successfully.`);
+      }
+      setLogs(prev => prev + (res || ""));
+      setMaintCompleted(true);
+    } catch (e) {
+      setLogs(prev => prev + `\nError: ${e}`);
+      setMaintenanceStatus(`❌ ${action} failed.`);
+    }
+    setLoading(false);
+  }
+
+  async function handleToggleTunnel() {
+    setLoading(true);
+    if (tunnelActive) {
+      try {
+        await invoke("stop_ssh_tunnel");
+        setTunnelActive(false);
+        setMaintenanceStatus("✅ SSH Tunnel disconnected.");
+      } catch (e) {
+        setMaintenanceStatus(`❌ Failed to stop tunnel: ${e}`);
+      }
+    } else {
+      setMaintenanceStatus("Establishing SSH tunnel...");
+      try {
+        const remote = { 
+          ip: remoteIp, 
+          user: remoteUser, 
+          password: remotePassword || null, 
+          privateKeyPath: remotePrivateKeyPath || null 
+        };
+        await invoke("start_ssh_tunnel", { remote });
+        setTunnelActive(true);
+        setMaintenanceStatus("✅ SSH Tunnel established on port 18789.");
+      } catch (e) {
+        setMaintenanceStatus(`❌ Failed to establish tunnel: ${e}`);
+      }
+    }
+    setLoading(false);
+  }
+
+  const toggleSkill = (id: string) => {
+    setSelectedSkills(prev => 
+      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+    );
+  };
+
+  async function handleChatSend() {
+    if (!chatInput.trim()) return;
+    const msg = chatInput.trim();
+    setChatInput("");
+    
+    // Optimistic update
+    const newHistory = [...chatMessages, { role: "user", content: msg }];
+    setChatMessages(newHistory);
+    setIsChatting(true);
+
+    try {
+      const remoteConfig = targetEnvironment === "cloud" ? {
+        ip: remoteIp,
+        user: remoteUser,
+        password: remotePassword || null,
+        privateKeyPath: remotePrivateKeyPath || null
+      } : null;
+
+      const response: string = await invoke("send_chat_message", {
+        message: msg,
+        history: chatMessages.map(m => ({role: m.role, content: m.content})), // Exclude current msg as backend adds it? No, wait. 
+        // Backend logic: "let mut messages = history; messages.push(...)"
+        // So we should pass the OLD history.
+        remote: remoteConfig
+      });
+      
+      setChatMessages([...newHistory, { role: "assistant", content: response }]);
+    } catch (e) {
+      setChatMessages([...newHistory, { role: "assistant", content: `Error: ${e}` }]);
+    }
+    setIsChatting(false);
+  }
+
+  const getStepStatus = (stepId: number) => {
+    if (step === stepId) return "active";
+    if (step > stepId) return "completed";
+    return "";
+  };
+
+  const isOAuthMethod = (method: string) => {
+    return ["antigravity", "gemini_cli", "codex"].includes(method);
+  };
+

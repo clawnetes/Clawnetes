@@ -17,7 +17,7 @@ lazy_static! {
     static ref TUNNEL_RUNNING: AtomicBool = AtomicBool::new(false);
 }
 
-#[derive(serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct AgentData {
     id: String,
     name: String,
@@ -25,9 +25,42 @@ struct AgentData {
     fallback_models: Option<Vec<String>>,
     skills: Option<Vec<String>>,
     vibe: String,
+    emoji: Option<String>,
     identity_md: Option<String>,
     user_md: Option<String>,
     soul_md: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct CurrentConfig {
+    provider: String,
+    api_key: String,
+    auth_method: String,
+    model: String,
+    user_name: String,
+    agent_name: String,
+    agent_vibe: String,
+    agent_emoji: String,
+    telegram_token: String,
+    gateway_port: u16,
+    gateway_bind: String,
+    gateway_auth_mode: String,
+    tailscale_mode: String,
+    node_manager: String,
+    skills: Vec<String>,
+    service_keys: std::collections::HashMap<String, String>,
+    sandbox_mode: String,
+    tools_mode: String,
+    allowed_tools: Vec<String>,
+    denied_tools: Vec<String>,
+    fallback_models: Vec<String>,
+    heartbeat_mode: String,
+    idle_timeout_ms: u64,
+    identity_md: String,
+    user_md: String,
+    soul_md: String,
+    enable_multi_agent: bool,
+    agent_configs: Vec<AgentData>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1278,7 +1311,7 @@ Serve {}."#, config.user_name)
 #[command]
 fn start_gateway() -> Result<String, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    let openclaw_root = home.join(".openclaw");
+    let _ = home; // Mark as unused if not needed, or remove completely if not used at all
     // config_path removed as unused
 
     let _ = shell_command("openclaw gateway stop");
@@ -1485,6 +1518,210 @@ fn shell_command(cmd: &str) -> Result<String, String> {
 }
 
 #[command]
+async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig, String> {
+    // Helper to extract values from markdown
+    fn extract_md_value(content: &str, key: &str) -> String {
+        for line in content.lines() {
+            if line.contains(key) {
+                let parts: Vec<&str> = line.splitn(2, ':').collect();
+                if parts.len() == 2 {
+                    return parts[1].trim().trim_matches('*').trim().to_string();
+                }
+            }
+        }
+        String::new()
+    }
+
+    let (openclaw_json_str, auth_profiles_str, identity_str, user_str, soul_str, _home_dir) = if let Some(ref r) = remote {
+        let sess = connect_ssh(r)?;
+        let remote_home = execute_ssh(&sess, "echo $HOME")?.trim().to_string();
+        
+        let oc_json = execute_ssh(&sess, "cat ~/.openclaw/openclaw.json").unwrap_or_default();
+        let auth_json = execute_ssh(&sess, "cat ~/.openclaw/agents/main/agent/auth-profiles.json").unwrap_or_default();
+        let id_md = execute_ssh(&sess, "cat ~/.openclaw/workspace/IDENTITY.md").unwrap_or_default();
+        let u_md = execute_ssh(&sess, "cat ~/.openclaw/workspace/USER.md").unwrap_or_default();
+        let s_md = execute_ssh(&sess, "cat ~/.openclaw/workspace/SOUL.md").unwrap_or_default();
+        
+        (oc_json, auth_json, id_md, u_md, s_md, remote_home)
+    } else {
+        let home = dirs::home_dir().ok_or("Could not find home directory")?;
+        let oc_path = home.join(".openclaw").join("openclaw.json");
+        let auth_path = home.join(".openclaw").join("agents").join("main").join("agent").join("auth-profiles.json");
+        let ws_path = home.join(".openclaw").join("workspace");
+        
+        (
+            fs::read_to_string(&oc_path).unwrap_or_default(),
+            fs::read_to_string(&auth_path).unwrap_or_default(),
+            fs::read_to_string(ws_path.join("IDENTITY.md")).unwrap_or_default(),
+            fs::read_to_string(ws_path.join("USER.md")).unwrap_or_default(),
+            fs::read_to_string(ws_path.join("SOUL.md")).unwrap_or_default(),
+            home.to_string_lossy().to_string()
+        )
+    };
+
+    if openclaw_json_str.is_empty() {
+        return Err("Configuration not found".to_string());
+    }
+
+    let oc_config: serde_json::Value = serde_json::from_str(&openclaw_json_str).map_err(|e| format!("Failed to parse openclaw.json: {}", e))?;
+    let auth_config: serde_json::Value = serde_json::from_str(&auth_profiles_str).unwrap_or(serde_json::json!({}));
+    let empty_json = serde_json::json!({});
+
+    // Gateway Config
+    let gateway = oc_config.get("gateway").unwrap_or(&empty_json);
+    let gateway_port = gateway.get("port").and_then(|v| v.as_u64()).unwrap_or(18789) as u16;
+    let gateway_bind = gateway.get("bind").and_then(|v| v.as_str()).unwrap_or("loopback").to_string();
+    let gateway_auth_mode = gateway.get("auth").and_then(|a| a.get("mode")).and_then(|v| v.as_str()).unwrap_or("token").to_string();
+    let tailscale_mode = gateway.get("tailscale").and_then(|t| t.get("mode")).and_then(|v| v.as_str()).unwrap_or("off").to_string();
+
+    // Agent Config
+    let defaults = oc_config.get("agents").and_then(|a| a.get("defaults")).unwrap_or(&empty_json);
+    let model_primary = defaults.get("model").and_then(|m| m.get("primary")).and_then(|v| v.as_str()).unwrap_or("anthropic/claude-opus-4-6").to_string();
+    
+    // Auth & Provider
+    let profile_name = format!("{}:default", model_primary.split('/').next().unwrap_or("anthropic"));
+    let profile = auth_config.get("profiles").and_then(|p| p.get(&profile_name)).unwrap_or(&empty_json);
+    let provider = profile.get("provider").and_then(|v| v.as_str()).unwrap_or("anthropic").to_string();
+    let api_key = profile.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let auth_method = profile.get("type").and_then(|v| v.as_str()).unwrap_or(if profile.get("mode").is_some() { profile.get("mode").and_then(|v| v.as_str()).unwrap_or("token") } else { "token" }).to_string();
+
+    // Markdown Extraction
+    let agent_name = extract_md_value(&identity_str, "Name");
+    let agent_vibe = extract_md_value(&identity_str, "Vibe");
+    let agent_emoji = extract_md_value(&identity_str, "Emoji");
+    let user_name = extract_md_value(&user_str, "Name");
+
+    // Telegram
+    let telegram_token = oc_config.get("channels")
+        .and_then(|c| c.get("telegram"))
+        .and_then(|t| t.get("accounts"))
+        .and_then(|a| a.get("main"))
+        .and_then(|m| m.get("botToken"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Skills (Approximate by checking config overrides if possible, or just defaults)
+    // Note: npx clawhub install modifies package.json in workspace/skills, not openclaw.json usually?
+    // Actually `openclaw.json` does NOT list installed skills usually, they are in `workspace/skills`.
+    // We can try to list directories in workspace/skills
+    // For now, we'll leave skills empty or try to list them if possible.
+    let skills = Vec::new(); // TODO: Implement reading workspace/skills directory
+
+    // Advanced Settings
+    let sandbox_mode = defaults.get("sandbox").and_then(|s| s.get("mode")).and_then(|v| v.as_str()).unwrap_or("full").to_string();
+    let mapped_sandbox = if sandbox_mode == "all" { "full" } else if sandbox_mode == "non-main" { "partial" } else if sandbox_mode == "off" { "none" } else { &sandbox_mode };
+
+    let tools = oc_config.get("tools").unwrap_or(&empty_json);
+    let allowed_tools: Vec<String> = tools.get("allow").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+    let denied_tools: Vec<String> = tools.get("deny").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+    let tools_mode = if !allowed_tools.is_empty() { "allowlist" } else if !denied_tools.is_empty() { "denylist" } else { "all" };
+
+    let fallbacks: Vec<String> = defaults.get("model")
+        .and_then(|m| m.get("fallbacks"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+
+    let heartbeat = defaults.get("heartbeat").unwrap_or(&empty_json);
+    let heartbeat_mode = if heartbeat.get("enabled") == Some(&serde_json::json!(false)) {
+        "never".to_string()
+    } else if let Some(mode) = heartbeat.get("mode").and_then(|v| v.as_str()) {
+        mode.to_string()
+    } else if let Some(every) = heartbeat.get("every").and_then(|v| v.as_str()) {
+        every.to_string()
+    } else {
+        "1h".to_string()
+    };
+    let idle_timeout = heartbeat.get("timeout").and_then(|v| v.as_u64()).unwrap_or(3600000);
+
+    // Multi-agent
+    let empty_vec = vec![];
+    let agent_list = oc_config.get("agents").and_then(|a| a.get("list")).and_then(|v| v.as_array()).unwrap_or(&empty_vec);
+    let enable_multi_agent = agent_list.len() > 1; // Assuming main is always there
+    let mut agent_configs = Vec::new();
+
+    if enable_multi_agent {
+         // We need to fetch details for each agent
+         // This might be expensive remotely, but necessary
+         // Filter out 'main' or include it? The frontend expects sub-agents in the list usually?
+         // Frontend uses agentConfigs for the list of agents to configure.
+         // If multi-agent is enabled, we probably want to load all of them.
+         
+         for agent_val in agent_list {
+             let aid = agent_val.get("id").and_then(|s| s.as_str()).unwrap_or("").to_string();
+             if aid.is_empty() || aid == "main" { continue; } // Skip main as it is handled by top-level
+             
+             let name = agent_val.get("name").and_then(|s| s.as_str()).unwrap_or("Agent").to_string();
+             let amodel = agent_val.get("model").and_then(|m| m.get("primary")).and_then(|s| s.as_str()).unwrap_or("").to_string();
+             let afallbacks: Vec<String> = agent_val.get("model").and_then(|m| m.get("fallbacks")).and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+             
+             // We need to read their IDENTITY.md etc.
+             // Local or Remote
+             let (aid_md, _au_md, _as_md) = if let Some(r) = &remote {
+                 // We can reuse the session if we refactor, but for now just basic logic (inefficient but works)
+                 // NOTE: connect_ssh is expensive. In a real app we'd pass session.
+                 // For now, let's assume we can just use defaults or try to fetch.
+                 // Optimization: Don't fetch sub-agent MDs if too slow? Or just do it.
+                 let sess = connect_ssh(r)?;
+                 let imd = execute_ssh(&sess, &format!("cat ~/.openclaw/agents/{}/workspace/IDENTITY.md", aid)).unwrap_or_default();
+                 (imd, String::new(), String::new())
+             } else {
+                 let home = dirs::home_dir().unwrap();
+                 let imd = fs::read_to_string(home.join(".openclaw").join("agents").join(&aid).join("workspace").join("IDENTITY.md")).unwrap_or_default();
+                 (imd, String::new(), String::new())
+             };
+             
+             let avibe = extract_md_value(&aid_md, "Vibe");
+             let aemoji = extract_md_value(&aid_md, "Emoji");
+             
+             agent_configs.push(AgentData {
+                 id: aid,
+                 name,
+                 model: amodel,
+                 fallback_models: Some(afallbacks),
+                 skills: None, // Hard to detect per-agent skills without reading package.json in each workspace
+                 vibe: avibe,
+                 emoji: Some(aemoji),
+                 identity_md: Some(aid_md),
+                 user_md: None,
+                 soul_md: None
+             });
+         }
+    }
+
+    Ok(CurrentConfig {
+        provider,
+        api_key,
+        auth_method,
+        model: model_primary,
+        user_name,
+        agent_name,
+        agent_vibe,
+        agent_emoji,
+        telegram_token,
+        gateway_port,
+        gateway_bind,
+        gateway_auth_mode,
+        tailscale_mode,
+        node_manager: "npm".to_string(), // Default, hard to detect
+        skills,
+        service_keys: std::collections::HashMap::new(), // Hard to extract safely/reliably from auth-profiles without trying every key
+        sandbox_mode: mapped_sandbox.to_string(),
+        tools_mode: tools_mode.to_string(),
+        allowed_tools,
+        denied_tools,
+        fallback_models: fallbacks,
+        heartbeat_mode,
+        idle_timeout_ms: idle_timeout,
+        identity_md: identity_str,
+        user_md: user_str,
+        soul_md: soul_str,
+        enable_multi_agent,
+        agent_configs
+    })
+}
+
+#[command]
 async fn install_local_nodejs() -> Result<String, String> {
     // 1. Try brew (macOS standard)
     if shell_command("brew --version").is_ok() {
@@ -1538,8 +1775,49 @@ fn main() {
             uninstall_remote_openclaw,
             update_remote_openclaw,
             get_remote_gateway_token,
-            verify_tunnel_connectivity
+            verify_tunnel_connectivity,
+            get_current_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_agent_config_deserialization() {
+        let json_data = r#"
+        {
+            "provider": "anthropic",
+            "api_key": "sk-test-123",
+            "model": "anthropic/claude-opus-4-6",
+            "user_name": "Test User",
+            "agent_name": "Test Agent",
+            "agent_vibe": "Professional",
+            "agents": [
+                {
+                    "id": "agent-1",
+                    "name": "SubAgent 1",
+                    "model": "openai/gpt-4o",
+                    "vibe": "Friendly",
+                    "emoji": "🤖"
+                }
+            ]
+        }
+        "#;
+
+        let config: AgentConfig = serde_json::from_str(json_data).expect("Failed to deserialize AgentConfig");
+
+        assert_eq!(config.provider, "anthropic");
+        assert_eq!(config.api_key, "sk-test-123");
+        assert_eq!(config.model, "anthropic/claude-opus-4-6");
+        assert_eq!(config.user_name, "Test User");
+        
+        let agents = config.agents.expect("Agents list should be present");
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].name, "SubAgent 1");
+        assert_eq!(agents[0].emoji, Some("🤖".to_string()));
+    }
 }
