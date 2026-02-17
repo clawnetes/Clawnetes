@@ -1,5 +1,15 @@
 import { ModelOption } from "../types";
 
+// Preferred default models per provider (used when user switches provider)
+export const DEFAULT_MODELS: Record<string, string> = {
+  "anthropic": "anthropic/claude-opus-4-6",
+  "openai": "openai/gpt-5.3-codex",
+  "google": "google/gemini-3-pro-preview",
+  "google-vertex": "google-vertex/gemini-3-pro-preview",
+  "openrouter": "openrouter/anthropic/claude-opus-4.6",
+  "xai": "xai/grok-4",
+};
+
 export const MODELS_BY_PROVIDER: Record<string, ModelOption[]> = {
   "anthropic": [
     { value: "anthropic/claude-haiku-4-5", label: "Claude Haiku 4 5", description: "Input: text+image • Ctx: 195k" },

@@ -240,18 +240,27 @@ button:disabled {
 
 /* Special Components */
 .security-alert {
-  background-color: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.2);
+  background-color: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
   padding: 1.5rem;
   border-radius: 16px;
-  color: #fecaca;
+  color: var(--text-main);
   margin-bottom: 2rem;
 }
 
 .security-alert p {
   margin-bottom: 1rem;
-  font-size: 0.85rem;
-  line-height: 1.5;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.security-alert p:last-child {
+  margin-bottom: 0;
+}
+
+body.light-theme .security-alert {
+  background-color: rgba(239, 68, 68, 0.06);
+  border-color: rgba(239, 68, 68, 0.25);
 }
 
 .mode-card-container {

@@ -4,7 +4,7 @@ import { open } from "@tauri-apps/api/shell";
 import { open as openDialog } from "@tauri-apps/api/dialog";
 import "./App.css";
 import { PERSONA_TEMPLATES } from "./presets/personaTemplates";
-import { MODELS_BY_PROVIDER, PROVIDER_LOGOS, EMOJI_OPTIONS, SKILL_ICONS } from "./presets/modelsByProvider";
+import { MODELS_BY_PROVIDER, DEFAULT_MODELS, PROVIDER_LOGOS, EMOJI_OPTIONS, SKILL_ICONS } from "./presets/modelsByProvider";
 import { AVAILABLE_SKILLS } from "./presets/availableSkills";
 import { AGENT_TYPE_PRESETS } from "./presets/agentPresets";
 import { BUSINESS_FUNCTION_PRESETS } from "./presets/businessFunctionPresets";
@@ -224,7 +224,7 @@ function App() {
     { id: 10.5, name: "Workspace", advanced: true },
     { id: 11, name: "Skills", advanced: true, hidden: isPresetAgent },
     { id: 12, name: "Security+", advanced: true, hidden: isPresetAgent },
-    { id: 13, name: "Fallbacks", advanced: true, hidden: isPresetAgent },
+    { id: 13, name: "Models", advanced: true, hidden: isPresetAgent },
     { id: 14, name: "Session", advanced: true, hidden: isPresetAgent },
     { id: 15, name: "Functions", advanced: true },
     { id: 15.5, name: "Agents", advanced: true, hidden: true },
@@ -1687,7 +1687,9 @@ Managed by ClawSetup.`,
                   value={provider}
                   onChange={(p) => {
                     setProvider(p);
-                    if (MODELS_BY_PROVIDER[p] && MODELS_BY_PROVIDER[p].length > 0) {
+                    if (DEFAULT_MODELS[p]) {
+                      setModel(DEFAULT_MODELS[p]);
+                    } else if (MODELS_BY_PROVIDER[p] && MODELS_BY_PROVIDER[p].length > 0) {
                       setModel(MODELS_BY_PROVIDER[p][0].value);
                     }
                   }}
@@ -2099,9 +2101,50 @@ Managed by ClawSetup.`,
       case 13:
         return (
           <div className="step-view">
-            <h2>Fallback Models</h2>
-            <p className="step-description">Configure backup models for increased reliability.</p>
+            <h2>Model Configuration</h2>
+            <p className="step-description">Configure your primary and fallback models.</p>
 
+            <div className="form-group" style={{marginBottom: "1.5rem", padding: "1rem", border: "1px solid var(--border)", borderRadius: "12px"}}>
+              <label>Primary Model</label>
+              <p className="step-description" style={{fontSize: "0.85rem", marginBottom: "0.75rem"}}>Change the primary model used by your agent.</p>
+
+              <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Provider</label>
+              <div style={{maxHeight: "200px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem", marginBottom: "1rem"}}>
+                <RadioCard
+                  value={provider}
+                  onChange={(p) => {
+                    setProvider(p);
+                    if (DEFAULT_MODELS[p]) {
+                      setModel(DEFAULT_MODELS[p]);
+                    } else if (MODELS_BY_PROVIDER[p] && MODELS_BY_PROVIDER[p].length > 0) {
+                      setModel(MODELS_BY_PROVIDER[p][0].value);
+                    }
+                  }}
+                  columns={2}
+                  options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
+                    value: p,
+                    label: p.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+                    icon: PROVIDER_LOGOS[p]
+                  }))}
+                />
+              </div>
+
+              {MODELS_BY_PROVIDER[provider] && (
+                <>
+                  <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Model</label>
+                  <div style={{maxHeight: "250px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem"}}>
+                    <RadioCard
+                      value={model}
+                      onChange={setModel}
+                      columns={1}
+                      options={MODELS_BY_PROVIDER[provider].map(m => ({ value: m.value, label: m.label, description: m.description }))}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            <h3 style={{marginTop: "1.5rem", marginBottom: "0.5rem"}}>Fallback Models</h3>
             <div className="mode-card-container">
               <div className={`mode-card ${enableFallbacks ? "active" : ""}`} onClick={() => setEnableFallbacks(true)}>
                 <h3>Enable Fallbacks</h3>
@@ -2132,11 +2175,13 @@ Managed by ClawSetup.`,
                           onChange={(newProv) => {
                             if (!newProv) return;
                             // Set default model for this provider
-                            if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
-                              const newModels = [...fallbackModels];
+                            const newModels = [...fallbackModels];
+                            if (DEFAULT_MODELS[newProv]) {
+                              newModels[idx] = DEFAULT_MODELS[newProv];
+                            } else if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
                               newModels[idx] = MODELS_BY_PROVIDER[newProv][0].value;
-                              setFallbackModels(newModels);
                             }
+                            setFallbackModels(newModels);
                           }}
                           columns={2}
                           options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
@@ -2533,11 +2578,13 @@ Managed by ClawSetup.`,
                 <RadioCard
                    value={currentAgentProvider}
                    onChange={(newProv) => {
-                     if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
-                       const updated = [...agentConfigs];
+                     const updated = [...agentConfigs];
+                     if (DEFAULT_MODELS[newProv]) {
+                       updated[currentAgentConfigIdx].model = DEFAULT_MODELS[newProv];
+                     } else if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
                        updated[currentAgentConfigIdx].model = MODELS_BY_PROVIDER[newProv][0].value;
-                       setAgentConfigs(updated);
                      }
+                     setAgentConfigs(updated);
                    }}
                    columns={2}
                    options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
@@ -2604,11 +2651,13 @@ Managed by ClawSetup.`,
                          value={currentFallbackProvider || ""}
                          onChange={(newProv) => {
                            if (!newProv) return;
-                           if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
-                             const updated = [...agentConfigs];
+                           const updated = [...agentConfigs];
+                           if (DEFAULT_MODELS[newProv]) {
+                             updated[currentAgentConfigIdx].fallbackModels = [DEFAULT_MODELS[newProv]];
+                           } else if (MODELS_BY_PROVIDER[newProv] && MODELS_BY_PROVIDER[newProv].length > 0) {
                              updated[currentAgentConfigIdx].fallbackModels = [MODELS_BY_PROVIDER[newProv][0].value];
-                             setAgentConfigs(updated);
                            }
+                           setAgentConfigs(updated);
                          }}
                          columns={2}
                          options={Object.keys(MODELS_BY_PROVIDER).sort().map(p => ({
@@ -2964,14 +3013,29 @@ case 16:
                {true && (
                   <div className="advanced-setup-prompt" style={{marginTop: "2rem", padding: "1.5rem", backgroundColor: "rgba(59, 130, 246, 0.1)", borderRadius: "12px", border: "1px solid var(--primary)"}}>
                     <h3 style={{marginTop: 0, marginBottom: "0.5rem"}}>Configuration Complete</h3>
-                    <p style={{marginBottom: "1.5rem"}}>Your agent is paired and ready. {mode !== "advanced" && "Would you like to configure advanced settings (Gateway, Skills, Security, Multi-Agent) now?"}</p>
+                    {mode !== "advanced" ? (
+                      <>
+                        <p style={{marginBottom: "0.75rem", fontSize: "1rem"}}>Your agent is live. But right now, it's a solo worker.</p>
+                        <p style={{marginBottom: "1rem", fontSize: "1.05rem", fontWeight: 600}}>Give it a team.</p>
+                        <p style={{marginBottom: "1rem", fontSize: "0.9rem", lineHeight: "1.7", color: "var(--text-main)"}}>
+                          Deploy a fleet of specialized AI agents that research, write, code, manage email, track tasks, and handle customers — all working together, 24/7, while you focus on what matters.
+                        </p>
+                        <div style={{marginBottom: "1.25rem", fontSize: "0.85rem", lineHeight: "2", color: "var(--text-muted)"}}>
+                          <div>Multi-agent teams &bull; 40+ integrations &bull; Scheduled automations</div>
+                          <div>CRM, support, social media &bull; Smart failover &bull; Security controls</div>
+                        </div>
+                        <p style={{marginBottom: "1.5rem"}}><strong style={{fontSize: "1.1rem"}}>$9.99</strong> <span style={{fontSize: "0.85rem", color: "var(--text-muted)"}}>once &bull; yours forever</span></p>
+                      </>
+                    ) : (
+                      <p style={{marginBottom: "1.5rem"}}>Your agent is paired and ready.</p>
+                    )}
                     <div className="button-group" style={{gap: "1rem"}}>
                        <button className="primary" onClick={() => open(dashboardUrl)}>
                          Open Web Dashboard
                        </button>
                        {mode !== "advanced" && (
-                         <button className="secondary" onClick={() => setShowLicenseModal(true)}>
-                           Configure Advanced
+                         <button className="secondary" onClick={() => setShowLicenseModal(true)} style={{backgroundColor: "var(--primary)", color: "#fff", border: "none"}}>
+                           Unlock Advanced - $9.99
                          </button>
                        )}
                        <button className="secondary" onClick={() => invoke("close_app")}>

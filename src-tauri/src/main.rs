@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rand::Rng;
 use ssh2::Session;
 use std::path::Path;
-use reqwest::blocking::Client;
+
 
 #[macro_use]
 extern crate lazy_static;
@@ -112,6 +112,7 @@ struct AgentConfig {
     model: String,
     user_name: String,
     agent_name: String,
+    #[allow(dead_code)]
     agent_vibe: Option<String>,
     telegram_token: Option<String>,
     // Advanced fields
@@ -437,11 +438,47 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
 
     execute_ssh(&sess, &format!("mkdir -p {} && mkdir -p {}", workspace, agents_dir))?;
 
-    let gateway_token: String = rand::thread_rng()
-        .sample_iter(&rand::distributions::Alphanumeric)
-        .take(32)
-        .map(char::from)
-        .collect();
+    // Preserve existing gateway token when reconfiguring to avoid device token mismatch
+    let gateway_token: String = if config.preserve_state == Some(true) {
+        let read_token_result = execute_ssh(&sess, &format!(
+            "cat {}/openclaw.json 2>/dev/null || echo '{{}}'", openclaw_root
+        ));
+        if let Ok(contents) = read_token_result {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&contents) {
+                if let Some(token) = parsed.get("gateway")
+                    .and_then(|g| g.get("auth"))
+                    .and_then(|a| a.get("token"))
+                    .and_then(|t| t.as_str())
+                {
+                    token.to_string()
+                } else {
+                    rand::thread_rng()
+                        .sample_iter(&rand::distributions::Alphanumeric)
+                        .take(32)
+                        .map(char::from)
+                        .collect()
+                }
+            } else {
+                rand::thread_rng()
+                    .sample_iter(&rand::distributions::Alphanumeric)
+                    .take(32)
+                    .map(char::from)
+                    .collect()
+            }
+        } else {
+            rand::thread_rng()
+                .sample_iter(&rand::distributions::Alphanumeric)
+                .take(32)
+                .map(char::from)
+                .collect()
+        }
+    } else {
+        rand::thread_rng()
+            .sample_iter(&rand::distributions::Alphanumeric)
+            .take(32)
+            .map(char::from)
+            .collect()
+    };
 
     let profile_name = format!("{}:default", config.provider);
     let mut auth_mode = config.auth_method.unwrap_or_else(|| "token".to_string());
@@ -1083,11 +1120,53 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
     fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
     fs::create_dir_all(&agents_dir).map_err(|e| e.to_string())?;
 
-    let gateway_token: String = rand::thread_rng()
-        .sample_iter(&rand::distributions::Alphanumeric)
-        .take(32)
-        .map(char::from)
-        .collect();
+    // Preserve existing gateway token when reconfiguring to avoid device token mismatch
+    let gateway_token: String = if config.preserve_state == Some(true) {
+        let existing_config_path = openclaw_root.join("openclaw.json");
+        if existing_config_path.exists() {
+            if let Ok(contents) = fs::read_to_string(&existing_config_path) {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&contents) {
+                    if let Some(token) = parsed.get("gateway")
+                        .and_then(|g| g.get("auth"))
+                        .and_then(|a| a.get("token"))
+                        .and_then(|t| t.as_str())
+                    {
+                        token.to_string()
+                    } else {
+                        rand::thread_rng()
+                            .sample_iter(&rand::distributions::Alphanumeric)
+                            .take(32)
+                            .map(char::from)
+                            .collect()
+                    }
+                } else {
+                    rand::thread_rng()
+                        .sample_iter(&rand::distributions::Alphanumeric)
+                        .take(32)
+                        .map(char::from)
+                        .collect()
+                }
+            } else {
+                rand::thread_rng()
+                    .sample_iter(&rand::distributions::Alphanumeric)
+                    .take(32)
+                    .map(char::from)
+                    .collect()
+            }
+        } else {
+            rand::thread_rng()
+                .sample_iter(&rand::distributions::Alphanumeric)
+                .take(32)
+                .map(char::from)
+                .collect()
+        }
+    } else {
+        rand::thread_rng()
+            .sample_iter(&rand::distributions::Alphanumeric)
+            .take(32)
+            .map(char::from)
+            .collect()
+    };
 
     let profile_name = format!("{}:default", config.provider);
     let mut auth_mode = config.auth_method.as_deref().unwrap_or("token").to_string();
@@ -1192,8 +1271,41 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
         },
         "auth": {
             "profiles": {}
+        },
+        "commands": {
+            "native": "auto",
+            "nativeSkills": "auto"
         }
     });
+
+    // Add Telegram config inline (avoids hot-reload conflicts from openclaw config set)
+    if let Some(ref token) = config.telegram_token {
+        if !token.is_empty() {
+            if let Some(obj) = config_json.as_object_mut() {
+                obj.insert("plugins".to_string(), serde_json::json!({
+                    "entries": { "telegram": { "enabled": true } }
+                }));
+
+                let dm_policy = if config.preserve_state == Some(true) {
+                    "allowlist"
+                } else {
+                    "pairing"
+                };
+
+                obj.insert("channels".to_string(), serde_json::json!({
+                    "telegram": {
+                        "accounts": {
+                            "main": {
+                                "botToken": token,
+                                "name": "Primary Bot",
+                                "dmPolicy": dm_policy
+                            }
+                        }
+                    }
+                }));
+            }
+        }
+    }
 
     // Insert dynamic auth profile
     if let Some(profiles) = config_json.get_mut("auth").and_then(|a| a.get_mut("profiles")).and_then(|p| p.as_object_mut()) {
@@ -1389,19 +1501,8 @@ Serve {}."#, config.user_name)
         let _ = shell_command(&format!("openclaw config set skills.nodeManager {}", nm));
     }
 
-    if let Some(ref token) = config.telegram_token {
-        if !token.is_empty() {
-            let _ = shell_command("openclaw plugins enable telegram");
-            let _ = shell_command(&format!("openclaw config set channels.telegram.accounts.main.botToken {}", token));
-            // Only reset dmPolicy to pairing if we are NOT preserving state
-            if config.preserve_state != Some(true) {
-                let _ = shell_command("openclaw config set channels.telegram.accounts.main.dmPolicy pairing");
-            } else {
-                let _ = shell_command("openclaw config set channels.telegram.accounts.main.dmPolicy allowlist");
-            }
-            let _ = shell_command("openclaw config set channels.telegram.accounts.main.name \"Primary Bot\"");
-        }
-    }
+    // Telegram config is now written inline in the JSON above.
+    // No need for openclaw config set commands which cause hot-reload conflicts.
 
     let mut profiles_map = serde_json::Map::new();
     let mut primary_p = serde_json::Map::new();
