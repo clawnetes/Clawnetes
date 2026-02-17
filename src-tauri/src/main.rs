@@ -643,9 +643,46 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
         }
     }
 
+    // Add memory configuration (memoryFlush must be { enabled: bool })
+    if config.memory_enabled.unwrap_or(false) {
+        if let Some(defaults) = config_val.get_mut("agents").and_then(|a| a.get_mut("defaults")).and_then(|d| d.as_object_mut()) {
+            if let Some(compaction) = defaults.get_mut("compaction").and_then(|c| c.as_object_mut()) {
+                compaction.insert("memoryFlush".to_string(), serde_json::json!({ "enabled": true }));
+            }
+        }
+    }
+
+    // Add cron system config (enable cron engine if we have jobs)
+    if let Some(cron_jobs) = &config.cron_jobs {
+        if !cron_jobs.is_empty() {
+            if let Some(obj) = config_val.as_object_mut() {
+                obj.insert("cron".to_string(), serde_json::json!({ "enabled": true }));
+            }
+        }
+    }
+
     let config_json_final = serde_json::to_string_pretty(&config_val).map_err(|e| e.to_string())?;
     let config_json_escaped = config_json_final.replace("'", "'\\''");
     execute_ssh(&sess, &format!("echo '{}' > {}/openclaw.json", config_json_escaped, openclaw_root))?;
+
+    // Store ClawSetup metadata in separate file on remote
+    {
+        let mut meta = serde_json::Map::new();
+        if let Some(agent_type) = &config.agent_type {
+            meta.insert("agent_type".to_string(), serde_json::Value::String(agent_type.clone()));
+        }
+        if let Some(cron_jobs) = &config.cron_jobs {
+            if !cron_jobs.is_empty() {
+                meta.insert("cron_jobs".to_string(), serde_json::to_value(cron_jobs).unwrap_or_default());
+            }
+        }
+        if config.memory_enabled.unwrap_or(false) {
+            meta.insert("memory_enabled".to_string(), serde_json::Value::Bool(true));
+        }
+        let meta_json = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
+        let meta_escaped = meta_json.replace("'", "'\\''");
+        execute_ssh(&sess, &format!("echo '{}' > {}/clawsetup-meta.json", meta_escaped, openclaw_root))?;
+    }
 
     // auth-profiles.json
     let mut profiles_map = serde_json::Map::new();
@@ -692,6 +729,24 @@ Managed by ClawSetup."#, config.agent_name)
 Serve {}."#, config.user_name)
     }).replace("'", "'\\''");
     execute_ssh(&sess, &format!("echo '{}' > {}/SOUL.md", soul_md, workspace))?;
+
+    // Write additional markdown files if provided
+    if let Some(ref tools_md) = config.tools_md {
+        let escaped = tools_md.replace("'", "'\\''");
+        execute_ssh(&sess, &format!("echo '{}' > {}/TOOLS.md", escaped, workspace))?;
+    }
+    if let Some(ref agents_md) = config.agents_md {
+        let escaped = agents_md.replace("'", "'\\''");
+        execute_ssh(&sess, &format!("echo '{}' > {}/AGENTS.md", escaped, workspace))?;
+    }
+    if let Some(ref heartbeat_md) = config.heartbeat_md {
+        let escaped = heartbeat_md.replace("'", "'\\''");
+        execute_ssh(&sess, &format!("echo '{}' > {}/HEARTBEAT.md", escaped, workspace))?;
+    }
+    if let Some(ref memory_md) = config.memory_md {
+        let escaped = memory_md.replace("'", "'\\''");
+        execute_ssh(&sess, &format!("echo '{}' > {}/MEMORY.md", escaped, workspace))?;
+    }
 
     // Prefix for openclaw commands is defined at top of function
     
@@ -1211,33 +1266,48 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
     }
 
     // Add memory configuration
+    // memoryFlush must be an object with { enabled: bool }, not a bare boolean
     if config.memory_enabled.unwrap_or(false) {
         if let Some(defaults) = config_json.get_mut("agents").and_then(|a| a.get_mut("defaults")).and_then(|d| d.as_object_mut()) {
             if let Some(compaction) = defaults.get_mut("compaction").and_then(|c| c.as_object_mut()) {
-                compaction.insert("memoryFlush".to_string(), serde_json::Value::Bool(true));
+                compaction.insert("memoryFlush".to_string(), serde_json::json!({ "enabled": true }));
             }
         }
     }
 
-    // Add cron configuration
+    // Add cron system configuration (enable the cron engine if we have cron jobs)
     if let Some(cron_jobs) = &config.cron_jobs {
         if !cron_jobs.is_empty() {
             if let Some(obj) = config_json.as_object_mut() {
-                obj.insert("cron".to_string(), serde_json::to_value(cron_jobs).unwrap_or_default());
+                obj.insert("cron".to_string(), serde_json::json!({ "enabled": true }));
             }
         }
     }
 
-    // Store agent_type for later retrieval
-    if let Some(agent_type) = &config.agent_type {
-        if let Some(obj) = config_json.as_object_mut() {
-            obj.insert("agent_type".to_string(), serde_json::Value::String(agent_type.clone()));
-        }
-    }
+    // NOTE: agent_type is NOT stored in openclaw.json (it's not a valid OpenClaw key).
+    // It's stored in a separate clawsetup-meta.json file for our own tracking.
 
     let config_json_raw = serde_json::to_string_pretty(&config_json).map_err(|e| e.to_string())?;
 
-    fs::write(openclaw_root.join("openclaw.json"), config_json_raw).map_err(|e| e.to_string())?;
+    fs::write(openclaw_root.join("openclaw.json"), &config_json_raw).map_err(|e| e.to_string())?;
+
+    // Store ClawSetup-specific metadata in a separate file
+    {
+        let mut meta = serde_json::Map::new();
+        if let Some(agent_type) = &config.agent_type {
+            meta.insert("agent_type".to_string(), serde_json::Value::String(agent_type.clone()));
+        }
+        if let Some(cron_jobs) = &config.cron_jobs {
+            if !cron_jobs.is_empty() {
+                meta.insert("cron_jobs".to_string(), serde_json::to_value(cron_jobs).unwrap_or_default());
+            }
+        }
+        if config.memory_enabled.unwrap_or(false) {
+            meta.insert("memory_enabled".to_string(), serde_json::Value::Bool(true));
+        }
+        let meta_json = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
+        fs::write(openclaw_root.join("clawsetup-meta.json"), meta_json).map_err(|e| e.to_string())?;
+    }
 
     if let Some(agents) = &config.agents {
         for agent in agents {
@@ -1945,18 +2015,29 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
     let heartbeat_md_str = fs::read_to_string(format!("{}/.openclaw/workspace/HEARTBEAT.md", home_dir)).ok();
     let memory_md_str = fs::read_to_string(format!("{}/.openclaw/workspace/MEMORY.md", home_dir)).ok();
 
-    // Check memory enabled
+    // Check memory enabled (memoryFlush is an object: { enabled: bool })
     let memory_enabled = defaults.get("compaction")
         .and_then(|c| c.get("memoryFlush"))
-        .and_then(|v| v.as_bool())
+        .and_then(|v| {
+            // Handle both old format (bare bool) and new format ({ enabled: bool })
+            if v.is_boolean() {
+                v.as_bool()
+            } else {
+                v.get("enabled").and_then(|e| e.as_bool())
+            }
+        })
         .unwrap_or(false);
 
-    // Read cron jobs
-    let cron_jobs: Option<Vec<CronJobConfig>> = oc_config.get("cron")
+    // Read ClawSetup metadata from separate file
+    let meta_str = fs::read_to_string(format!("{}/.openclaw/clawsetup-meta.json", home_dir)).unwrap_or_default();
+    let meta: serde_json::Value = serde_json::from_str(&meta_str).unwrap_or(serde_json::json!({}));
+
+    // Read cron jobs from metadata
+    let cron_jobs: Option<Vec<CronJobConfig>> = meta.get("cron_jobs")
         .and_then(|c| serde_json::from_value(c.clone()).ok());
 
-    // Detect agent type from stored config or default to "custom"
-    let agent_type = oc_config.get("agent_type")
+    // Read agent type from metadata (NOT from openclaw.json)
+    let agent_type = meta.get("agent_type")
         .and_then(|v| v.as_str())
         .unwrap_or("custom")
         .to_string();
