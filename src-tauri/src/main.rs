@@ -1110,6 +1110,9 @@ fn install_openclaw() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         ensure_wsl2_installed()?;
+        // Install Node.js in WSL2 using the official installer
+        shell_command("wsl -- bash -c 'curl -fsSL https://deb.nodesource.com/setup_22.x | bash -'")?;
+        shell_command("wsl -- apt-get install -y nodejs")?;
         // Install OpenClaw in WSL2 using npm
         shell_command("wsl -- npm install -g openclaw")?;
         shell_command("wsl -- openclaw --version")?;
@@ -1602,7 +1605,7 @@ Serve {}."#, config.user_name)
 
 #[command]
 fn start_gateway() -> Result<String, String> {
-    let _home = dirs::home_dir().ok_or("Could not find home directory")?;
+    let home = dirs::home_dir().ok_or("Could not find home directory")?;
     // config_path removed as unused
 
     let _ = shell_command("openclaw gateway stop");
