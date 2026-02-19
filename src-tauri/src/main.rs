@@ -169,6 +169,9 @@ struct RemoteInfo {
 fn get_env_prefix(os_type: &str) -> String {
     if os_type == "Darwin" {
         "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; ".to_string()
+    } else if os_type == "Windows" {
+        // WSL2: Source profile and try to load NVM explicitly
+        "export PATH=\"$PATH:/usr/local/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; ".to_string()
     } else {
         // Linux: Source profile and try to load NVM explicitly
         "export PATH=\"$PATH:/usr/local/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; ".to_string()
@@ -1088,6 +1091,12 @@ fn run_security_audit_fix() -> Result<String, String> {
 fn check_prerequisites() -> PrereqCheck {
     let node = shell_command("node -v").is_ok();
     let openclaw = shell_command("openclaw --version").is_ok();
+    
+    #[cfg(target_os = "windows")]
+    let _wsl2_installed = check_wsl2_installed();
+    
+    #[cfg(not(target_os = "windows"))]
+    let _wsl2_installed = true;
 
     PrereqCheck {
         node_installed: node,
@@ -1098,9 +1107,21 @@ fn check_prerequisites() -> PrereqCheck {
 
 #[command]
 fn install_openclaw() -> Result<String, String> {
-    shell_command("npm install -g openclaw")?;
-    shell_command("openclaw --version")?;
-    Ok("OpenClaw installed successfully.".to_string())
+    #[cfg(target_os = "windows")]
+    {
+        ensure_wsl2_installed()?;
+        // Install OpenClaw in WSL2 using npm
+        shell_command("wsl -- npm install -g openclaw")?;
+        shell_command("wsl -- openclaw --version")?;
+        Ok("OpenClaw installed successfully in WSL2.".to_string())
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        shell_command("npm install -g openclaw")?;
+        shell_command("openclaw --version")?;
+        Ok("OpenClaw installed successfully.".to_string())
+    }
 }
 
 #[command]
@@ -1815,11 +1836,49 @@ fn verify_tunnel_connectivity(remote: RemoteInfo) -> Result<bool, String> {
     Err(format!("Tunnel verification failed after 60s. Last error: {}", last_error))
 }
 
+// WSL2 Helper Functions
+
+#[cfg(target_os = "windows")]
+fn check_wsl2_installed() -> bool {
+    let output = Command::new("powershell")
+        .args(["-Command", "wsl -l -v 2>$null; exit $LASTEXITCODE"])
+        .output();
+    
+    output.map(|o| o.status.success()).unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_wsl2_installed() -> Result<(), String> {
+    // Check if WSL2 is already installed
+    if check_wsl2_installed() {
+        return Ok(());
+    }
+    
+    // Install WSL2 using PowerShell
+    let install_wsl = "powershell -Command \"wsl --install --distribution Ubuntu\"";
+    let output = Command::new("powershell")
+        .args(["-Command", "wsl --install --distribution Ubuntu"])
+        .output()
+        .map_err(|e| format!("Failed to execute WSL2 installation: {}", e))?;
+    
+    if !output.status.success() {
+        return Err("WSL2 installation failed. Please ensure you have administrator privileges and virtualization is enabled in BIOS.".to_string());
+    }
+    
+    // Wait a moment for WSL2 to be fully installed
+    thread::sleep(Duration::from_secs(5));
+    
+    Ok(())
+}
+
 fn shell_command(cmd: &str) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     let (shell, args) = ("/bin/zsh", vec!["-l", "-c"]);
     
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    let (shell, args) = ("wsl", vec!["--", "/bin/bash", "-c"]);
+    
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let (shell, args) = ("sh", vec!["-c"]);
 
     let output = Command::new(shell)
