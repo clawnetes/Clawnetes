@@ -1863,23 +1863,33 @@ fn ensure_wsl2_installed() -> Result<(), String> {
         return Ok(());
     }
     
-    // Install WSL2 using PowerShell (requires admin privileges)
+    // Install WSL2 using elevated PowerShell (triggers UAC admin prompt)
+    // Start-Process -Verb RunAs launches the command with admin privileges,
+    // showing the user a UAC confirmation dialog they can click to approve.
+    // -Wait ensures we block until the elevated process completes.
     let output = Command::new("powershell")
-        .args(["-Command", "wsl --install --distribution Ubuntu"])
+        .args([
+            "-Command",
+            "Start-Process -FilePath 'wsl.exe' -ArgumentList '--install --distribution Ubuntu' -Verb RunAs -Wait"
+        ])
         .output()
         .map_err(|e| format!("Failed to execute WSL2 installation: {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("WSL2 installation failed. Please ensure you have administrator privileges and virtualization is enabled in BIOS. Error: {}", stderr));
+        // Check if user declined the UAC prompt
+        if stderr.contains("canceled") || stderr.contains("denied") || stderr.contains("not have permission") {
+            return Err("WSL2 installation requires administrator approval. Please click 'Yes' on the admin dialog when prompted.".to_string());
+        }
+        return Err(format!("WSL2 installation failed. Please ensure virtualization is enabled in BIOS. Error: {}", stderr));
     }
 
-    // Wait for WSL2 setup to complete
-    thread::sleep(Duration::from_secs(10));
+    // Give WSL2 time to finish setup after the elevated process returns
+    thread::sleep(Duration::from_secs(15));
 
     // Verify WSL2 is now available
     if !check_wsl2_installed() {
-        return Err("WSL2 was installed but requires a system restart. Please restart your computer and run this setup again.".to_string());
+        return Err("WSL2 was installed but may require a system restart. Please restart your computer and run this setup again.".to_string());
     }
     
     Ok(())
