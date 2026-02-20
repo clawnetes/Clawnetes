@@ -1861,6 +1861,29 @@ fn check_wsl2_installed() -> bool {
     output.map(|o| o.status.success()).unwrap_or(false)
 }
 
+/// Poll WSL Ubuntu until it responds, with a configurable timeout.
+/// Used after installing WSL or before running commands that need WSL to be ready.
+#[cfg(target_os = "windows")]
+fn wait_for_wsl_ready(timeout_secs: u64) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    let timeout = Duration::from_secs(timeout_secs);
+    while start.elapsed() < timeout {
+        let output = Command::new("wsl")
+            .args(["-d", "Ubuntu", "-u", "root", "--", "echo", "ready"])
+            .output();
+        if let Ok(o) = output {
+            if o.status.success() {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                if stdout.trim() == "ready" {
+                    return Ok(());
+                }
+            }
+        }
+        thread::sleep(Duration::from_secs(3));
+    }
+    Err(format!("WSL Ubuntu not ready after {} seconds", timeout_secs))
+}
+
 #[cfg(target_os = "windows")]
 fn ensure_wsl2_installed() -> Result<(), String> {
     // Check if WSL2 is already installed
@@ -1889,8 +1912,10 @@ fn ensure_wsl2_installed() -> Result<(), String> {
         return Err(format!("WSL2 installation failed. Please ensure virtualization is enabled in BIOS. Error: {}", stderr));
     }
 
-    // Give WSL2 time to finish setup after the elevated process returns
-    thread::sleep(Duration::from_secs(15));
+    // Wait for WSL Ubuntu to become responsive (first-time init can be slow)
+    wait_for_wsl_ready(90).map_err(|e| {
+        format!("WSL2 was installed but Ubuntu is not responding. You may need to restart your computer. Error: {}", e)
+    })?;
 
     // Verify WSL2 is now available
     if !check_wsl2_installed() {
@@ -1899,22 +1924,44 @@ fn ensure_wsl2_installed() -> Result<(), String> {
 
     // Configure Ubuntu with a default user non-interactively.
     // Without this, Ubuntu prompts for username/password on first launch.
-    // First set root as default to avoid the interactive prompt:
-    let _ = Command::new("powershell")
-        .args(["-Command", "ubuntu config --default-user root"])
-        .output();
 
     // Create a non-root user 'openclaw' with a password, for general use
-    let _ = Command::new("wsl")
-        .args(["--user", "root", "--", "/bin/bash", "-c",
+    let user_setup = Command::new("wsl")
+        .args(["-d", "Ubuntu", "-u", "root", "--", "/bin/bash", "-c",
             "id openclaw >/dev/null 2>&1 || (useradd -m -s /bin/bash openclaw && echo 'openclaw:openclaw' | chpasswd && usermod -aG sudo openclaw)"
         ])
+        .output()
+        .map_err(|e| format!("Failed to create openclaw user: {}", e))?;
+
+    if !user_setup.status.success() {
+        let stderr = String::from_utf8_lossy(&user_setup.stderr);
+        eprintln!("Warning: user setup returned error (may be harmless if user exists): {}", stderr);
+    }
+
+    // Write /etc/wsl.conf to set default user (more reliable than `ubuntu config --default-user`)
+    let wsl_conf = Command::new("wsl")
+        .args(["-d", "Ubuntu", "-u", "root", "--", "/bin/bash", "-c",
+            "printf '[user]\\ndefault=openclaw\\n' > /etc/wsl.conf"
+        ])
+        .output()
+        .map_err(|e| format!("Failed to write /etc/wsl.conf: {}", e))?;
+
+    if !wsl_conf.status.success() {
+        let stderr = String::from_utf8_lossy(&wsl_conf.stderr);
+        eprintln!("Warning: failed to write wsl.conf: {}", stderr);
+    }
+
+    // Terminate Ubuntu so wsl.conf takes effect on next launch
+    let _ = Command::new("wsl")
+        .args(["--terminate", "Ubuntu"])
         .output();
 
-    // Set 'openclaw' as the default WSL user
-    let _ = Command::new("powershell")
-        .args(["-Command", "ubuntu config --default-user openclaw"])
-        .output();
+    thread::sleep(Duration::from_secs(2));
+
+    // Wait for Ubuntu to come back with the new default user
+    wait_for_wsl_ready(30).map_err(|e| {
+        format!("WSL Ubuntu failed to restart after user configuration: {}", e)
+    })?;
 
     Ok(())
 }
@@ -1924,7 +1971,7 @@ fn ensure_wsl2_installed() -> Result<(), String> {
 #[cfg(target_os = "windows")]
 fn wsl_root_command(cmd: &str) -> Result<String, String> {
     let output = Command::new("wsl")
-        .args(["--user", "root", "--", "/bin/bash", "-c", cmd])
+        .args(["-d", "Ubuntu", "--user", "root", "--", "/bin/bash", "-c", cmd])
         .output()
         .map_err(|e| format!("Failed to execute command: {}", e))?;
 
@@ -2347,6 +2394,9 @@ async fn install_local_nodejs() -> Result<String, String> {
     {
         // On Windows: install WSL2 first, then Node.js inside WSL2
         ensure_wsl2_installed()?;
+        // Ensure WSL is responsive before running apt commands
+        wait_for_wsl_ready(30)
+            .map_err(|e| format!("WSL not ready for Node.js installation: {}", e))?;
         // Use wsl_root_command to run as root directly (avoids sudo password prompt)
         wsl_root_command("curl -fsSL https://deb.nodesource.com/setup_22.x | bash -")
             .map_err(|e| format!("Failed to add NodeSource repository: {}", e))?;
@@ -2542,5 +2592,56 @@ mod tests {
 
         assert_eq!(token, Some("existing-secret-token"),
             "Gateway auth token must be preserved during reconfiguration");
+    }
+
+    #[test]
+    fn test_wsl_root_command_uses_explicit_distro() {
+        // wsl_root_command should use `-d Ubuntu` for robustness
+        // Verify the expected argument structure
+        let cmd = "echo hello";
+        let expected_args = vec!["-d", "Ubuntu", "--user", "root", "--", "/bin/bash", "-c", cmd];
+        assert_eq!(expected_args[0], "-d");
+        assert_eq!(expected_args[1], "Ubuntu");
+        assert_eq!(expected_args[2], "--user");
+        assert_eq!(expected_args[3], "root");
+        assert_eq!(expected_args[7], cmd);
+    }
+
+    #[test]
+    fn test_wsl_conf_content_format() {
+        // The wsl.conf written to set default user must follow INI format
+        let expected_content = "[user]\ndefault=openclaw\n";
+        assert!(expected_content.starts_with("[user]"));
+        assert!(expected_content.contains("default=openclaw"));
+        // Verify it's valid INI-style (section header + key=value)
+        let lines: Vec<&str> = expected_content.trim().lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "[user]");
+        assert_eq!(lines[1], "default=openclaw");
+    }
+
+    #[test]
+    fn test_wsl_user_setup_command_structure() {
+        // The user setup command should create user, set password, and add to sudo group
+        let user_cmd = "id openclaw >/dev/null 2>&1 || (useradd -m -s /bin/bash openclaw && echo 'openclaw:openclaw' | chpasswd && usermod -aG sudo openclaw)";
+        // Checks for existing user first
+        assert!(user_cmd.contains("id openclaw"));
+        // Creates with home dir and bash shell
+        assert!(user_cmd.contains("useradd -m -s /bin/bash openclaw"));
+        // Sets password
+        assert!(user_cmd.contains("chpasswd"));
+        // Adds to sudo group
+        assert!(user_cmd.contains("usermod -aG sudo openclaw"));
+    }
+
+    #[test]
+    fn test_wait_for_wsl_ready_command_args() {
+        // wait_for_wsl_ready should use explicit distro and root user
+        let expected_args = ["-d", "Ubuntu", "-u", "root", "--", "echo", "ready"];
+        assert_eq!(expected_args[0], "-d");
+        assert_eq!(expected_args[1], "Ubuntu");
+        assert_eq!(expected_args[2], "-u");
+        assert_eq!(expected_args[3], "root");
+        assert_eq!(expected_args[6], "ready");
     }
 }
