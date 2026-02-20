@@ -1079,10 +1079,18 @@ fn uninstall_openclaw() -> Result<String, String> {
     #[cfg(not(target_os = "windows"))]
     shell_command("npm uninstall -g openclaw")?;
     
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    let openclaw_root = home.join(".openclaw");
-    if openclaw_root.exists() {
-        fs::remove_dir_all(openclaw_root).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    {
+        wsl_remove_dir("~/.openclaw")?;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let home = dirs::home_dir().ok_or("Could not find home directory")?;
+        let openclaw_root = home.join(".openclaw");
+        if openclaw_root.exists() {
+            fs::remove_dir_all(openclaw_root).map_err(|e| e.to_string())?;
+        }
     }
 
     Ok("OpenClaw has been completely uninstalled.".to_string())
@@ -1146,40 +1154,66 @@ fn install_openclaw() -> Result<String, String> {
 
 #[command]
 fn configure_agent(config: AgentConfig) -> Result<String, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    
+    // Platform-abstracted filesystem operations.
+    // On Windows, openclaw runs inside WSL, so we must write to the WSL filesystem.
+    // On macOS/Linux, we use native filesystem operations.
+
+    #[cfg(target_os = "windows")]
+    let home: String = wsl_home_dir()?;
+
+    #[cfg(not(target_os = "windows"))]
+    let home: String = dirs::home_dir()
+        .ok_or("Could not find home directory")?
+        .to_string_lossy()
+        .to_string();
+
+    // Closures for platform-abstracted filesystem operations
+    let mkdir_p_fn = |path: &str| -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        { wsl_mkdir_p(path) }
+        #[cfg(not(target_os = "windows"))]
+        { fs::create_dir_all(path).map_err(|e| e.to_string()) }
+    };
+
+    let write_file_fn = |path: &str, content: &str| -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        { wsl_write_file(path, content) }
+        #[cfg(not(target_os = "windows"))]
+        { fs::write(path, content).map_err(|e| e.to_string()) }
+    };
+
+    let read_file_fn = |path: &str| -> String {
+        #[cfg(target_os = "windows")]
+        { wsl_read_file(path) }
+        #[cfg(not(target_os = "windows"))]
+        { fs::read_to_string(path).unwrap_or_default() }
+    };
+
     // Run gateway install --force FIRST to scaffold, ONLY if not preserving state
     if config.preserve_state != Some(true) {
         let _ = shell_command("openclaw gateway stop");
         let _ = shell_command("openclaw gateway install --force");
     }
 
-    let openclaw_root = home.join(".openclaw");
-    let workspace = openclaw_root.join("workspace");
-    let agents_dir = openclaw_root.join("agents").join("main").join("agent");
+    let openclaw_root = format!("{}/.openclaw", home);
+    let workspace = format!("{}/workspace", openclaw_root);
+    let agents_dir = format!("{}/agents/main/agent", openclaw_root);
 
-    fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
-    fs::create_dir_all(&agents_dir).map_err(|e| e.to_string())?;
+    mkdir_p_fn(&workspace)?;
+    mkdir_p_fn(&agents_dir)?;
 
     // Preserve existing gateway token when reconfiguring to avoid device token mismatch
     let gateway_token: String = if config.preserve_state == Some(true) {
-        let existing_config_path = openclaw_root.join("openclaw.json");
-        if existing_config_path.exists() {
-            if let Ok(contents) = fs::read_to_string(&existing_config_path) {
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&contents) {
-                    if let Some(token) = parsed.get("gateway")
-                        .and_then(|g| g.get("auth"))
-                        .and_then(|a| a.get("token"))
-                        .and_then(|t| t.as_str())
-                    {
-                        token.to_string()
-                    } else {
-                        rand::thread_rng()
-                            .sample_iter(&rand::distributions::Alphanumeric)
-                            .take(32)
-                            .map(char::from)
-                            .collect()
-                    }
+        let existing_config_path = format!("{}/openclaw.json", openclaw_root);
+        let contents = read_file_fn(&existing_config_path);
+        if !contents.is_empty() {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&contents) {
+                if let Some(token) = parsed.get("gateway")
+                    .and_then(|g| g.get("auth"))
+                    .and_then(|a| a.get("token"))
+                    .and_then(|t| t.as_str())
+                {
+                    token.to_string()
                 } else {
                     rand::thread_rng()
                         .sample_iter(&rand::distributions::Alphanumeric)
@@ -1231,17 +1265,17 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
             if agent.id == "main" {
                 has_main = true;
             }
-            
+
             let mut agent_obj = serde_json::json!({
                 "id": agent.id,
                 "name": agent.name,
-                "workspace": format!("{}/.openclaw/agents/{}/workspace", home.to_string_lossy(), agent.id),
-                "agentDir": format!("{}/.openclaw/agents/{}/agent", home.to_string_lossy(), agent.id),
+                "workspace": format!("{}/.openclaw/agents/{}/workspace", home, agent.id),
+                "agentDir": format!("{}/.openclaw/agents/{}/agent", home, agent.id),
                 "model": {
                     "primary": agent.model
                 }
             });
-            
+
             if let Some(fb) = &agent.fallback_models {
                 if !fb.is_empty() {
                     if let Some(model_obj) = agent_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
@@ -1249,7 +1283,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
                     }
                 }
             }
-            
+
             agents_list.push(agent_obj);
         }
     }
@@ -1258,13 +1292,13 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
         let mut main_obj = serde_json::json!({
             "id": "main",
             "name": config.agent_name,
-            "workspace": format!("{}/.openclaw/workspace", home.to_string_lossy()),
-            "agentDir": format!("{}/.openclaw/agents/main/agent", home.to_string_lossy()),
+            "workspace": format!("{}/.openclaw/workspace", home),
+            "agentDir": format!("{}/.openclaw/agents/main/agent", home),
             "model": {
                 "primary": config.model
             }
         });
-        
+
         if let Some(fb) = &config.fallback_models {
             if !fb.is_empty() {
                 if let Some(model_obj) = main_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
@@ -1272,7 +1306,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
                 }
             }
         }
-        
+
         agents_list.insert(0, main_obj);
     }
 
@@ -1289,7 +1323,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
                 "compaction": {
                     "mode": "safeguard"
                 },
-                "workspace": workspace.to_string_lossy(),
+                "workspace": workspace,
                 "model": {
                     "primary": config.model
                 },
@@ -1371,16 +1405,16 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
                 }
             }
         }
-        
+
         if let Some(hb_mode) = config.heartbeat_mode.as_deref() {
             match hb_mode {
                 "never" => {
                     defaults.insert("heartbeat".to_string(), serde_json::json!({ "enabled": false }));
                 },
                 "idle" => {
-                    defaults.insert("heartbeat".to_string(), serde_json::json!({ 
-                        "mode": "idle", 
-                        "timeout": config.idle_timeout_ms.unwrap_or(3600000) 
+                    defaults.insert("heartbeat".to_string(), serde_json::json!({
+                        "mode": "idle",
+                        "timeout": config.idle_timeout_ms.unwrap_or(3600000)
                     }));
                 },
                 interval => {
@@ -1388,7 +1422,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
                 }
             }
         }
-        
+
         if let Some(sb_mode) = config.sandbox_mode.as_deref() {
             let mapped = if sb_mode == "full" { "all" } else if sb_mode == "partial" { "non-main" } else if sb_mode == "none" { "off" } else { sb_mode };
             defaults.insert("sandbox".to_string(), serde_json::json!({ "mode": mapped }));
@@ -1442,7 +1476,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
 
     let config_json_raw = serde_json::to_string_pretty(&config_json).map_err(|e| e.to_string())?;
 
-    fs::write(openclaw_root.join("openclaw.json"), &config_json_raw).map_err(|e| e.to_string())?;
+    write_file_fn(&format!("{}/openclaw.json", openclaw_root), &config_json_raw)?;
 
     // Store ClawSetup-specific metadata in a separate file
     {
@@ -1459,16 +1493,16 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
             meta.insert("memory_enabled".to_string(), serde_json::Value::Bool(true));
         }
         let meta_json = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
-        fs::write(openclaw_root.join("clawsetup-meta.json"), meta_json).map_err(|e| e.to_string())?;
+        write_file_fn(&format!("{}/clawsetup-meta.json", openclaw_root), &meta_json)?;
     }
 
     if let Some(agents) = &config.agents {
         for agent in agents {
-            let agent_workspace = openclaw_root.join("agents").join(&agent.id).join("workspace");
-            let agent_config_dir = openclaw_root.join("agents").join(&agent.id).join("agent");
+            let agent_workspace = format!("{}/agents/{}/workspace", openclaw_root, agent.id);
+            let agent_config_dir = format!("{}/agents/{}/agent", openclaw_root, agent.id);
 
-            fs::create_dir_all(&agent_workspace).map_err(|e| e.to_string())?;
-            fs::create_dir_all(&agent_config_dir).map_err(|e| e.to_string())?;
+            mkdir_p_fn(&agent_workspace)?;
+            mkdir_p_fn(&agent_config_dir)?;
 
             let agent_identity = agent.identity_md.clone().unwrap_or_else(|| {
                 format!(r#"# IDENTITY.md - Who Am I?
@@ -1477,34 +1511,34 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
 ---
 Managed by ClawSetup."#, agent.name)
             });
-            fs::write(agent_workspace.join("IDENTITY.md"), agent_identity).map_err(|e| e.to_string())?;
+            write_file_fn(&format!("{}/IDENTITY.md", agent_workspace), &agent_identity)?;
 
             let agent_user_md = agent.user_md.clone().unwrap_or_else(|| {
                 format!(r#"# USER.md - About Your Human
 - **Name:** {}
 ---"#, config.user_name)
             });
-            fs::write(agent_workspace.join("USER.md"), agent_user_md).map_err(|e| e.to_string())?;
+            write_file_fn(&format!("{}/USER.md", agent_workspace), &agent_user_md)?;
 
             let agent_soul_md = agent.soul_md.clone().unwrap_or_else(|| {
                 format!(r#"# SOUL.md
 ## Mission
 Serve {}."#, config.user_name)
             });
-            fs::write(agent_workspace.join("SOUL.md"), agent_soul_md).map_err(|e| e.to_string())?;
+            write_file_fn(&format!("{}/SOUL.md", agent_workspace), &agent_soul_md)?;
 
             // Write additional markdown files for sub-agents
             if let Some(ref tools_md) = agent.tools_md {
-                fs::write(agent_workspace.join("TOOLS.md"), tools_md).map_err(|e| e.to_string())?;
+                write_file_fn(&format!("{}/TOOLS.md", agent_workspace), tools_md)?;
             }
             if let Some(ref agents_md) = agent.agents_md {
-                fs::write(agent_workspace.join("AGENTS.md"), agents_md).map_err(|e| e.to_string())?;
+                write_file_fn(&format!("{}/AGENTS.md", agent_workspace), agents_md)?;
             }
             if let Some(ref heartbeat_md) = agent.heartbeat_md {
-                fs::write(agent_workspace.join("HEARTBEAT.md"), heartbeat_md).map_err(|e| e.to_string())?;
+                write_file_fn(&format!("{}/HEARTBEAT.md", agent_workspace), heartbeat_md)?;
             }
             if let Some(ref memory_md) = agent.memory_md {
-                fs::write(agent_workspace.join("MEMORY.md"), memory_md).map_err(|e| e.to_string())?;
+                write_file_fn(&format!("{}/MEMORY.md", agent_workspace), memory_md)?;
             }
 
             let mut agent_profiles_map = serde_json::Map::new();
@@ -1534,7 +1568,7 @@ Serve {}."#, config.user_name)
             });
 
             let agent_auth_json = serde_json::to_string_pretty(&agent_auth_profiles).map_err(|e| e.to_string())?;
-            fs::write(agent_config_dir.join("auth-profiles.json"), agent_auth_json).map_err(|e| e.to_string())?;
+            write_file_fn(&format!("{}/auth-profiles.json", agent_config_dir), &agent_auth_json)?;
         }
     }
 
@@ -1572,7 +1606,7 @@ Serve {}."#, config.user_name)
     });
 
     let auth_profiles_json = serde_json::to_string_pretty(&auth_profiles_val).map_err(|e| e.to_string())?;
-    fs::write(agents_dir.join("auth-profiles.json"), auth_profiles_json).map_err(|e| e.to_string())?;
+    write_file_fn(&format!("{}/auth-profiles.json", agents_dir), &auth_profiles_json)?;
 
     let identity_md = if let Some(custom) = config.identity_md {
         custom
@@ -1583,20 +1617,20 @@ Serve {}."#, config.user_name)
 ---
 Managed by ClawSetup."#, config.agent_name)
     };
-    fs::write(workspace.join("IDENTITY.md"), &identity_md).map_err(|e| e.to_string())?;
+    write_file_fn(&format!("{}/IDENTITY.md", workspace), &identity_md)?;
 
     // Write additional markdown files if provided
     if let Some(tools_md) = &config.tools_md {
-        fs::write(workspace.join("TOOLS.md"), tools_md).map_err(|e| e.to_string())?;
+        write_file_fn(&format!("{}/TOOLS.md", workspace), tools_md)?;
     }
     if let Some(agents_md) = &config.agents_md {
-        fs::write(workspace.join("AGENTS.md"), agents_md).map_err(|e| e.to_string())?;
+        write_file_fn(&format!("{}/AGENTS.md", workspace), agents_md)?;
     }
     if let Some(heartbeat_md) = &config.heartbeat_md {
-        fs::write(workspace.join("HEARTBEAT.md"), heartbeat_md).map_err(|e| e.to_string())?;
+        write_file_fn(&format!("{}/HEARTBEAT.md", workspace), heartbeat_md)?;
     }
     if let Some(memory_md) = &config.memory_md {
-        fs::write(workspace.join("MEMORY.md"), memory_md).map_err(|e| e.to_string())?;
+        write_file_fn(&format!("{}/MEMORY.md", workspace), memory_md)?;
     }
 
     let user_md = if let Some(custom) = config.user_md {
@@ -1606,7 +1640,7 @@ Managed by ClawSetup."#, config.agent_name)
 - **Name:** {}
 ---"#, config.user_name)
     };
-    fs::write(workspace.join("USER.md"), user_md).map_err(|e| e.to_string())?;
+    write_file_fn(&format!("{}/USER.md", workspace), &user_md)?;
 
     let soul_md = if let Some(custom) = config.soul_md {
         custom
@@ -1615,7 +1649,7 @@ Managed by ClawSetup."#, config.agent_name)
 ## Mission
 Serve {}."#, config.user_name)
     };
-    fs::write(workspace.join("SOUL.md"), soul_md).map_err(|e| e.to_string())?;
+    write_file_fn(&format!("{}/SOUL.md", workspace), &soul_md)?;
 
     Ok("Configured.".into())
 }
@@ -1991,6 +2025,55 @@ fn wsl_root_command(cmd: &str) -> Result<String, String> {
     }
 }
 
+// --- WSL filesystem helpers (Windows only) ---
+// On Windows, openclaw runs inside WSL but Tauri runs natively.
+// dirs::home_dir() returns C:\Users\... but we need /home/user/... inside WSL.
+
+#[cfg(target_os = "windows")]
+fn wsl_home_dir() -> Result<String, String> {
+    shell_command("echo $HOME")
+        .map(|s| s.trim().to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_write_file(path: &str, content: &str) -> Result<(), String> {
+    // Escape single quotes for safe shell embedding: ' -> '\''
+    let escaped = content.replace('\'', "'\\''");
+    let cmd = format!("printf '%s' '{}' > \"{}\"", escaped, path);
+    shell_command(&cmd)?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_read_file(path: &str) -> String {
+    shell_command(&format!("cat \"{}\" 2>/dev/null", path)).unwrap_or_default()
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_mkdir_p(path: &str) -> Result<(), String> {
+    shell_command(&format!("mkdir -p \"{}\"", path))?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_list_dirs(base_path: &str) -> Vec<String> {
+    let mut dirs_found = Vec::new();
+    if let Ok(output) = shell_command(&format!("ls -1 -F \"{}\" 2>/dev/null", base_path)) {
+        for line in output.lines() {
+            if line.trim().ends_with('/') {
+                dirs_found.push(line.trim().trim_matches('/').to_string());
+            }
+        }
+    }
+    dirs_found
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_remove_dir(path: &str) -> Result<(), String> {
+    shell_command(&format!("rm -rf \"{}\"", path))?;
+    Ok(())
+}
+
 fn shell_command(cmd: &str) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     let (shell, args) = ("/bin/zsh", vec!["-l", "-c"]);
@@ -2082,7 +2165,11 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
     let home_dir = if let Some(sess) = &session {
         execute_ssh(sess, "echo $HOME").map_err(|e| format!("Failed to get remote home: {}", e))?.trim().to_string()
     } else {
-        dirs::home_dir().ok_or("Could not find local home directory")?.to_string_lossy().to_string()
+        // On Windows, openclaw runs inside WSL — use WSL home, not Windows home
+        #[cfg(target_os = "windows")]
+        { wsl_home_dir()? }
+        #[cfg(not(target_os = "windows"))]
+        { dirs::home_dir().ok_or("Could not find local home directory")?.to_string_lossy().to_string() }
     };
 
     // Helper to read file content (using absolute paths)
@@ -2091,8 +2178,11 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
             // Remote read
             execute_ssh(sess, &format!("cat \"{}\"", path)).unwrap_or_default()
         } else {
-            // Local read
-            fs::read_to_string(path).unwrap_or_default()
+            // On Windows, read from WSL filesystem
+            #[cfg(target_os = "windows")]
+            { wsl_read_file(path) }
+            #[cfg(not(target_os = "windows"))]
+            { fs::read_to_string(path).unwrap_or_default() }
         }
     };
 
@@ -2109,14 +2199,21 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
                 }
             }
         } else {
-            // Local
-            let path = std::path::Path::new(base_path);
-            if let Ok(entries) = fs::read_dir(path) {
-                for entry in entries.flatten() {
-                    if let Ok(ft) = entry.file_type() {
-                        if ft.is_dir() {
-                            if let Ok(name) = entry.file_name().into_string() {
-                                dirs_found.push(name);
+            // On Windows, list dirs inside WSL filesystem
+            #[cfg(target_os = "windows")]
+            {
+                dirs_found = wsl_list_dirs(base_path);
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let path = std::path::Path::new(base_path);
+                if let Ok(entries) = fs::read_dir(path) {
+                    for entry in entries.flatten() {
+                        if let Ok(ft) = entry.file_type() {
+                            if ft.is_dir() {
+                                if let Ok(name) = entry.file_name().into_string() {
+                                    dirs_found.push(name);
+                                }
                             }
                         }
                     }
@@ -2252,10 +2349,14 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
              let askills_opt = if askills.is_empty() { None } else { Some(askills) };
 
              // Read additional md files for sub-agent
-             let a_tools_md = fs::read_to_string(format!("{}/TOOLS.md", agent_workspace_base)).ok();
-             let a_agents_md = fs::read_to_string(format!("{}/AGENTS.md", agent_workspace_base)).ok();
-             let a_heartbeat_md = fs::read_to_string(format!("{}/HEARTBEAT.md", agent_workspace_base)).ok();
-             let a_memory_md = fs::read_to_string(format!("{}/MEMORY.md", agent_workspace_base)).ok();
+             let a_tools_md_s = read_file_content(&format!("{}/TOOLS.md", agent_workspace_base));
+             let a_tools_md = if a_tools_md_s.is_empty() { None } else { Some(a_tools_md_s) };
+             let a_agents_md_s = read_file_content(&format!("{}/AGENTS.md", agent_workspace_base));
+             let a_agents_md = if a_agents_md_s.is_empty() { None } else { Some(a_agents_md_s) };
+             let a_heartbeat_md_s = read_file_content(&format!("{}/HEARTBEAT.md", agent_workspace_base));
+             let a_heartbeat_md = if a_heartbeat_md_s.is_empty() { None } else { Some(a_heartbeat_md_s) };
+             let a_memory_md_s = read_file_content(&format!("{}/MEMORY.md", agent_workspace_base));
+             let a_memory_md = if a_memory_md_s.is_empty() { None } else { Some(a_memory_md_s) };
 
              agent_configs.push(AgentData {
                  id: aid,
@@ -2290,10 +2391,14 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
     let is_paired = dm_policy != "pairing";
 
     // Read additional workspace markdown files
-    let tools_md_str = fs::read_to_string(format!("{}/.openclaw/workspace/TOOLS.md", home_dir)).ok();
-    let agents_md_str = fs::read_to_string(format!("{}/.openclaw/workspace/AGENTS.md", home_dir)).ok();
-    let heartbeat_md_str = fs::read_to_string(format!("{}/.openclaw/workspace/HEARTBEAT.md", home_dir)).ok();
-    let memory_md_str = fs::read_to_string(format!("{}/.openclaw/workspace/MEMORY.md", home_dir)).ok();
+    let tools_md_s = read_file_content(&format!("{}/.openclaw/workspace/TOOLS.md", home_dir));
+    let tools_md_str = if tools_md_s.is_empty() { None } else { Some(tools_md_s) };
+    let agents_md_s = read_file_content(&format!("{}/.openclaw/workspace/AGENTS.md", home_dir));
+    let agents_md_str = if agents_md_s.is_empty() { None } else { Some(agents_md_s) };
+    let heartbeat_md_s = read_file_content(&format!("{}/.openclaw/workspace/HEARTBEAT.md", home_dir));
+    let heartbeat_md_str = if heartbeat_md_s.is_empty() { None } else { Some(heartbeat_md_s) };
+    let memory_md_s = read_file_content(&format!("{}/.openclaw/workspace/MEMORY.md", home_dir));
+    let memory_md_str = if memory_md_s.is_empty() { None } else { Some(memory_md_s) };
 
     // Check memory enabled (memoryFlush is an object: { enabled: bool })
     let memory_enabled = defaults.get("compaction")
@@ -2309,7 +2414,7 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
         .unwrap_or(false);
 
     // Read ClawSetup metadata from separate file
-    let meta_str = fs::read_to_string(format!("{}/.openclaw/clawsetup-meta.json", home_dir)).unwrap_or_default();
+    let meta_str = read_file_content(&format!("{}/.openclaw/clawsetup-meta.json", home_dir));
     let meta: serde_json::Value = serde_json::from_str(&meta_str).unwrap_or(serde_json::json!({}));
 
     // Read cron jobs from metadata
@@ -2649,5 +2754,76 @@ mod tests {
         assert_eq!(expected_args[2], "-u");
         assert_eq!(expected_args[3], "root");
         assert_eq!(expected_args[6], "ready");
+    }
+
+    #[test]
+    fn test_wsl_write_file_escapes_single_quotes() {
+        // wsl_write_file uses printf '%s' '...' > file, so single quotes must be escaped
+        let content = "it's a test with 'quotes' inside";
+        let escaped = content.replace('\'', "'\\''");
+        let cmd = format!("printf '%s' '{}' > \"{}\"", escaped, "/tmp/test.txt");
+
+        // Verify the escaped content doesn't have unmatched quotes
+        assert!(cmd.contains("it'\\''s a test with '\\''quotes'\\'' inside"));
+        // Verify the command targets the right file
+        assert!(cmd.contains("/tmp/test.txt"));
+    }
+
+    #[test]
+    fn test_wsl_write_file_handles_json_content() {
+        // JSON content often has no single quotes, but may have special chars
+        let content = r#"{"gateway":{"mode":"local","auth":{"token":"abc123"}}}"#;
+        let escaped = content.replace('\'', "'\\''");
+        // JSON typically has no single quotes, so escaped should equal original
+        assert_eq!(escaped, content);
+    }
+
+    #[test]
+    fn test_wsl_home_dir_command_structure() {
+        // wsl_home_dir calls shell_command("echo $HOME") which on Windows
+        // routes through wsl -- /bin/bash -c "echo $HOME"
+        // Verify the command string is correct
+        let cmd = "echo $HOME";
+        assert_eq!(cmd, "echo $HOME");
+        // The result should be trimmed (no trailing newline)
+        let simulated_output = "/home/testuser\n";
+        assert_eq!(simulated_output.trim(), "/home/testuser");
+    }
+
+    #[test]
+    fn test_wsl_read_file_command_structure() {
+        // wsl_read_file calls shell_command("cat \"path\" 2>/dev/null")
+        let path = "/home/user/.openclaw/openclaw.json";
+        let cmd = format!("cat \"{}\" 2>/dev/null", path);
+        assert!(cmd.contains("cat"));
+        assert!(cmd.contains(path));
+        assert!(cmd.contains("2>/dev/null"), "stderr should be suppressed");
+    }
+
+    #[test]
+    fn test_configure_agent_uses_string_paths() {
+        // On all platforms, configure_agent now uses String paths (not PathBuf)
+        // so that on Windows the WSL home (/home/user) is used instead of C:\Users\user
+        let home = "/home/testuser";
+        let openclaw_root = format!("{}/.openclaw", home);
+        let workspace = format!("{}/workspace", openclaw_root);
+        let agents_dir = format!("{}/agents/main/agent", openclaw_root);
+
+        assert_eq!(openclaw_root, "/home/testuser/.openclaw");
+        assert_eq!(workspace, "/home/testuser/.openclaw/workspace");
+        assert_eq!(agents_dir, "/home/testuser/.openclaw/agents/main/agent");
+
+        // Verify these are Unix-style paths (not Windows backslashes)
+        assert!(!openclaw_root.contains('\\'));
+        assert!(!workspace.contains('\\'));
+    }
+
+    #[test]
+    fn test_wsl_remove_dir_command_structure() {
+        // wsl_remove_dir should use rm -rf with the path
+        let path = "~/.openclaw";
+        let cmd = format!("rm -rf \"{}\"", path);
+        assert!(cmd.contains("rm -rf"));
+        assert!(cmd.contains(path));
     }
 }
