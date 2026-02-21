@@ -1232,7 +1232,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
 
     let read_file_fn = |path: &str| -> String {
         #[cfg(target_os = "windows")]
-        { wsl_read_file(path) }
+        { wsl_read_file(path).unwrap_or_default() }
         #[cfg(not(target_os = "windows"))]
         { fs::read_to_string(path).unwrap_or_default() }
     };
@@ -1700,6 +1700,7 @@ Serve {}."#, config.user_name)
 
 #[command]
 fn start_gateway() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
     // config_path removed as unused
 
@@ -2107,8 +2108,8 @@ fn wsl_write_file(path: &str, content: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn wsl_read_file(path: &str) -> String {
-    shell_command(&format!("cat \"{}\" 2>/dev/null", path)).unwrap_or_default()
+fn wsl_read_file(path: &str) -> Result<String, String> {
+    shell_command(&format!("cat \"{}\" 2>/dev/null", path))
 }
 
 #[cfg(target_os = "windows")]
@@ -2247,7 +2248,7 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
         } else {
             // On Windows, read from WSL filesystem
             #[cfg(target_os = "windows")]
-            { wsl_read_file(path) }
+            { wsl_read_file(path).unwrap_or_default() }
             #[cfg(not(target_os = "windows"))]
             { fs::read_to_string(path).unwrap_or_default() }
         }
