@@ -30,4 +30,4 @@ Whenever changing code, take extra care that code addition or removal does not b
 
 ## Commiting
 
-If the build is successful, and all tunit tests passm git commit the changes and git push to the remote branch.
+If the build is successful, and all the unit tests pass, git commit the changes and git push to the remote branch.
