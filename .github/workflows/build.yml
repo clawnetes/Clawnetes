@@ -2,7 +2,7 @@ name: Build Desktop Apps
 
 on:
   push:
-    branches: [ new_features_190226, new_updates_230226 ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
