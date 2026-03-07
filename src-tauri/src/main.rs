@@ -711,6 +711,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
                 } else {
                     if let Some(c) = channel_config.as_object_mut() {
                         c.insert("dmPolicy".to_string(), serde_json::Value::String("allowlist".to_string()));
+                        c.insert("allowFrom".to_string(), serde_json::json!([]));
                     }
                 }
 
@@ -1427,14 +1428,22 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
                     "pairing"
                 };
 
+                let mut channel_config = serde_json::json!({
+                    "botToken": token,
+                    "name": "Primary Bot",
+                    "dmPolicy": dm_policy
+                });
+
+                if dm_policy == "allowlist" {
+                    if let Some(c) = channel_config.as_object_mut() {
+                        c.insert("allowFrom".to_string(), serde_json::json!([]));
+                    }
+                }
+
                 obj.insert("channels".to_string(), serde_json::json!({
                     "telegram": {
                         "accounts": {
-                            "default": {
-                                "botToken": token,
-                                "name": "Primary Bot",
-                                "dmPolicy": dm_policy
-                            }
+                            "default": channel_config
                         }
                     }
                 }));

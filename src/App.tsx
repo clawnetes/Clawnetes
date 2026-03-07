@@ -2496,6 +2496,127 @@ Managed by Clawnetes.`,
                       {currentProvider && MODELS_BY_PROVIDER[currentProvider] && (
                         <div style={{marginTop: "0.75rem"}}>
                           <label style={{fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.5rem"}}>Model</label>
+                          
+                          {/* Ollama dynamic detection for fallback */}
+                          {currentProvider === "ollama" && (
+                            <div style={{display: "flex", gap: "0.5rem", marginBottom: "0.5rem"}}>
+                              <button
+                                className="secondary"
+                                style={{fontSize: "0.85rem", padding: "0.4rem 0.8rem"}}
+                                disabled={ollamaDetecting}
+                                onClick={async () => {
+                                  setOllamaDetecting(true);
+                                  try {
+                                    const remoteConfig = targetEnvironment === "cloud" ? {
+                                      ip: remoteIp, user: remoteUser,
+                                      password: remotePassword || null,
+                                      privateKeyPath: remotePrivateKeyPath || null
+                                    } : null;
+                                    const models: string[] = await invoke("get_ollama_models", { remote: remoteConfig });
+                                    setOllamaModels(models);
+                                    if (models.length > 0) {
+                                      const newModels = [...fallbackModels];
+                                      newModels[idx] = `ollama/${models[0]}`;
+                                      setFallbackModels(newModels);
+                                    }
+                                  } catch (e) {
+                                    console.error("Ollama detection failed:", e);
+                                  }
+                                  setOllamaDetecting(false);
+                                }}
+                              >
+                                {ollamaDetecting ? "Detecting..." : "Detect Models"}
+                              </button>
+                              {ollamaModels.length > 0 && (
+                                <span style={{fontSize: "0.8rem", color: "var(--success)", alignSelf: "center"}}>
+                                  Found {ollamaModels.length} model(s)
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {/* LM Studio dynamic detection for fallback */}
+                          {currentProvider === "lmstudio" && (
+                            <div style={{display: "flex", gap: "0.5rem", marginBottom: "0.5rem"}}>
+                              <button
+                                className="secondary"
+                                style={{fontSize: "0.85rem", padding: "0.4rem 0.8rem"}}
+                                disabled={lmstudioDetecting}
+                                onClick={async () => {
+                                  setLmstudioDetecting(true);
+                                  try {
+                                    const remoteConfig = targetEnvironment === "cloud" ? {
+                                      ip: remoteIp, user: remoteUser,
+                                      password: remotePassword || null,
+                                      privateKeyPath: remotePrivateKeyPath || null
+                                    } : null;
+                                    const models: string[] = await invoke("get_lmstudio_models", {
+                                      baseUrl: lmstudioBaseUrl,
+                                      remote: remoteConfig
+                                    });
+                                    setLmstudioModels(models);
+                                    if (models.length > 0) {
+                                      const newModels = [...fallbackModels];
+                                      newModels[idx] = `lmstudio/${models[0]}`;
+                                      setFallbackModels(newModels);
+                                    }
+                                  } catch (e) {
+                                    console.error("LM Studio detection failed:", e);
+                                  }
+                                  setLmstudioDetecting(false);
+                                }}
+                              >
+                                {lmstudioDetecting ? "Detecting..." : "Detect Models"}
+                              </button>
+                              {lmstudioModels.length > 0 && (
+                                <span style={{fontSize: "0.8rem", color: "var(--success)", alignSelf: "center"}}>
+                                  Found {lmstudioModels.length} model(s)
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Custom local endpoint detection for fallback */}
+                          {currentProvider === "local" && (
+                            <div style={{display: "flex", gap: "0.5rem", marginBottom: "0.5rem"}}>
+                              <button
+                                className="secondary"
+                                style={{fontSize: "0.85rem", padding: "0.4rem 0.8rem"}}
+                                disabled={localDetecting}
+                                onClick={async () => {
+                                  setLocalDetecting(true);
+                                  try {
+                                    const remoteConfig = targetEnvironment === "cloud" ? {
+                                      ip: remoteIp, user: remoteUser,
+                                      password: remotePassword || null,
+                                      privateKeyPath: remotePrivateKeyPath || null
+                                    } : null;
+                                    const models: string[] = await invoke("get_lmstudio_models", {
+                                      baseUrl: localBaseUrl,
+                                      remote: remoteConfig
+                                    });
+                                    setLocalModels(models);
+                                    if (models.length > 0) {
+                                      const newModels = [...fallbackModels];
+                                      newModels[idx] = `local/${models[0]}`;
+                                      setFallbackModels(newModels);
+                                    }
+                                  } catch (e) {
+                                    console.error("Local endpoint detection failed:", e);
+                                  }
+                                  setLocalDetecting(false);
+                                }}
+                              >
+                                {localDetecting ? "Detecting..." : "Detect Models"}
+                              </button>
+                              {localModels.length > 0 && (
+                                <span style={{fontSize: "0.8rem", color: "var(--success)", alignSelf: "center"}}>
+                                  Found {localModels.length} model(s)
+                                </span>
+                              )}
+                            </div>
+                          )}
+
                           <Dropdown
                             value={currentModel}
                             onChange={(val) => {
@@ -2504,7 +2625,15 @@ Managed by Clawnetes.`,
                               setFallbackModels(newModels);
                             }}
                             searchable={MODELS_BY_PROVIDER[currentProvider].length > 10}
-                            options={MODELS_BY_PROVIDER[currentProvider].map(m => ({ value: m.value, label: m.label }))}
+                            options={
+                              currentProvider === "ollama" && ollamaModels.length > 0
+                                ? ollamaModels.map(m => ({ value: `ollama/\${m}`, label: m }))
+                                : currentProvider === "lmstudio" && lmstudioModels.length > 0
+                                ? lmstudioModels.map(m => ({ value: `lmstudio/\${m}`, label: m }))
+                                : currentProvider === "local" && localModels.length > 0
+                                ? localModels.map(m => ({ value: `local/\${m}`, label: m }))
+                                : MODELS_BY_PROVIDER[currentProvider].map(m => ({ value: m.value, label: m.label, description: m.description }))
+                            }
                           />
                         </div>
                       )}
