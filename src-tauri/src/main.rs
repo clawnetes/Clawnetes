@@ -546,6 +546,44 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
         }
     };
 
+    let (telegram_allow_from, telegram_dm_policy): (Option<serde_json::Value>, Option<String>) = {
+        let read_token_result = execute_ssh(&sess, &format!(
+            "cat {}/openclaw.json 2>/dev/null || echo '{{}}'", openclaw_root
+        ));
+        if let Ok(contents) = read_token_result {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&contents) {
+                let default_acc = parsed.get("channels")
+                    .and_then(|c| c.get("telegram"))
+                    .and_then(|t| t.get("accounts"))
+                    .and_then(|a| a.get("default"));
+                
+                let allow_from = default_acc.and_then(|d| d.get("allowFrom")).cloned();
+                let dm_policy = default_acc.and_then(|d| d.get("dmPolicy")).and_then(|v| v.as_str()).map(|s| s.to_string());
+                
+                (allow_from, dm_policy)
+            } else { (None, None) }
+        } else { (None, None) }
+    };
+
+    let (whatsapp_allow_from, _whatsapp_dm_policy): (Option<serde_json::Value>, Option<String>) = {
+        let read_token_result = execute_ssh(&sess, &format!(
+            "cat {}/openclaw.json 2>/dev/null || echo '{{}}'", openclaw_root
+        ));
+        if let Ok(contents) = read_token_result {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&contents) {
+                let default_acc = parsed.get("channels")
+                    .and_then(|c| c.get("whatsapp"))
+                    .and_then(|t| t.get("accounts"))
+                    .and_then(|a| a.get("default"));
+                
+                let allow_from = default_acc.and_then(|d| d.get("allowFrom")).cloned();
+                let dm_policy = default_acc.and_then(|d| d.get("dmPolicy")).and_then(|v| v.as_str()).map(|s| s.to_string());
+                
+                (allow_from, dm_policy)
+            } else { (None, None) }
+        } else { (None, None) }
+    };
+
     let profile_name = format!("{}:default", config.provider);
     let mut auth_mode = config.auth_method.unwrap_or_else(|| "token".to_string());
     if auth_mode == "setup-token" { auth_mode = "token".to_string(); }
@@ -704,14 +742,18 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
                     "name": "Primary Bot"
                 });
                 
-                if config.preserve_state != Some(true) {
-                    if let Some(c) = channel_config.as_object_mut() {
-                        c.insert("dmPolicy".to_string(), serde_json::Value::String("pairing".to_string()));
-                    }
+                let dm_policy = if config.preserve_state == Some(true) {
+                    telegram_dm_policy.unwrap_or_else(|| "allowlist".to_string())
                 } else {
-                    if let Some(c) = channel_config.as_object_mut() {
-                        c.insert("dmPolicy".to_string(), serde_json::Value::String("allowlist".to_string()));
-                        c.insert("allowFrom".to_string(), serde_json::json!([]));
+                    "pairing".to_string()
+                };
+
+                if let Some(c) = channel_config.as_object_mut() {
+                    c.insert("dmPolicy".to_string(), serde_json::Value::String(dm_policy.clone()));
+                    if dm_policy == "allowlist" {
+                        if let Some(existing_allow) = telegram_allow_from.clone() {
+                            c.insert("allowFrom".to_string(), existing_allow);
+                        }
                     }
                 }
 
@@ -720,6 +762,47 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
                         "accounts": {
                             "default": channel_config
                         }
+                    }
+                }));
+            }
+        }
+    }
+
+    // Add WhatsApp config inline if enabled
+    if config.whatsapp_enabled.unwrap_or(false) {
+        let dm_policy = config.whatsapp_dm_policy.as_deref().unwrap_or("open");
+        if let Some(obj) = config_val.as_object_mut() {
+            // Merge plugins entries
+            let plugins_entry = obj.entry("plugins".to_string()).or_insert(serde_json::json!({ "entries": {} }));
+            if let Some(entries) = plugins_entry.get_mut("entries").and_then(|e| e.as_object_mut()) {
+                entries.insert("whatsapp".to_string(), serde_json::json!({ "enabled": true }));
+            }
+
+            // Merge channels
+            let channels_entry = obj.entry("channels".to_string()).or_insert(serde_json::json!({}));
+            if let Some(channels_obj) = channels_entry.as_object_mut() {
+                let mut whatsapp_account = if dm_policy == "open" {
+                    serde_json::json!({
+                        "dmPolicy": dm_policy,
+                        "allowFrom": ["*"]
+                    })
+                } else {
+                    serde_json::json!({
+                        "dmPolicy": dm_policy
+                    })
+                };
+                
+                if dm_policy == "allowlist" {
+                    if let Some(existing) = whatsapp_allow_from.clone() {
+                        if let Some(w) = whatsapp_account.as_object_mut() {
+                            w.insert("allowFrom".to_string(), existing);
+                        }
+                    }
+                }
+                
+                channels_obj.insert("whatsapp".to_string(), serde_json::json!({
+                    "accounts": {
+                        "default": whatsapp_account
                     }
                 }));
             }
@@ -866,7 +949,6 @@ Serve {}."#, config.user_name)
     }
 
     if config.whatsapp_enabled.unwrap_or(false) {
-        let _ = execute_ssh(&sess, &format!("{}openclaw plugins enable whatsapp", nvm_prefix));
     }
 
     // Skills
@@ -1304,6 +1386,24 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
         }
     };
 
+    let (telegram_allow_from, telegram_dm_policy): (Option<serde_json::Value>, Option<String>) = {
+        let existing_config_path = format!("{}/openclaw.json", openclaw_root);
+        let contents = read_file_fn(&existing_config_path);
+        if !contents.is_empty() {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&contents) {
+                let default_acc = parsed.get("channels")
+                    .and_then(|c| c.get("telegram"))
+                    .and_then(|t| t.get("accounts"))
+                    .and_then(|a| a.get("default"));
+                
+                let allow_from = default_acc.and_then(|d| d.get("allowFrom")).cloned();
+                let dm_policy = default_acc.and_then(|d| d.get("dmPolicy")).and_then(|v| v.as_str()).map(|s| s.to_string());
+                
+                (allow_from, dm_policy)
+            } else { (None, None) }
+        } else { (None, None) }
+    };
+
     let profile_name = format!("{}:default", config.provider);
     let mut auth_mode = config.auth_method.as_deref().unwrap_or("token").to_string();
 
@@ -1423,9 +1523,9 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
                 }));
 
                 let dm_policy = if config.preserve_state == Some(true) {
-                    "allowlist"
+                    telegram_dm_policy.unwrap_or_else(|| "allowlist".to_string())
                 } else {
-                    "pairing"
+                    "pairing".to_string()
                 };
 
                 let mut channel_config = serde_json::json!({
@@ -1435,8 +1535,10 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
                 });
 
                 if dm_policy == "allowlist" {
-                    if let Some(c) = channel_config.as_object_mut() {
-                        c.insert("allowFrom".to_string(), serde_json::json!([]));
+                    if let Some(existing_allow) = telegram_allow_from {
+                        if let Some(c) = channel_config.as_object_mut() {
+                            c.insert("allowFrom".to_string(), existing_allow);
+                        }
                     }
                 }
 
@@ -1464,21 +1566,38 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
             // Merge channels (may already have telegram)
             let channels_entry = obj.entry("channels".to_string()).or_insert(serde_json::json!({}));
             if let Some(channels_obj) = channels_entry.as_object_mut() {
-                let whatsapp_account = if dm_policy == "open" {
+                let mut whatsapp_account = if dm_policy == "open" {
                     serde_json::json!({
                         "dmPolicy": dm_policy,
                         "allowFrom": ["*"]
-                    })
-                } else if dm_policy == "allowlist" {
-                    serde_json::json!({
-                        "dmPolicy": dm_policy,
-                        "allowFrom": []
                     })
                 } else {
                     serde_json::json!({
                         "dmPolicy": dm_policy
                     })
                 };
+                
+                if dm_policy == "allowlist" {
+                    let existing_wa_allow = {
+                        let existing_config_path = format!("{}/openclaw.json", openclaw_root);
+                        let contents = read_file_fn(&existing_config_path);
+                        if !contents.is_empty() {
+                            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&contents) {
+                                parsed.get("channels")
+                                    .and_then(|c| c.get("whatsapp"))
+                                    .and_then(|t| t.get("accounts"))
+                                    .and_then(|a| a.get("default"))
+                                    .and_then(|d| d.get("allowFrom"))
+                                    .cloned()
+                            } else { None }
+                        } else { None }
+                    };
+                    if let Some(existing) = existing_wa_allow {
+                        if let Some(w) = whatsapp_account.as_object_mut() {
+                            w.insert("allowFrom".to_string(), existing);
+                        }
+                    }
+                }
                 channels_obj.insert("whatsapp".to_string(), serde_json::json!({
                     "accounts": {
                         "default": whatsapp_account
