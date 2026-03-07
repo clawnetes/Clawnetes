@@ -1455,11 +1455,24 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
             // Merge channels (may already have telegram)
             let channels_entry = obj.entry("channels".to_string()).or_insert(serde_json::json!({}));
             if let Some(channels_obj) = channels_entry.as_object_mut() {
+                let whatsapp_account = if dm_policy == "open" {
+                    serde_json::json!({
+                        "dmPolicy": dm_policy,
+                        "allowFrom": ["*"]
+                    })
+                } else if dm_policy == "allowlist" {
+                    serde_json::json!({
+                        "dmPolicy": dm_policy,
+                        "allowFrom": []
+                    })
+                } else {
+                    serde_json::json!({
+                        "dmPolicy": dm_policy
+                    })
+                };
                 channels_obj.insert("whatsapp".to_string(), serde_json::json!({
                     "accounts": {
-                        "default": {
-                            "dmPolicy": dm_policy
-                        }
+                        "default": whatsapp_account
                     }
                 }));
             }
