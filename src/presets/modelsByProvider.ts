@@ -8,6 +8,9 @@ export const DEFAULT_MODELS: Record<string, string> = {
   "google-vertex": "google-vertex/gemini-3-pro-preview",
   "openrouter": "openrouter/anthropic/claude-opus-4.6",
   "xai": "xai/grok-4",
+  "ollama": "ollama/llama3.2",
+  "lmstudio": "lmstudio/llama-3.2-3b-instruct",
+  "local": "local/custom",
 };
 
 export const MODELS_BY_PROVIDER: Record<string, ModelOption[]> = {
@@ -260,6 +263,28 @@ export const MODELS_BY_PROVIDER: Record<string, ModelOption[]> = {
     { value: "xai/grok-4-fast", label: "Grok 4 Fast", description: "Input: text+image • Ctx: 1953k" },
     { value: "xai/grok-4-fast-non-reasoning", label: "Grok 4 Fast Non Reasoning", description: "Input: text+image • Ctx: 1953k" },
   ],
+  "ollama": [
+    { value: "ollama/llama3.2", label: "Llama 3.2", description: "Local • Ollama" },
+    { value: "ollama/llama3.1", label: "Llama 3.1", description: "Local • Ollama" },
+    { value: "ollama/mistral", label: "Mistral", description: "Local • Ollama" },
+    { value: "ollama/phi3", label: "Phi-3", description: "Local • Ollama" },
+    { value: "ollama/gemma2", label: "Gemma 2", description: "Local • Ollama" },
+    { value: "ollama/deepseek-r1", label: "DeepSeek R1", description: "Local • Ollama" },
+    { value: "ollama/qwen2.5", label: "Qwen 2.5", description: "Local • Ollama" },
+    { value: "ollama/codestral", label: "Codestral", description: "Local • Ollama" },
+    { value: "ollama/dolphin-mixtral", label: "Dolphin Mixtral", description: "Local • Ollama" },
+    { value: "ollama/nomic-embed-text", label: "Nomic Embed Text", description: "Local • Ollama" },
+  ],
+  "lmstudio": [
+    { value: "lmstudio/llama-3.2-3b-instruct", label: "Llama 3.2 3B Instruct", description: "Local • LM Studio" },
+    { value: "lmstudio/mistral-7b-instruct", label: "Mistral 7B Instruct", description: "Local • LM Studio" },
+    { value: "lmstudio/phi-3-mini-4k-instruct", label: "Phi-3 Mini 4K Instruct", description: "Local • LM Studio" },
+    { value: "lmstudio/qwen2.5-7b-instruct", label: "Qwen 2.5 7B Instruct", description: "Local • LM Studio" },
+    { value: "lmstudio/gemma-2-9b-it", label: "Gemma 2 9B IT", description: "Local • LM Studio" },
+  ],
+  "local": [
+    { value: "local/custom", label: "Custom Model", description: "OpenAI-compatible local endpoint" },
+  ],
 };
 
 export const PROVIDER_LOGOS: Record<string, string> = {
@@ -284,7 +309,9 @@ export const PROVIDER_LOGOS: Record<string, string> = {
   "opencode": "/images/code.svg",
   "vercel-ai-gateway": "/images/vercel.svg",
   "xai": "/images/grok.svg",
-  "zai": "/images/zhipu.svg"
+  "zai": "/images/zhipu.svg",
+  "lmstudio": "/images/code.svg",
+  "local": "/images/code.svg",
 };
 
 export const EMOJI_OPTIONS = ["🦞", "🤖", "🧠", "⚡", "🔮", "🦉", "🦊", "🐯", "🦁", "🦄", "👽", "👾", "🐉", "🦕", "🦍", "🐕", "🐈", "🐙", "🍄", "🌎"];

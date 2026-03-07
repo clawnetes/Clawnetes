@@ -177,6 +177,14 @@ export interface ConfigPayload {
   memory_md?: string | null;
   memory_enabled?: boolean;
   cron_jobs?: CronJobConfig[] | null;
+  // Local model support
+  local_base_url?: string | null;
+  // OpenClaw latest features
+  thinking_level?: string | null;
+  acp_dispatch?: boolean;
+  // WhatsApp channel
+  whatsapp_enabled?: boolean;
+  whatsapp_dm_policy?: string | null;
 }
 
 export interface AgentPayloadData {

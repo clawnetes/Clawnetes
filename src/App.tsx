@@ -145,6 +145,35 @@ function App() {
   const [pairingStatus, setPairingStatus] = useState("");
   const [isPaired, setIsPaired] = useState(false);
 
+  // Local model detection state
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [ollamaDetecting, setOllamaDetecting] = useState(false);
+  const [lmstudioBaseUrl, setLmstudioBaseUrl] = useState("http://localhost:1234");
+  const [lmstudioModels, setLmstudioModels] = useState<string[]>([]);
+  const [lmstudioDetecting, setLmstudioDetecting] = useState(false);
+  const [localBaseUrl, setLocalBaseUrl] = useState("http://localhost:8080");
+  const [localModels, setLocalModels] = useState<string[]>([]);
+  const [localDetecting, setLocalDetecting] = useState(false);
+
+  // OpenClaw latest features
+  const [thinkingLevel, setThinkingLevel] = useState("adaptive");
+  const [acpDispatch, setAcpDispatch] = useState(true);
+
+  // WhatsApp channel state
+  const [whatsappEnabled, setWhatsappEnabled] = useState(false);
+  const [whatsappDmPolicy, setWhatsappDmPolicy] = useState("pairing");
+  const [whatsappQrDataUrl, setWhatsappQrDataUrl] = useState("");
+  const [whatsappPaired, setWhatsappPaired] = useState(false);
+  const [whatsappQrStep, setWhatsappQrStep] = useState(false);
+  const [whatsappQrLoading, setWhatsappQrLoading] = useState(false);
+
+  // Config validation
+  const [validateOutput, setValidateOutput] = useState("");
+  const [validating, setValidating] = useState(false);
+
+  // SecretRef toggle for API key
+  const [apiKeyIsSecretRef, setApiKeyIsSecretRef] = useState(false);
+
   const availableSkills = AVAILABLE_SKILLS;
 
   // Apply agent type preset - sets all relevant state from a preset
@@ -522,6 +551,11 @@ Managed by Clawnetes.`,
       memory_md: initial.memory_md || null,
       memory_enabled: initial.memory_enabled || false,
       cron_jobs: initial.cron_jobs || null,
+      local_base_url: initial.local_base_url || null,
+      thinking_level: initial.thinking_level || null,
+      acp_dispatch: initial.acp_dispatch ?? true,
+      whatsapp_enabled: initial.whatsapp_enabled || false,
+      whatsapp_dm_policy: initial.whatsapp_dm_policy || null,
     };
   }
 
@@ -588,6 +622,14 @@ Managed by Clawnetes.`,
         memory_md: usePresetFields && memoryMd ? memoryMd : null,
         memory_enabled: usePresetFields ? memoryEnabled : false,
         cron_jobs: cronJobs.length > 0 ? cronJobs : null,
+        // Local model support
+        local_base_url: provider === "local" ? localBaseUrl : (provider === "lmstudio" ? lmstudioBaseUrl : null),
+        // OpenClaw latest features
+        thinking_level: (provider === "anthropic" && (model.includes("claude-") && model.includes("-4"))) ? thinkingLevel : null,
+        acp_dispatch: acpDispatch,
+        // WhatsApp channel
+        whatsapp_enabled: whatsappEnabled,
+        whatsapp_dm_policy: whatsappEnabled ? whatsappDmPolicy : null,
     };
   }
 
@@ -904,6 +946,16 @@ Managed by Clawnetes.`,
       if (config.memory_md) setMemoryMd(config.memory_md);
       if (config.memory_enabled !== undefined) setMemoryEnabled(config.memory_enabled);
       if (config.cron_jobs) setCronJobs(config.cron_jobs);
+
+      // Load new fields
+      if (config.whatsapp_enabled !== undefined) setWhatsappEnabled(config.whatsapp_enabled);
+      if (config.whatsapp_dm_policy) setWhatsappDmPolicy(config.whatsapp_dm_policy);
+      if (config.thinking_level) setThinkingLevel(config.thinking_level);
+      if (config.acp_dispatch !== undefined) setAcpDispatch(config.acp_dispatch);
+      if (config.local_base_url) {
+        if (config.provider === "lmstudio") setLmstudioBaseUrl(config.local_base_url);
+        else if (config.provider === "local") setLocalBaseUrl(config.local_base_url);
+      }
 
       setEnableMultiAgent(config.enable_multi_agent);
       if (config.enable_multi_agent && config.agent_configs) {
@@ -1683,6 +1735,9 @@ Managed by Clawnetes.`,
                   { value: "google-vertex", label: "Google Vertex AI", icon: PROVIDER_LOGOS["google-vertex"] },
                   { value: "openrouter", label: "OpenRouter", icon: PROVIDER_LOGOS["openrouter"] },
                   { value: "xai", label: "xAI (Grok)", icon: PROVIDER_LOGOS["xai"] },
+                  { value: "ollama", label: "Ollama (Local)", icon: PROVIDER_LOGOS["ollama"] },
+                  { value: "lmstudio", label: "LM Studio (Local)", icon: PROVIDER_LOGOS["lmstudio"] },
+                  { value: "local", label: "Custom Local Endpoint", icon: PROVIDER_LOGOS["local"] },
                 ]}
               />
             </div>
@@ -1710,43 +1765,231 @@ Managed by Clawnetes.`,
               />
             </div>
 
+            {/* LM Studio base URL input */}
+            {provider === "lmstudio" && (
+              <div className="form-group" style={{marginTop: "1.5rem"}}>
+                <label>LM Studio Base URL</label>
+                <input
+                  type="text"
+                  value={lmstudioBaseUrl}
+                  onChange={(e) => setLmstudioBaseUrl(e.target.value)}
+                  placeholder="http://localhost:1234"
+                />
+              </div>
+            )}
+
+            {/* Custom local endpoint URL input */}
+            {provider === "local" && (
+              <div className="form-group" style={{marginTop: "1.5rem"}}>
+                <label>Local Endpoint Base URL</label>
+                <input
+                  type="text"
+                  value={localBaseUrl}
+                  onChange={(e) => setLocalBaseUrl(e.target.value)}
+                  placeholder="http://localhost:8080"
+                />
+              </div>
+            )}
+
             <div className="form-group" style={{marginTop: "1.5rem"}}>
               <label>Primary Model</label>
+              {/* Ollama dynamic detection */}
+              {provider === "ollama" && (
+                <div style={{display: "flex", gap: "0.5rem", marginBottom: "0.5rem"}}>
+                  <button
+                    className="secondary"
+                    style={{fontSize: "0.85rem", padding: "0.4rem 0.8rem"}}
+                    disabled={ollamaDetecting}
+                    onClick={async () => {
+                      setOllamaDetecting(true);
+                      try {
+                        const remoteConfig = targetEnvironment === "cloud" ? {
+                          ip: remoteIp, user: remoteUser,
+                          password: remotePassword || null,
+                          privateKeyPath: remotePrivateKeyPath || null
+                        } : null;
+                        const models: string[] = await invoke("get_ollama_models", { remote: remoteConfig });
+                        setOllamaModels(models);
+                        if (models.length > 0) setModel(`ollama/${models[0]}`);
+                      } catch (e) {
+                        console.error("Ollama detection failed:", e);
+                      }
+                      setOllamaDetecting(false);
+                    }}
+                  >
+                    {ollamaDetecting ? "Detecting..." : "Detect Models"}
+                  </button>
+                  {ollamaModels.length > 0 && (
+                    <span style={{fontSize: "0.8rem", color: "var(--success)", alignSelf: "center"}}>
+                      Found {ollamaModels.length} model(s)
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* LM Studio dynamic detection */}
+              {provider === "lmstudio" && (
+                <div style={{display: "flex", gap: "0.5rem", marginBottom: "0.5rem"}}>
+                  <button
+                    className="secondary"
+                    style={{fontSize: "0.85rem", padding: "0.4rem 0.8rem"}}
+                    disabled={lmstudioDetecting}
+                    onClick={async () => {
+                      setLmstudioDetecting(true);
+                      try {
+                        const remoteConfig = targetEnvironment === "cloud" ? {
+                          ip: remoteIp, user: remoteUser,
+                          password: remotePassword || null,
+                          privateKeyPath: remotePrivateKeyPath || null
+                        } : null;
+                        const models: string[] = await invoke("get_lmstudio_models", {
+                          baseUrl: lmstudioBaseUrl,
+                          remote: remoteConfig
+                        });
+                        setLmstudioModels(models);
+                        if (models.length > 0) setModel(`lmstudio/${models[0]}`);
+                      } catch (e) {
+                        console.error("LM Studio detection failed:", e);
+                      }
+                      setLmstudioDetecting(false);
+                    }}
+                  >
+                    {lmstudioDetecting ? "Detecting..." : "Detect Models"}
+                  </button>
+                  {lmstudioModels.length > 0 && (
+                    <span style={{fontSize: "0.8rem", color: "var(--success)", alignSelf: "center"}}>
+                      Found {lmstudioModels.length} model(s)
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* Custom local endpoint detection */}
+              {provider === "local" && (
+                <div style={{display: "flex", gap: "0.5rem", marginBottom: "0.5rem"}}>
+                  <button
+                    className="secondary"
+                    style={{fontSize: "0.85rem", padding: "0.4rem 0.8rem"}}
+                    disabled={localDetecting}
+                    onClick={async () => {
+                      setLocalDetecting(true);
+                      try {
+                        const remoteConfig = targetEnvironment === "cloud" ? {
+                          ip: remoteIp, user: remoteUser,
+                          password: remotePassword || null,
+                          privateKeyPath: remotePrivateKeyPath || null
+                        } : null;
+                        const models: string[] = await invoke("get_lmstudio_models", {
+                          baseUrl: localBaseUrl,
+                          remote: remoteConfig
+                        });
+                        setLocalModels(models);
+                        if (models.length > 0) setModel(`local/${models[0]}`);
+                      } catch (e) {
+                        console.error("Local endpoint detection failed:", e);
+                      }
+                      setLocalDetecting(false);
+                    }}
+                  >
+                    {localDetecting ? "Detecting..." : "Detect Models"}
+                  </button>
+                  {localModels.length > 0 && (
+                    <span style={{fontSize: "0.8rem", color: "var(--success)", alignSelf: "center"}}>
+                      Found {localModels.length} model(s)
+                    </span>
+                  )}
+                </div>
+              )}
               <Dropdown
                 value={model}
                 onChange={setModel}
                 searchable={MODELS_BY_PROVIDER[provider] ? MODELS_BY_PROVIDER[provider].length > 10 : false}
-                options={MODELS_BY_PROVIDER[provider]
-                  ? MODELS_BY_PROVIDER[provider].map(m => ({ value: m.value, label: m.label, description: m.description }))
-                  : (provider === "ollama" ? [
-                      { value: "ollama/llama3.1", label: "Llama 3.1 (Local)" },
-                      { value: "ollama/deepseek-r1", label: "DeepSeek R1 (Local)" }
-                    ] : [
-                      { value: model, label: model }
-                    ])
+                options={
+                  provider === "ollama" && ollamaModels.length > 0
+                    ? ollamaModels.map(m => ({ value: `ollama/${m}`, label: m }))
+                    : provider === "lmstudio" && lmstudioModels.length > 0
+                    ? lmstudioModels.map(m => ({ value: `lmstudio/${m}`, label: m }))
+                    : provider === "local" && localModels.length > 0
+                    ? localModels.map(m => ({ value: `local/${m}`, label: m }))
+                    : MODELS_BY_PROVIDER[provider]
+                    ? MODELS_BY_PROVIDER[provider].map(m => ({ value: m.value, label: m.label, description: m.description }))
+                    : [{ value: model, label: model }]
                 }
               />
+              {/* Manual model entry for local providers when detection fails */}
+              {(provider === "ollama" || provider === "lmstudio" || provider === "local") && (
+                <div style={{marginTop: "0.5rem"}}>
+                  <input
+                    type="text"
+                    placeholder={`Or type model name manually (e.g. ${provider === "ollama" ? "llama3.2" : "your-model-id"})`}
+                    style={{fontSize: "0.85rem"}}
+                    onBlur={(e) => {
+                      const val = e.target.value.trim();
+                      if (val) setModel(`${provider}/${val}`);
+                    }}
+                  />
+                </div>
+              )}
             </div>
 
+            {/* Thinking Level for Claude 4.x models */}
+            {provider === "anthropic" && model.includes("claude-") && model.includes("-4") && (
               <div className="form-group" style={{marginTop: "1.5rem"}}>
-                <label>{authMethod === "setup-token" ? "Anthropic Setup Token" : "API Key"}</label>
-                <input 
-                  type="password" 
-                  placeholder="Paste here..." 
-                  value={apiKey} 
-                  onChange={(e) => setApiKey(e.target.value)} 
+                <label>Thinking Level</label>
+                <Dropdown
+                  value={thinkingLevel}
+                  onChange={setThinkingLevel}
+                  options={[
+                    { value: "adaptive", label: "Adaptive (Recommended)", description: "Automatically adjusts thinking depth" },
+                    { value: "off", label: "Off", description: "No extended thinking" },
+                    { value: "low", label: "Low", description: "Minimal thinking budget" },
+                    { value: "medium", label: "Medium", description: "Balanced thinking budget" },
+                    { value: "high", label: "High", description: "Maximum thinking depth" },
+                  ]}
                 />
-                {authMethod === "setup-token" && (
-                  <p className="input-hint">
-                    Run <code>claude setup-token</code> in your terminal and paste the result here.
-                  </p>
-                )}
+                <p className="input-hint">Extended thinking improves reasoning on complex tasks. Available for Claude 4.x models.</p>
               </div>
+            )}
+
+              {!["ollama", "lmstudio", "local"].includes(provider) && (
+                <div className="form-group" style={{marginTop: "1.5rem"}}>
+                  <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem"}}>
+                    <label style={{marginBottom: 0}}>{authMethod === "setup-token" ? "Anthropic Setup Token" : "API Key"}</label>
+                    <label style={{display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", cursor: "pointer"}}>
+                      <input
+                        type="checkbox"
+                        checked={apiKeyIsSecretRef}
+                        onChange={(e) => setApiKeyIsSecretRef(e.target.checked)}
+                      />
+                      Use Secret Reference
+                    </label>
+                  </div>
+                  <input
+                    type={apiKeyIsSecretRef ? "text" : "password"}
+                    placeholder={apiKeyIsSecretRef ? "$ENV_VAR_NAME or secretref:path" : "Paste here..."}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                  />
+                  {apiKeyIsSecretRef && (
+                    <p className="input-hint">Use <code>$ENV_VAR_NAME</code> to reference an environment variable, or <code>secretref:path</code> for a secrets manager path. OpenClaw resolves these at runtime.</p>
+                  )}
+                  {authMethod === "setup-token" && !apiKeyIsSecretRef && (
+                    <p className="input-hint">
+                      Run <code>claude setup-token</code> in your terminal and paste the result here.
+                    </p>
+                  )}
+                </div>
+              )}
 
             
-            <p className="input-hint" style={{marginBottom: "1rem", textAlign: "center"}}>
-              You can skip this for now and configure it later via 'Reconfigure'.
-            </p>
+            {["ollama", "lmstudio", "local"].includes(provider) && (
+              <p className="input-hint" style={{marginBottom: "1rem", textAlign: "center", color: "var(--success)"}}>
+                No API key required for local providers.
+              </p>
+            )}
+            {!["ollama", "lmstudio", "local"].includes(provider) && (
+              <p className="input-hint" style={{marginBottom: "1rem", textAlign: "center"}}>
+                You can skip this for now and configure it later via 'Reconfigure'.
+              </p>
+            )}
             <div className="button-group">
               <button className="primary" onClick={() => setStep(9)}>Next</button>
               <button className="secondary" onClick={() => setStep(6.5)}>Back</button>
@@ -1757,14 +2000,44 @@ Managed by Clawnetes.`,
         return (
           <div className="step-view">
             <h2>Messaging Channels</h2>
-            <p className="step-description">Connect your agent to Telegram for easy access.</p>
+            <p className="step-description">Connect your agent to Telegram and/or WhatsApp for easy access.</p>
             <div className="form-group">
               <label>Telegram Bot Token</label>
               <input type="password" placeholder="123456:ABC-..." value={telegramToken} onChange={(e) => setTelegramToken(e.target.value)} />
               <p className="input-hint">Get one from @BotFather on Telegram.</p>
             </div>
-            
-            <div className="button-group">
+
+            {/* WhatsApp Section */}
+            <div className="form-group" style={{marginTop: "1.5rem", padding: "1rem", border: "1px solid var(--border)", borderRadius: "12px", background: "var(--bg-card)"}}>
+              <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem"}}>
+                <label style={{marginBottom: 0, fontWeight: 600}}>WhatsApp</label>
+                <label style={{display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer"}}>
+                  <input
+                    type="checkbox"
+                    checked={whatsappEnabled}
+                    onChange={(e) => setWhatsappEnabled(e.target.checked)}
+                  />
+                  Enable WhatsApp
+                </label>
+              </div>
+              {whatsappEnabled && (
+                <div className="form-group">
+                  <label>DM Policy</label>
+                  <Dropdown
+                    value={whatsappDmPolicy}
+                    onChange={setWhatsappDmPolicy}
+                    options={[
+                      { value: "pairing", label: "Pairing (Default)", description: "Unknown senders get a code; owner approves" },
+                      { value: "allowlist", label: "Allowlist", description: "Block messages from unknown senders" },
+                      { value: "open", label: "Open", description: "Accept inbound DMs from anyone" },
+                    ]}
+                  />
+                  <p className="input-hint">After deployment, you will be prompted to scan a QR code to link your WhatsApp account.</p>
+                </div>
+              )}
+            </div>
+
+            <div className="button-group" style={{marginTop: "1.5rem"}}>
               <button className="primary" onClick={() => {
                 if (mode === "advanced" || skipBasicConfig) handleAdvancedTransition();
                 else setStep(16);
@@ -2249,7 +2522,7 @@ Managed by Clawnetes.`,
                       )}
 
                       {/* Auth Selection */}
-                      {currentModel && currentProvider && currentProvider !== provider && !["ollama"].includes(currentProvider) && (
+                      {currentModel && currentProvider && currentProvider !== provider && !["ollama", "lmstudio", "local"].includes(currentProvider) && (
                         <div style={{marginTop: "0.5rem"}}>
                           <label style={{fontSize: "0.85rem", color: "var(--text-muted)"}}>API Key for {currentProvider}</label>
                           <input
@@ -2776,7 +3049,7 @@ Managed by Clawnetes.`,
                        </div>
                      )}
 
-                     {currentFallbackProvider && currentFallbackProvider !== provider && currentFallbackProvider !== currentAgentProvider && !serviceKeys[currentFallbackProvider] && !["ollama"].includes(currentFallbackProvider) && (
+                     {currentFallbackProvider && currentFallbackProvider !== provider && currentFallbackProvider !== currentAgentProvider && !serviceKeys[currentFallbackProvider] && !["ollama", "lmstudio", "local"].includes(currentFallbackProvider) && (
                        <div style={{marginTop: "0.5rem"}}>
                           <label style={{fontSize: "0.85rem", color: "var(--text-muted)"}}>API Key for {currentFallbackProvider}</label>
                           <input
@@ -3133,6 +3406,28 @@ case 15.7:
               )}
             </div>
 
+            {/* ACP Dispatch */}
+            <div className="accordion-section" style={{marginBottom: "1rem"}}>
+              <div style={{padding: "1rem", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "12px"}}>
+                <div style={{display: "flex", alignItems: "center", justifyContent: "space-between"}}>
+                  <div>
+                    <div style={{fontWeight: 600, fontSize: "0.9rem"}}>ACP Dispatch</div>
+                    <div style={{fontSize: "0.8rem", color: "var(--text-muted)", marginTop: "0.25rem"}}>
+                      Enable Agent Communication Protocol dispatch for multi-agent coordination
+                    </div>
+                  </div>
+                  <label style={{display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer"}}>
+                    <input
+                      type="checkbox"
+                      checked={acpDispatch}
+                      onChange={(e) => setAcpDispatch(e.target.checked)}
+                    />
+                    {acpDispatch ? "Enabled" : "Disabled"}
+                  </label>
+                </div>
+              </div>
+            </div>
+
             <div className="button-group">
               <button className="primary" onClick={() => setStep(16)}>Next</button>
               <button className="secondary" onClick={() => setStep(enableMultiAgent ? 15.5 : 15)}>Back</button>
@@ -3176,6 +3471,43 @@ case 16:
                 <div className="logs-container">
                   <pre>{logs}</pre>
                 </div>
+              </div>
+            )}
+
+            {/* Validate Config */}
+            {initialConfigRef.current && (
+              <div style={{marginBottom: "1.5rem"}}>
+                <button
+                  className="secondary"
+                  style={{width: "100%", marginBottom: "0.5rem"}}
+                  disabled={validating}
+                  onClick={async () => {
+                    setValidating(true);
+                    setValidateOutput("");
+                    try {
+                      const remoteConfig = targetEnvironment === "cloud" ? {
+                        ip: remoteIp, user: remoteUser,
+                        password: remotePassword || null,
+                        privateKeyPath: remotePrivateKeyPath || null
+                      } : null;
+                      const output: string = await invoke("validate_openclaw_config", {
+                        remote: remoteConfig,
+                        isWsl: false
+                      });
+                      setValidateOutput(output || "Config is valid.");
+                    } catch (e: any) {
+                      setValidateOutput(`Validation error: ${e}`);
+                    }
+                    setValidating(false);
+                  }}
+                >
+                  {validating ? "Validating..." : "Validate Config"}
+                </button>
+                {validateOutput && (
+                  <div className="logs-container">
+                    <pre style={{fontSize: "0.8rem"}}>{validateOutput}</pre>
+                  </div>
+                )}
               </div>
             )}
 
@@ -3398,6 +3730,80 @@ case 16:
                  </>
                )}
                
+               {/* WhatsApp QR Pairing */}
+               {whatsappEnabled && !whatsappPaired && (
+                 <div style={{marginTop: "2rem", padding: "1.5rem", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "12px"}}>
+                   <h3 style={{marginTop: 0, marginBottom: "0.5rem"}}>WhatsApp Pairing</h3>
+                   <p style={{fontSize: "0.9rem", color: "var(--text-muted)", marginBottom: "1rem"}}>
+                     Link your WhatsApp account to enable the WhatsApp channel.
+                   </p>
+                   {!whatsappQrStep ? (
+                     <button
+                       className="primary"
+                       style={{width: "100%"}}
+                       disabled={whatsappQrLoading}
+                       onClick={async () => {
+                         setWhatsappQrLoading(true);
+                         setWhatsappQrStep(true);
+                         try {
+                           const qrDataUrl: string = await invoke("start_whatsapp_login", { gatewayPort });
+                           setWhatsappQrDataUrl(qrDataUrl);
+                           // Start waiting for connection
+                           invoke("wait_whatsapp_login", { gatewayPort }).then((connected: any) => {
+                             if (connected) {
+                               setWhatsappPaired(true);
+                               setWhatsappQrDataUrl("");
+                             }
+                           }).catch(console.error);
+                         } catch (e: any) {
+                           console.error("WhatsApp QR start failed:", e);
+                         }
+                         setWhatsappQrLoading(false);
+                       }}
+                     >
+                       {whatsappQrLoading ? "Connecting to gateway..." : "Start WhatsApp Pairing"}
+                     </button>
+                   ) : (
+                     <div style={{textAlign: "center"}}>
+                       {whatsappQrDataUrl ? (
+                         <>
+                           <img
+                             src={whatsappQrDataUrl}
+                             alt="WhatsApp QR Code"
+                             style={{width: "220px", height: "220px", borderRadius: "8px", marginBottom: "1rem"}}
+                           />
+                           <p style={{fontSize: "0.85rem", color: "var(--text-muted)"}}>
+                             Open WhatsApp &rarr; Linked Devices &rarr; Link a Device &rarr; Scan this QR
+                           </p>
+                           <button
+                             className="secondary"
+                             style={{marginTop: "0.5rem"}}
+                             onClick={async () => {
+                               try {
+                                 const qrDataUrl: string = await invoke("start_whatsapp_login", { gatewayPort });
+                                 setWhatsappQrDataUrl(qrDataUrl);
+                               } catch (e) {
+                                 console.error("Refresh QR failed:", e);
+                               }
+                             }}
+                           >
+                             Refresh QR
+                           </button>
+                         </>
+                       ) : (
+                         <p style={{color: "var(--text-muted)"}}>Waiting for QR code from gateway...</p>
+                       )}
+                     </div>
+                   )}
+                 </div>
+               )}
+
+               {whatsappEnabled && whatsappPaired && (
+                 <div style={{marginTop: "1rem", padding: "1rem", background: "rgba(34, 197, 94, 0.1)", border: "1px solid var(--success)", borderRadius: "8px", textAlign: "center"}}>
+                   <p style={{color: "var(--success)", fontWeight: 600, margin: 0}}>WhatsApp linked successfully!</p>
+                 </div>
+               )}
+
                {true && (
                   <div className="advanced-setup-prompt" style={{marginTop: "2rem", padding: "1.5rem", backgroundColor: "rgba(59, 130, 246, 0.1)", borderRadius: "12px", border: "1px solid var(--primary)"}}>
                     <h3 style={{marginTop: 0, marginBottom: "0.5rem"}}>Configuration Complete</h3>
