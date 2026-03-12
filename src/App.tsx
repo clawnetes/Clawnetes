@@ -350,6 +350,8 @@ function App() {
 
     setOauthCompletionRunning(true);
     setOauthCompletionStarted(true);
+    let nextProviderAuths = { ...providerAuths };
+    let hasSuccessfulAuth = false;
 
     for (const item of deferredOAuthQueue) {
       setOauthCompletionResults(prev => ({
@@ -365,6 +367,11 @@ function App() {
           method: item.authMethod,
           oauthProviderId: item.oauthProviderId,
         });
+        nextProviderAuths = {
+          ...nextProviderAuths,
+          [item.targetProvider]: result,
+        };
+        hasSuccessfulAuth = true;
         updateProviderAuth(item.targetProvider, result);
         setOauthCompletionResults(prev => ({
           ...prev,
@@ -379,6 +386,28 @@ function App() {
         }));
       } finally {
         setProviderAuthBusy(prev => ({ ...prev, [item.targetProvider]: false }));
+      }
+    }
+
+    if (hasSuccessfulAuth && targetEnvironment !== "cloud") {
+      try {
+        await invoke("configure_agent", {
+          config: {
+            ...constructConfigPayload(nextProviderAuths),
+            preserve_state: true,
+          },
+        });
+      } catch (e: any) {
+        const message = `OAuth succeeded, but saving the imported auth profile failed: ${String(e)}`;
+        setOauthCompletionResults(prev => {
+          const next = { ...prev };
+          for (const item of deferredOAuthQueue) {
+            if (next[item.id]?.status === "success") {
+              next[item.id] = { status: "error", message };
+            }
+          }
+          return next;
+        });
       }
     }
 
@@ -763,21 +792,22 @@ Managed by Clawnetes.`,
     };
   }
 
-  function constructConfigPayload() {
+  function constructConfigPayload(providerAuthsOverride?: Record<string, ProviderAuthConfig>) {
     const mappedSandboxMode = sandboxMode === "full" ? "all" : (sandboxMode === "partial" ? "non-main" : "off");
     const defaultIdentity = `# IDENTITY.md - Who Am I?
 - **Name:** ${agentName}
 - **Emoji:** ${agentEmoji}
 ---
 Managed by Clawnetes.`;
+    const effectiveProviderAuths = providerAuthsOverride || providerAuths;
 
     // For preset agents, always include preset-configured fields
     const usePresetFields = isPresetAgent || mode === "advanced";
 
     return {
       provider,
-      api_key: providerAuths[provider]?.token || apiKey,
-      auth_method: providerAuths[provider]?.auth_method || authMethod,
+      api_key: effectiveProviderAuths[provider]?.token || apiKey,
+      auth_method: effectiveProviderAuths[provider]?.auth_method || authMethod,
       model,
       user_name: userName,
       agent_name: agentName,
@@ -790,7 +820,7 @@ Managed by Clawnetes.`;
       node_manager: nodeManager,
       skills: selectedSkills,
       service_keys: serviceKeys,
-      provider_auths: providerAuths,
+      provider_auths: effectiveProviderAuths,
       sandbox_mode: usePresetFields ? mappedSandboxMode : null,
       tools_mode: usePresetFields ? toolsMode : null,
       allowed_tools: usePresetFields && toolsMode === "allowlist" ? allowedTools : null,

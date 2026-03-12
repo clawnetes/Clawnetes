@@ -217,14 +217,7 @@ fn default_provider_auth(
     base_url: Option<&String>,
 ) -> ProviderAuthData {
     let mut profile = serde_json::Map::new();
-    let auth_type = if auth_method == "setup-token" {
-        "token".to_string()
-    } else if auth_method == "antigravity" || auth_method == "gemini_cli" || auth_method == "codex"
-    {
-        "oauth".to_string()
-    } else {
-        auth_method.to_string()
-    };
+    let auth_type = normalize_auth_mode(auth_method);
     let token = if provider == "ollama" || provider == "lmstudio" || provider == "local" {
         "dummy-token".to_string()
     } else {
@@ -271,6 +264,25 @@ fn default_provider_auth(
         profile_key: Some(format!("{}:default", provider)),
         profile: Some(serde_json::Value::Object(profile)),
         oauth_provider_id: None,
+    }
+}
+
+fn normalize_auth_mode(auth_method: &str) -> String {
+    if auth_method == "setup-token" {
+        "token".to_string()
+    } else if matches!(
+        auth_method,
+        "antigravity"
+            | "gemini_cli"
+            | "codex"
+            | "claude-cli"
+            | "openai-codex"
+            | "google-gemini-cli"
+            | "google-antigravity"
+    ) {
+        "oauth".to_string()
+    } else {
+        auth_method.to_string()
     }
 }
 
@@ -1386,19 +1398,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
             )
         });
     let profile_name = resolve_profile_name(&config.provider, &primary_provider_auth);
-    let mut auth_mode = primary_provider_auth.auth_method.clone();
-    if auth_mode == "setup-token" {
-        auth_mode = "token".to_string();
-    } else if auth_mode == "antigravity"
-        || auth_mode == "gemini_cli"
-        || auth_mode == "codex"
-        || auth_mode == "claude-cli"
-        || auth_mode == "openai-codex"
-        || auth_mode == "google-gemini-cli"
-        || auth_mode == "google-antigravity"
-    {
-        auth_mode = "oauth".to_string();
-    }
+    let auth_mode = normalize_auth_mode(&primary_provider_auth.auth_method);
 
     // Telegram config will be added to the JSON object
 
@@ -2545,20 +2545,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
             )
         });
     let profile_name = resolve_profile_name(&config.provider, &primary_provider_auth);
-    let mut auth_mode = primary_provider_auth.auth_method.clone();
-
-    if auth_mode == "setup-token" {
-        auth_mode = "token".to_string();
-    } else if auth_mode == "antigravity"
-        || auth_mode == "gemini_cli"
-        || auth_mode == "codex"
-        || auth_mode == "claude-cli"
-        || auth_mode == "openai-codex"
-        || auth_mode == "google-gemini-cli"
-        || auth_mode == "google-antigravity"
-    {
-        auth_mode = "oauth".to_string();
-    }
+    let auth_mode = normalize_auth_mode(&primary_provider_auth.auth_method);
 
     let gateway_port = config.gateway_port.unwrap_or(18789);
     let gateway_bind = config.gateway_bind.as_deref().unwrap_or("loopback");
@@ -5298,6 +5285,14 @@ mod tests {
         assert_eq!(oauth_callback_port("google-gemini-cli"), Some(8085));
         assert_eq!(oauth_callback_port("google-antigravity"), Some(51121));
         assert_eq!(oauth_callback_port("anthropic"), None);
+    }
+
+    #[test]
+    fn test_normalize_auth_mode_maps_oauth_variants() {
+        assert_eq!(normalize_auth_mode("openai-codex"), "oauth");
+        assert_eq!(normalize_auth_mode("claude-cli"), "oauth");
+        assert_eq!(normalize_auth_mode("setup-token"), "token");
+        assert_eq!(normalize_auth_mode("token"), "token");
     }
 
     #[test]
