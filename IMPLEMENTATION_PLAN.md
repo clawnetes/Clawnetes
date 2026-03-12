@@ -35,3 +35,8 @@
 - Callback-based OAuth providers can leave stale localhost listeners behind, so Clawnetes should clear only OpenClaw-owned listeners before retrying.
 - Keep local providers (`ollama`, `lmstudio`, `local`) exempt from remote auth requirements.
 - Warn on missing provider auth but do not block wizard progression.
+
+## Investigation: Live OpenClaw State
+- [x] Inspect `~/.openclaw/openclaw.json` for provider auth and model refs.
+- [x] Inspect current OpenClaw logs for gateway/auth/model errors.
+- [x] Correlate the runtime errors with the generated config and identify the remaining bad code path.

@@ -293,6 +293,52 @@ fn normalize_provider_for_ui(provider: &str) -> String {
     }
 }
 
+fn effective_model_provider(
+    provider: &str,
+    provider_auths: &std::collections::HashMap<String, ProviderAuthData>,
+) -> String {
+    match provider_auths
+        .get(provider)
+        .map(|auth| auth.auth_method.as_str())
+    {
+        Some("openai-codex") => "openai-codex".to_string(),
+        _ => provider.to_string(),
+    }
+}
+
+fn apply_model_provider_auth(
+    model_ref: &str,
+    provider_auths: &std::collections::HashMap<String, ProviderAuthData>,
+) -> String {
+    if let Some((provider, rest)) = model_ref.split_once('/') {
+        let base_provider = normalize_provider_for_ui(provider);
+        let effective_provider = effective_model_provider(&base_provider, provider_auths);
+        format!("{}/{}", effective_provider, rest)
+    } else {
+        model_ref.to_string()
+    }
+}
+
+fn auth_provider_id_for_config(
+    provider: &str,
+    provider_auth: &ProviderAuthData,
+    provider_auths: &std::collections::HashMap<String, ProviderAuthData>,
+) -> String {
+    if let Some(profile_provider) = provider_auth
+        .profile
+        .as_ref()
+        .and_then(|profile| profile.get("provider"))
+        .and_then(|value| value.as_str())
+    {
+        return profile_provider.to_string();
+    }
+
+    provider_auth
+        .oauth_provider_id
+        .clone()
+        .unwrap_or_else(|| effective_model_provider(provider, provider_auths))
+}
+
 fn normalize_model_ref_for_ui(model_ref: &str) -> String {
     if let Some(rest) = model_ref.strip_prefix("openai-codex/") {
         format!("openai/{}", rest)
@@ -1450,6 +1496,16 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
                 config.local_base_url.as_ref(),
             )
         });
+    let effective_primary_model = apply_model_provider_auth(&config.model, &provider_auths);
+    let effective_fallback_models = config
+        .fallback_models
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|model| apply_model_provider_auth(&model, &provider_auths))
+        .collect::<Vec<_>>();
+    let primary_auth_provider =
+        auth_provider_id_for_config(&config.provider, &primary_provider_auth, &provider_auths);
     let profile_name = resolve_profile_name(&config.provider, &primary_provider_auth);
     let auth_mode = normalize_auth_mode(&primary_provider_auth.auth_method);
 
@@ -1470,19 +1526,20 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
         "subagents": { "maxConcurrent": 8 },
         "compaction": { "mode": "safeguard" },
         "workspace": workspace,
-        "model": { "primary": config.model },
-        "models": { config.model.clone(): {} }
+        "model": { "primary": effective_primary_model },
+        "models": { effective_primary_model.clone(): {} }
     });
 
     // Add fallback models
-    if let Some(fb) = &config.fallback_models {
-        if !fb.is_empty() {
-            if let Some(primary) = defaults_obj
-                .get_mut("model")
-                .and_then(|m| m.as_object_mut())
-            {
-                primary.insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
-            }
+    if !effective_fallback_models.is_empty() {
+        if let Some(primary) = defaults_obj
+            .get_mut("model")
+            .and_then(|m| m.as_object_mut())
+        {
+            primary.insert(
+                "fallbacks".to_string(),
+                serde_json::to_value(&effective_fallback_models).unwrap(),
+            );
         }
     }
 
@@ -1553,17 +1610,23 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
                 "workspace": format!("{}/.openclaw/agents/{}/workspace", remote_home, agent.id),
                 "agentDir": format!("{}/.openclaw/agents/{}/agent", remote_home, agent.id),
                 "model": {
-                    "primary": agent.model
+                    "primary": apply_model_provider_auth(&agent.model, &provider_auths)
                 }
             });
 
             if let Some(fb) = &agent.fallback_models {
+                let effective_agent_fallbacks = fb
+                    .iter()
+                    .map(|model| apply_model_provider_auth(model, &provider_auths))
+                    .collect::<Vec<_>>();
                 if !fb.is_empty() {
                     if let Some(model_obj) =
                         agent_obj.get_mut("model").and_then(|m| m.as_object_mut())
                     {
-                        model_obj
-                            .insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
+                        model_obj.insert(
+                            "fallbacks".to_string(),
+                            serde_json::to_value(effective_agent_fallbacks).unwrap(),
+                        );
                     }
                 }
             }
@@ -1580,15 +1643,16 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
             "workspace": workspace,
             "agentDir": agents_dir,
             "model": {
-                "primary": config.model
+                "primary": effective_primary_model
             }
         });
 
-        if let Some(fb) = &config.fallback_models {
-            if !fb.is_empty() {
-                if let Some(model_obj) = main_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
-                    model_obj.insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
-                }
+        if !effective_fallback_models.is_empty() {
+            if let Some(model_obj) = main_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
+                model_obj.insert(
+                    "fallbacks".to_string(),
+                    serde_json::to_value(&effective_fallback_models).unwrap(),
+                );
             }
         }
 
@@ -1600,7 +1664,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
     auth_profiles.insert(
         profile_name.clone(),
         serde_json::json!({
-            "provider": config.provider,
+            "provider": primary_auth_provider,
             "mode": auth_mode
         }),
     );
@@ -2620,6 +2684,16 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
                 config.local_base_url.as_ref(),
             )
         });
+    let effective_primary_model = apply_model_provider_auth(&config.model, &provider_auths);
+    let effective_fallback_models = config
+        .fallback_models
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|model| apply_model_provider_auth(&model, &provider_auths))
+        .collect::<Vec<_>>();
+    let primary_auth_provider =
+        auth_provider_id_for_config(&config.provider, &primary_provider_auth, &provider_auths);
     let profile_name = resolve_profile_name(&config.provider, &primary_provider_auth);
     let auth_mode = normalize_auth_mode(&primary_provider_auth.auth_method);
 
@@ -2643,17 +2717,23 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
                 "workspace": format!("{}/.openclaw/agents/{}/workspace", home, agent.id),
                 "agentDir": format!("{}/.openclaw/agents/{}/agent", home, agent.id),
                 "model": {
-                    "primary": agent.model
+                    "primary": apply_model_provider_auth(&agent.model, &provider_auths)
                 }
             });
 
             if let Some(fb) = &agent.fallback_models {
+                let effective_agent_fallbacks = fb
+                    .iter()
+                    .map(|model| apply_model_provider_auth(model, &provider_auths))
+                    .collect::<Vec<_>>();
                 if !fb.is_empty() {
                     if let Some(model_obj) =
                         agent_obj.get_mut("model").and_then(|m| m.as_object_mut())
                     {
-                        model_obj
-                            .insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
+                        model_obj.insert(
+                            "fallbacks".to_string(),
+                            serde_json::to_value(effective_agent_fallbacks).unwrap(),
+                        );
                     }
                 }
             }
@@ -2669,15 +2749,16 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
             "workspace": format!("{}/.openclaw/workspace", home),
             "agentDir": format!("{}/.openclaw/agents/main/agent", home),
             "model": {
-                "primary": config.model
+                "primary": effective_primary_model
             }
         });
 
-        if let Some(fb) = &config.fallback_models {
-            if !fb.is_empty() {
-                if let Some(model_obj) = main_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
-                    model_obj.insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
-                }
+        if !effective_fallback_models.is_empty() {
+            if let Some(model_obj) = main_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
+                model_obj.insert(
+                    "fallbacks".to_string(),
+                    serde_json::to_value(&effective_fallback_models).unwrap(),
+                );
             }
         }
 
@@ -2732,7 +2813,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
                 d.insert("workspace".to_string(), serde_json::json!(workspace));
                 d.insert(
                     "model".to_string(),
-                    serde_json::json!({ "primary": config.model }),
+                    serde_json::json!({ "primary": effective_primary_model }),
                 );
             }
             a.insert("list".to_string(), serde_json::json!(agents_list));
@@ -2925,7 +3006,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
         .and_then(|p| p.as_object_mut())
     {
         let profile = serde_json::json!({
-            "provider": config.provider,
+            "provider": primary_auth_provider,
             "mode": auth_mode
         });
 
@@ -2940,27 +3021,25 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
     {
         // Initialize dynamic model entry
         if let Some(models) = defaults.get_mut("models").and_then(|m| m.as_object_mut()) {
-            models.insert(config.model.clone(), serde_json::json!({}));
+            models.insert(effective_primary_model.clone(), serde_json::json!({}));
 
             // Also register fallback models so OpenClaw knows their providers
-            if let Some(fb) = config.fallback_models.as_ref() {
-                for fb_model in fb {
-                    if let Some(_fb_prov) = fb_model.split('/').next() {
-                        models.insert(fb_model.clone(), serde_json::json!({}));
-                    }
+            for fb_model in &effective_fallback_models {
+                if let Some(_fb_prov) = fb_model.split('/').next() {
+                    models.insert(fb_model.clone(), serde_json::json!({}));
                 }
             }
         }
 
         // Correctly place fallbacks under the specific model configuration
-        if let Some(fb) = config.fallback_models.as_ref() {
-            if !fb.is_empty() {
-                if let Some(primary_model_config) =
-                    defaults.get_mut("model").and_then(|m| m.as_object_mut())
-                {
-                    primary_model_config
-                        .insert("fallbacks".to_string(), serde_json::to_value(fb).unwrap());
-                }
+        if !effective_fallback_models.is_empty() {
+            if let Some(primary_model_config) =
+                defaults.get_mut("model").and_then(|m| m.as_object_mut())
+            {
+                primary_model_config.insert(
+                    "fallbacks".to_string(),
+                    serde_json::to_value(&effective_fallback_models).unwrap(),
+                );
             }
         }
 
@@ -5357,9 +5436,7 @@ mod tests {
         assert!(script.starts_with("#!/bin/zsh -l"));
         assert!(script.contains("openclaw models auth login --provider 'openai-codex'"));
         assert!(script.contains("auth_exit_code=$?"));
-        assert!(script.contains(
-            "printf '%s' \"$auth_exit_code\" > '/tmp/clawnetes-oauth.exit'"
-        ));
+        assert!(script.contains("printf '%s' \"$auth_exit_code\" > '/tmp/clawnetes-oauth.exit'"));
         assert!(!script.contains("\nstatus=$?\n"));
     }
 
@@ -5431,6 +5508,37 @@ mod tests {
         assert_eq!(
             normalize_model_ref_for_ui("anthropic/claude-opus-4-6"),
             "anthropic/claude-opus-4-6"
+        );
+    }
+
+    #[test]
+    fn test_apply_model_provider_auth_maps_openai_models_for_codex_oauth() {
+        let mut provider_auths = std::collections::HashMap::new();
+        provider_auths.insert(
+            "openai".to_string(),
+            ProviderAuthData {
+                auth_method: "openai-codex".to_string(),
+                token: "".to_string(),
+                profile_key: Some("openai-codex:default".to_string()),
+                profile: Some(serde_json::json!({
+                    "provider": "openai-codex",
+                    "type": "oauth"
+                })),
+                oauth_provider_id: Some("openai-codex".to_string()),
+            },
+        );
+
+        assert_eq!(
+            apply_model_provider_auth("openai/gpt-5.4", &provider_auths),
+            "openai-codex/gpt-5.4"
+        );
+        assert_eq!(
+            auth_provider_id_for_config(
+                "openai",
+                provider_auths.get("openai").unwrap(),
+                &provider_auths
+            ),
+            "openai-codex"
         );
     }
 
