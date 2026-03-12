@@ -389,25 +389,63 @@ fn resolve_provider_auth_data(
         .and_then(|lg| lg.get(base_provider))
         .and_then(|v| v.as_str());
 
-    let pick = if let Some(profile_key) = last_good_key {
-        profiles
-            .get(profile_key)
-            .map(|profile| (profile_key.to_string(), profile.clone()))
-    } else {
-        profiles.iter().find_map(|(key, profile)| {
-            let provider_id = profile
-                .get("provider")
+    let has_usable_credential = |profile: &serde_json::Value| {
+        profile
+            .get("token")
+            .and_then(|v| v.as_str())
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+            || profile
+                .get("access")
                 .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if key.starts_with(&format!("{}:", base_provider))
-                || oauth_provider_matches(base_provider, provider_id)
-            {
-                Some((key.clone(), profile.clone()))
-            } else {
-                None
-            }
+                .map(|v| !v.is_empty())
+                .unwrap_or(false)
+    };
+
+    let matches_base_provider = |key: &str, profile: &serde_json::Value| {
+        let provider_id = profile
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        key.starts_with(&format!("{}:", base_provider))
+            || oauth_provider_matches(base_provider, provider_id)
+    };
+
+    let pick = last_good_key
+        .and_then(|profile_key| {
+            profiles.get(profile_key).and_then(|profile| {
+                if has_usable_credential(profile) {
+                    Some((profile_key.to_string(), profile.clone()))
+                } else {
+                    None
+                }
+            })
         })
-    }?;
+        .or_else(|| {
+            profiles.iter().find_map(|(key, profile)| {
+                if matches_base_provider(key, profile) && has_usable_credential(profile) {
+                    Some((key.clone(), profile.clone()))
+                } else {
+                    None
+                }
+            })
+        })
+        .or_else(|| {
+            last_good_key.and_then(|profile_key| {
+                profiles
+                    .get(profile_key)
+                    .map(|profile| (profile_key.to_string(), profile.clone()))
+            })
+        })
+        .or_else(|| {
+            profiles.iter().find_map(|(key, profile)| {
+                if matches_base_provider(key, profile) {
+                    Some((key.clone(), profile.clone()))
+                } else {
+                    None
+                }
+            })
+        })?;
 
     let (profile_key, profile) = pick;
     let auth_method = profile
@@ -5216,6 +5254,36 @@ mod tests {
         );
         assert_eq!(resolved.auth_method, "oauth");
         assert_eq!(resolved.token, "access-token");
+        assert_eq!(resolved.oauth_provider_id.as_deref(), Some("openai-codex"));
+    }
+
+    #[test]
+    fn test_resolve_provider_auth_data_prefers_usable_oauth_over_empty_last_good() {
+        let auth_config = serde_json::json!({
+            "profiles": {
+                "openai:default": {
+                    "type": "oauth",
+                    "provider": "openai",
+                    "access": ""
+                },
+                "openai-codex:default": {
+                    "type": "oauth",
+                    "provider": "openai-codex",
+                    "access": "real-access-token"
+                }
+            },
+            "lastGood": {
+                "openai": "openai:default"
+            }
+        });
+
+        let resolved = resolve_provider_auth_data("openai", &auth_config)
+            .expect("provider auth should resolve");
+        assert_eq!(
+            resolved.profile_key.as_deref(),
+            Some("openai-codex:default")
+        );
+        assert_eq!(resolved.token, "real-access-token");
         assert_eq!(resolved.oauth_provider_id.as_deref(), Some("openai-codex"));
     }
 
