@@ -4081,7 +4081,7 @@ Managed by Clawnetes.`,
               }}>
                 <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Deferred OpenClaw Authentication</h3>
                 <p className="step-description" style={{ marginBottom: "0.75rem" }}>
-                  OpenClaw is installed. Clawnetes will open a terminal for each OAuth provider, and that flow may open your browser before the imported profile is synced back into the app.
+                  OpenClaw is installed. Clawnetes will open a terminal for each OAuth provider, replace any stale OpenClaw callback session on the known localhost port, and then sync the imported profile back into the app.
                 </p>
                 <div style={{ display: "grid", gap: "0.5rem" }}>
                   {deferredOAuthQueue.map(item => {

@@ -204,6 +204,12 @@ struct TerminalLaunchPlan {
     args: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PortListenerInfo {
+    pid: i32,
+    command: String,
+}
+
 fn default_provider_auth(
     provider: &str,
     api_key: &str,
@@ -427,6 +433,140 @@ fn resolve_provider_auth_data(
 
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn oauth_callback_port(oauth_provider_id: &str) -> Option<u16> {
+    match oauth_provider_id {
+        "openai-codex" => Some(1455),
+        "google-gemini-cli" => Some(8085),
+        "google-antigravity" => Some(51121),
+        _ => None,
+    }
+}
+
+fn parse_lsof_listener_info(output: &str) -> Vec<PortListenerInfo> {
+    let mut listeners = Vec::new();
+    let mut current_pid: Option<i32> = None;
+    let mut current_command: Option<String> = None;
+
+    for line in output.lines() {
+        if line.is_empty() {
+            if let (Some(pid), Some(command)) = (current_pid.take(), current_command.take()) {
+                listeners.push(PortListenerInfo { pid, command });
+            }
+            continue;
+        }
+
+        let (prefix, value) = line.split_at(1);
+        match prefix {
+            "p" => {
+                if let (Some(pid), Some(command)) = (current_pid.take(), current_command.take()) {
+                    listeners.push(PortListenerInfo { pid, command });
+                }
+                current_pid = value.trim().parse::<i32>().ok();
+            }
+            "c" => current_command = Some(value.trim().to_string()),
+            _ => {}
+        }
+    }
+
+    if let (Some(pid), Some(command)) = (current_pid, current_command) {
+        listeners.push(PortListenerInfo { pid, command });
+    }
+
+    listeners
+}
+
+fn is_openclaw_listener(listener: &PortListenerInfo) -> bool {
+    let command = listener.command.to_ascii_lowercase();
+    command.contains("openclaw")
+}
+
+fn find_oauth_port_listeners(port: u16) -> Result<Vec<PortListenerInfo>, String> {
+    let cmd = format!(
+        "if command -v lsof >/dev/null 2>&1; then lsof -nP -iTCP:{} -sTCP:LISTEN -Fpc 2>/dev/null; fi",
+        port
+    );
+    shell_command(&cmd)
+        .map(|output| parse_lsof_listener_info(&output))
+        .or_else(|err| {
+            if err.trim().is_empty() {
+                Ok(Vec::new())
+            } else {
+                Err(format!(
+                    "Failed to inspect localhost:{} for stale OAuth listeners: {}",
+                    port, err
+                ))
+            }
+        })
+}
+
+fn terminate_listener_process(listener: &PortListenerInfo, port: u16) -> Result<(), String> {
+    let cmd = format!("kill {}", listener.pid);
+    shell_command(&cmd).map(|_| ()).map_err(|err| {
+        format!(
+            "A previous OpenClaw OAuth session is still using localhost:{} and could not be replaced: {}",
+            port, err
+        )
+    })
+}
+
+fn cleanup_stale_oauth_listener(oauth_provider_id: &str) -> Result<(), String> {
+    let Some(port) = oauth_callback_port(oauth_provider_id) else {
+        return Ok(());
+    };
+
+    let listeners = find_oauth_port_listeners(port)?;
+    if listeners.is_empty() {
+        return Ok(());
+    }
+
+    let mut openclaw_listeners = Vec::new();
+    let mut foreign_listeners = Vec::new();
+
+    for listener in listeners {
+        if is_openclaw_listener(&listener) {
+            openclaw_listeners.push(listener);
+        } else {
+            foreign_listeners.push(listener);
+        }
+    }
+
+    if !foreign_listeners.is_empty() {
+        let details = foreign_listeners
+            .iter()
+            .map(|listener| format!("{} (pid {})", listener.command, listener.pid))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "localhost:{} is already in use by a non-OpenClaw process: {}. Close it and retry OAuth.",
+            port, details
+        ));
+    }
+
+    for listener in &openclaw_listeners {
+        terminate_listener_process(listener, port)?;
+    }
+
+    let started = Instant::now();
+    loop {
+        let remaining = find_oauth_port_listeners(port)?;
+        if remaining.is_empty() {
+            return Ok(());
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            let details = remaining
+                .iter()
+                .map(|listener| format!("{} (pid {})", listener.command, listener.pid))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "A previous OpenClaw OAuth session is still using localhost:{} after cleanup: {}",
+                port, details
+            ));
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
 }
 
 #[allow(dead_code)]
@@ -2144,6 +2284,8 @@ fn start_provider_auth(
     method: String,
     oauth_provider_id: String,
 ) -> Result<ProviderAuthData, String> {
+    cleanup_stale_oauth_listener(&oauth_provider_id)?;
+
     let mut cmd = format!(
         "openclaw models auth login --provider {}",
         shell_single_quote(&oauth_provider_id)
@@ -5159,6 +5301,49 @@ mod tests {
         assert!(plans.iter().any(|plan| plan.program == "cmd.exe"));
         assert!(plans[0].args.contains(&"wsl.exe".to_string()));
         assert!(plans[0].args.contains(&"/bin/bash".to_string()));
+    }
+
+    #[test]
+    fn test_oauth_callback_port_mapping() {
+        assert_eq!(oauth_callback_port("openai-codex"), Some(1455));
+        assert_eq!(oauth_callback_port("google-gemini-cli"), Some(8085));
+        assert_eq!(oauth_callback_port("google-antigravity"), Some(51121));
+        assert_eq!(oauth_callback_port("anthropic"), None);
+    }
+
+    #[test]
+    fn test_parse_lsof_listener_info_parses_multiple_records() {
+        let parsed = parse_lsof_listener_info("p62370\ncopenclaw-models\np70001\ncnode\n");
+
+        assert_eq!(
+            parsed,
+            vec![
+                PortListenerInfo {
+                    pid: 62370,
+                    command: "openclaw-models".to_string()
+                },
+                PortListenerInfo {
+                    pid: 70001,
+                    command: "node".to_string()
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn test_is_openclaw_listener_only_matches_openclaw_processes() {
+        assert!(is_openclaw_listener(&PortListenerInfo {
+            pid: 1,
+            command: "openclaw-models".to_string()
+        }));
+        assert!(is_openclaw_listener(&PortListenerInfo {
+            pid: 2,
+            command: "OpenClaw".to_string()
+        }));
+        assert!(!is_openclaw_listener(&PortListenerInfo {
+            pid: 3,
+            command: "node".to_string()
+        }));
     }
 
     #[test]
