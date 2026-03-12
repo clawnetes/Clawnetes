@@ -25,6 +25,18 @@ describe("providerAuth utilities", () => {
     expect(openaiOptions).toContain("openai-codex");
   });
 
+  it("labels anthropic claude-cli as the setup-token flow", () => {
+    const anthropicOptions = getProviderAuthOptions("anthropic");
+    expect(anthropicOptions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          value: "claude-cli",
+          label: "Claude Code Setup Token",
+        }),
+      ]),
+    );
+  });
+
   it("marks non-token auth methods as OAuth", () => {
     expect(isOAuthMethod("openai-codex")).toBe(true);
     expect(isOAuthMethod("token")).toBe(false);

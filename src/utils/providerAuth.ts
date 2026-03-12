@@ -4,7 +4,7 @@ export const LOCAL_PROVIDERS = new Set(["ollama", "lmstudio", "local"]);
 
 export const OAUTH_METHODS_BY_PROVIDER: Record<string, Array<{ value: string; label: string; oauthProviderId: string }>> = {
   anthropic: [
-    { value: "claude-cli", label: "Claude Code OAuth", oauthProviderId: "anthropic" },
+    { value: "claude-cli", label: "Claude Code Setup Token", oauthProviderId: "anthropic" },
   ],
   openai: [
     { value: "openai-codex", label: "OpenAI Codex OAuth", oauthProviderId: "openai-codex" },
@@ -148,7 +148,9 @@ export function getProviderAuthOptions(provider: string): Array<{ value: string;
     options.push({
       value: oauthOption.value,
       label: oauthOption.label,
-      description: "Launch the provider auth flow in your browser and import the resulting profile.",
+      description: provider === "anthropic"
+        ? "Open a terminal and run the Claude Code setup-token flow."
+        : "Launch the provider auth flow in your browser and import the resulting profile.",
     });
   }
 

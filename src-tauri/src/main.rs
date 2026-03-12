@@ -585,6 +585,24 @@ fn oauth_callback_port(oauth_provider_id: &str) -> Option<u16> {
     }
 }
 
+fn build_provider_auth_command(provider: &str, method: &str, oauth_provider_id: &str) -> String {
+    if provider == "anthropic" || method == "claude-cli" {
+        return format!(
+            "openclaw models auth setup-token --provider {} --yes",
+            shell_single_quote("anthropic")
+        );
+    }
+
+    let mut cmd = format!(
+        "openclaw models auth login --provider {}",
+        shell_single_quote(oauth_provider_id)
+    );
+    if !method.is_empty() && method != oauth_provider_id {
+        cmd.push_str(&format!(" --method {}", shell_single_quote(method)));
+    }
+    cmd
+}
+
 fn parse_lsof_listener_info(output: &str) -> Vec<PortListenerInfo> {
     let mut listeners = Vec::new();
     let mut current_pid: Option<i32> = None;
@@ -2453,14 +2471,7 @@ fn start_provider_auth(
     oauth_provider_id: String,
 ) -> Result<ProviderAuthData, String> {
     cleanup_stale_oauth_listener(&oauth_provider_id)?;
-
-    let mut cmd = format!(
-        "openclaw models auth login --provider {}",
-        shell_single_quote(&oauth_provider_id)
-    );
-    if !method.is_empty() && method != oauth_provider_id {
-        cmd.push_str(&format!(" --method {}", shell_single_quote(&method)));
-    }
+    let cmd = build_provider_auth_command(&provider, &method, &oauth_provider_id);
     launch_provider_auth_terminal(&cmd)?;
 
     let auth_config = read_provider_auth_profiles()?;
@@ -5502,6 +5513,22 @@ mod tests {
         assert!(runner.contains("auth_exit_code=$?"));
         assert!(runner.contains("printf '%s' \"$auth_exit_code\" > '/tmp/clawnetes-oauth.exit'"));
         assert!(runner.ends_with("exit $auth_exit_code"));
+    }
+
+    #[test]
+    fn test_build_provider_auth_command_uses_setup_token_for_anthropic() {
+        assert_eq!(
+            build_provider_auth_command("anthropic", "claude-cli", "anthropic"),
+            "openclaw models auth setup-token --provider 'anthropic' --yes"
+        );
+    }
+
+    #[test]
+    fn test_build_provider_auth_command_uses_plugin_login_for_codex() {
+        assert_eq!(
+            build_provider_auth_command("openai", "openai-codex", "openai-codex"),
+            "openclaw models auth login --provider 'openai-codex'"
+        );
     }
 
     #[test]
