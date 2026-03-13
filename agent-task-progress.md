@@ -6,4 +6,4 @@
 - [x] Add regression tests for single auth rendering on hosted providers.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
-- [ ] Commit and push changes.
+- [x] Commit and push changes.
