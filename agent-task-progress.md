@@ -1,11 +1,10 @@
 # Progress
 
-- [x] Inspect Clawnetes/OpenClaw tool policy handling and confirm the mismatch.
-- [x] Update task tracking files for the tool policy parity fix.
-- [x] Sync the Clawnetes tool catalog with current OpenClaw tool ids and profiles.
-- [x] Add inherited/default handling for per-agent tool policies in the UI state.
-- [x] Fix App load/save/comparison logic for top-level and per-agent tools.
-- [x] Add or update regression tests for tool policy parity.
+- [x] Inspect the current local and remote multi-agent config/session paths and confirm both regressions.
+- [x] Update task tracking files for the multi-agent tool/session fix.
+- [x] Serialize explicit per-agent tools in the local Rust config writer.
+- [x] Restore sub-agent session initialization for local and remote startup flows.
+- [x] Add or update regression tests for local tool serialization and session bootstrap triggering.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
-- [x] Commit and push changes.
+- [ ] Commit and push changes.

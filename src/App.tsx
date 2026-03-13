@@ -9,6 +9,7 @@ import { AVAILABLE_SKILLS } from "./presets/availableSkills";
 import { AGENT_TYPE_PRESETS } from "./presets/agentPresets";
 import { BUSINESS_FUNCTION_PRESETS } from "./presets/businessFunctionPresets";
 import { updateIdentityField, updateSoulMission } from "./utils/markdownHelpers";
+import { getAgentSessionInitIds } from "./utils/agentSessions";
 import { applyModelProviderAuth, buildDeferredOAuthQueue, buildReferencedProviders, createDefaultProviderAuth, getBaseProvider, getBaseProviderFromModel, getDefaultModelForProvider, getDisplayModelOptions, getProviderAuthOptions, isOAuthMethod, LOCAL_PROVIDERS, normalizeModelRefForUi, normalizeProviderAuths, OAUTH_METHODS_BY_PROVIDER } from "./utils/providerAuth";
 import ToolPolicyEditor from "./components/ToolPolicyEditor";
 import { createInheritedToolPolicy, DEFAULT_TOOL_POLICY, deriveToolPolicyFromLegacy, getSkillIdSet, materializeToolPolicy, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./utils/toolSelection";
@@ -1059,6 +1060,7 @@ Managed by Clawnetes.`,
     }
 
     const configPayload = constructConfigPayload();
+    const agentSessionIds = getAgentSessionInitIds(configPayload.agents);
     // Ensure we preserve state if we found it was paired
     configPayload.preserve_state = actualIsPaired;
 
@@ -1190,6 +1192,16 @@ Managed by Clawnetes.`,
           setProgress("Starting Gateway (this may take 20-30 seconds)...");
           setLogs("Starting Gateway...");
           await invoke("start_gateway");
+        }
+
+        if (targetEnvironment !== "cloud" && agentSessionIds.length > 0) {
+          setProgress("Initializing agent sessions...");
+          setLogs("Initializing agent sessions...");
+          try {
+            await invoke("initialize_agent_sessions", { agentIds: agentSessionIds });
+          } catch (e) {
+            console.warn("Agent session init failed (non-fatal):", e);
+          }
         }
 
         setProgress("Finalizing setup...");

@@ -67,6 +67,31 @@ struct ElevatedToolConfig {
     enabled: bool,
 }
 
+fn apply_agent_overrides(agent_obj: &mut serde_json::Value, agent: &AgentData) {
+    if let Some(tools) = &agent.tools {
+        if let Ok(tools_value) = serde_json::to_value(tools) {
+            if let Some(agent_obj_map) = agent_obj.as_object_mut() {
+                agent_obj_map.insert("tools".to_string(), tools_value);
+            }
+        }
+    }
+
+    if let Some(subagents) = &agent.subagents {
+        if let Ok(subagents_value) = serde_json::to_value(subagents) {
+            if let Some(agent_obj_map) = agent_obj.as_object_mut() {
+                agent_obj_map.insert("subagents".to_string(), subagents_value);
+            }
+        }
+    }
+}
+
+fn build_agent_session_init_command(agent_id: &str) -> String {
+    format!(
+        "openclaw agent --agent {} --message \"hello\" 2>/dev/null || true",
+        agent_id
+    )
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct CronJobConfig {
     name: String,
@@ -283,11 +308,7 @@ fn normalize_auth_mode(auth_method: &str) -> String {
         "token".to_string()
     } else if matches!(
         auth_method,
-        "antigravity"
-            | "gemini_cli"
-            | "codex"
-            | "openai-codex"
-            | "google-gemini-cli"
+        "antigravity" | "gemini_cli" | "codex" | "openai-codex" | "google-gemini-cli"
     ) {
         "oauth".to_string()
     } else {
@@ -458,9 +479,7 @@ fn build_auth_profiles_doc(
 fn oauth_provider_matches(base_provider: &str, provider_id: &str) -> bool {
     matches!(
         (base_provider, provider_id),
-        ("openai", "openai-codex")
-            | ("google", "google-gemini-cli")
-            | ("anthropic", "anthropic")
+        ("openai", "openai-codex") | ("google", "google-gemini-cli") | ("anthropic", "anthropic")
     ) || base_provider == provider_id
 }
 
@@ -1677,21 +1696,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
                 }
             }
 
-            if let Some(tools) = &agent.tools {
-                if let Ok(tools_value) = serde_json::to_value(tools) {
-                    if let Some(agent_obj_map) = agent_obj.as_object_mut() {
-                        agent_obj_map.insert("tools".to_string(), tools_value);
-                    }
-                }
-            }
-
-            if let Some(subagents) = &agent.subagents {
-                if let Ok(subagents_value) = serde_json::to_value(subagents) {
-                    if let Some(agent_obj_map) = agent_obj.as_object_mut() {
-                        agent_obj_map.insert("subagents".to_string(), subagents_value);
-                    }
-                }
-            }
+            apply_agent_overrides(&mut agent_obj, agent);
 
             agents_list.push(agent_obj);
         }
@@ -2250,6 +2255,22 @@ Serve {}."#,
     )?;
     execute_ssh(&sess, &format!("{}openclaw gateway start", nvm_prefix))?;
 
+    if let Some(agents) = &config.agents {
+        thread::sleep(Duration::from_secs(3));
+        for agent in agents {
+            if agent.id == "main" {
+                continue;
+            }
+            let cmd = format!(
+                "{}{}",
+                nvm_prefix,
+                build_agent_session_init_command(&agent.id)
+            );
+            let _ = execute_ssh(&sess, &cmd);
+            thread::sleep(Duration::from_secs(1));
+        }
+    }
+
     Ok(gateway_token)
 }
 
@@ -2797,6 +2818,8 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
                     }
                 }
             }
+
+            apply_agent_overrides(&mut agent_obj, agent);
 
             agents_list.push(agent_obj);
         }
@@ -3516,6 +3539,20 @@ fn start_gateway() -> Result<String, String> {
         4. Check if port 18789 is in use: 'lsof -i :18789'",
         last_error, final_status
     ))
+}
+
+#[command]
+fn initialize_agent_sessions(agent_ids: Vec<String>) -> Result<String, String> {
+    let mut initialized = 0;
+    for id in &agent_ids {
+        if id == "main" {
+            continue;
+        }
+        let _ = shell_command(&build_agent_session_init_command(id));
+        thread::sleep(Duration::from_millis(500));
+        initialized += 1;
+    }
+    Ok(format!("Initialized {} agent sessions", initialized))
 }
 
 #[command]
@@ -5326,6 +5363,7 @@ fn main() {
             install_openclaw,
             configure_agent,
             start_gateway,
+            initialize_agent_sessions,
             generate_pairing_code,
             get_dashboard_url,
             approve_pairing,
@@ -5403,6 +5441,105 @@ mod tests {
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].name, "SubAgent 1");
         assert_eq!(agents[0].emoji, Some("🤖".to_string()));
+    }
+
+    #[test]
+    fn test_apply_agent_overrides_serializes_explicit_tools_and_subagents() {
+        let agent = AgentData {
+            id: "data-analysis".to_string(),
+            name: "Data Analysis".to_string(),
+            model: "anthropic/claude-sonnet-4-6".to_string(),
+            fallback_models: None,
+            skills: None,
+            vibe: None,
+            emoji: None,
+            identity_md: None,
+            user_md: None,
+            soul_md: None,
+            tools_md: None,
+            agents_md: None,
+            heartbeat_md: None,
+            memory_md: None,
+            subagents: Some(SubagentConfig {
+                allow_agents: vec!["reporting".to_string()],
+            }),
+            tools: Some(AgentToolsConfig {
+                profile: Some("coding".to_string()),
+                allow: Some(vec!["browser".to_string(), "web_search".to_string()]),
+                deny: Some(vec!["subagents".to_string()]),
+                elevated: Some(ElevatedToolConfig { enabled: true }),
+                agent_to_agent: Some(AgentToAgentConfig { enabled: true }),
+            }),
+        };
+        let mut agent_obj = serde_json::json!({
+            "id": agent.id,
+            "name": agent.name
+        });
+
+        apply_agent_overrides(&mut agent_obj, &agent);
+
+        assert_eq!(
+            agent_obj
+                .get("tools")
+                .and_then(|tools| tools.get("profile"))
+                .and_then(|value| value.as_str()),
+            Some("coding")
+        );
+        assert_eq!(
+            agent_obj
+                .get("tools")
+                .and_then(|tools| tools.get("allow"))
+                .and_then(|value| value.as_array())
+                .map(|values| values.len()),
+            Some(2)
+        );
+        assert_eq!(
+            agent_obj
+                .get("subagents")
+                .and_then(|subagents| subagents.get("allowAgents"))
+                .and_then(|value| value.as_array())
+                .map(|values| values.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn test_apply_agent_overrides_omits_missing_nested_agent_config() {
+        let agent = AgentData {
+            id: "reporting".to_string(),
+            name: "Reporting".to_string(),
+            model: "anthropic/claude-sonnet-4-6".to_string(),
+            fallback_models: None,
+            skills: None,
+            vibe: None,
+            emoji: None,
+            identity_md: None,
+            user_md: None,
+            soul_md: None,
+            tools_md: None,
+            agents_md: None,
+            heartbeat_md: None,
+            memory_md: None,
+            subagents: None,
+            tools: None,
+        };
+        let mut agent_obj = serde_json::json!({
+            "id": agent.id,
+            "name": agent.name
+        });
+
+        apply_agent_overrides(&mut agent_obj, &agent);
+
+        assert!(agent_obj.get("tools").is_none());
+        assert!(agent_obj.get("subagents").is_none());
+    }
+
+    #[test]
+    fn test_build_agent_session_init_command_uses_hello_message() {
+        assert_eq!(
+            build_agent_session_init_command("data-analysis"),
+            "openclaw agent --agent data-analysis --message \"hello\" 2>/dev/null || true"
+        );
     }
 
     #[test]

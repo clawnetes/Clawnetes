@@ -1,15 +1,15 @@
-# Tool Policy Parity Plan
+# Multi-Agent Tool + Session Fix Plan
 
 ## Objective
-- Align Clawnetes tool policies with the actual OpenClaw tool model and effective defaults.
-- Preserve inherited/default agent tool state when loading and saving existing OpenClaw configs.
-- Ensure Clawnetes and the OpenClaw Web UI show the same enabled tools for the same agent.
+- Persist explicit per-agent tool presets from business-function agents into OpenClaw config during local installs.
+- Restore the sub-agent session bootstrap so non-main agents get initialized after gateway startup.
+- Keep local and remote multi-agent behavior aligned and verifiable with regression tests.
 
 ## Implementation Outline
-- Update the frontend tool catalog and profile definitions to match the current OpenClaw tool list.
-- Add explicit inherited/default handling for per-agent tool policies in Clawnetes.
-- Fix App load/save/comparison logic so omitted tool config resolves correctly and round-trips without false rewrites.
-- Add regression tests for tool profile resolution and inherited agent tool state.
+- Patch the local Rust config writer to serialize nested `agents.list[].tools` when Clawnetes sends explicit per-agent tool settings.
+- Restore the removed session bootstrap command and re-enable it in the local install flow after gateway start or restart.
+- Re-add the remote SSH session bootstrap loop after remote gateway startup.
+- Add regression tests for local agent tool serialization and multi-agent session initialization triggering.
 - Run `npm test`.
 - Run `npm run tauri dev`.
 - Commit and push after validation succeeds.
