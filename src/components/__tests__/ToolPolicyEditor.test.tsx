@@ -29,7 +29,7 @@ describe("ToolPolicyEditor", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
 
-    render(
+    const { container } = render(
       <ToolPolicyEditor
         policy={{ profile: "minimal", allow: [], deny: [], elevatedEnabled: false }}
         onChange={onChange}
@@ -43,6 +43,8 @@ describe("ToolPolicyEditor", () => {
 
     await user.click(screen.getByRole("button", { name: "Expand Files" }));
     expect(screen.getByRole("button", { name: "Toggle read" })).toBeInTheDocument();
+    const chevron = container.querySelector(".tool-policy-section-arrow .accordion-chevron");
+    expect(chevron).toHaveClass("rotated");
   });
 
   it("enables an extra tool outside the current profile", async () => {

@@ -494,34 +494,18 @@ button:disabled {
 }
 
 .tool-policy-section-arrow {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: rgba(29, 29, 31, 0.03);
-  color: var(--text-muted);
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: inherit;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.2s ease, color 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+  min-width: 20px;
 }
 
 .tool-policy-section-arrow:hover {
-  color: var(--text-main);
-  border-color: var(--text-muted);
-  background: rgba(29, 29, 31, 0.06);
-}
-
-.tool-policy-section-arrow span {
-  display: inline-block;
-  line-height: 1;
-  transform: rotate(-90deg);
-  transition: transform 0.2s ease;
-}
-
-.tool-policy-section-arrow.expanded span {
-  transform: rotate(0deg);
+  background: transparent;
 }
 
 .tool-policy-unknown {
@@ -969,4 +953,15 @@ button:disabled {
 
 .accordion-header:hover {
   background-color: var(--primary-light) !important;
+}
+
+.accordion-chevron {
+  display: inline-block;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 0.2s;
+}
+
+.accordion-chevron.rotated {
+  transform: rotate(180deg);
 }

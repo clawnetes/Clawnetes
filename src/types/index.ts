@@ -142,6 +142,7 @@ export interface SubAgentPreset {
   name: string;
   model: string;
   skills: string[];
+  toolPolicy: ToolPolicy;
   identityMd: string;
   soulMd: string;
   toolsMd: string;

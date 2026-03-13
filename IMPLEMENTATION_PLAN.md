@@ -1,22 +1,21 @@
-# Tool Policy Editor Follow-Up Fixes
+# Template Tool Policy And Arrow Follow-Up Fixes
 
 ## Goal
-- Group tool rows into collapsible sections in the shared tool policy editor.
-- Allow expansion and collapse only from an explicit arrow control, with all groups collapsed by default.
-- Fix the toggle thumb alignment so it sits fully inside the switch track in both off and on states.
-- Make profile selection immediately update the related tool toggles by clearing stale overrides when the profile changes.
+- Make the tool group chevrons match the existing Extra Settings accordion arrows.
+- Ensure shipped agent templates have task-appropriate tool policies instead of inheriting a generic default.
+- Add explicit tool policy support to business-function preset agents so roles like Report Generator get the tools they need.
 
 ## Progress
-- [x] Inspect current tool policy editor UI, helper logic, and test coverage.
-- [x] Update shared editor UI to grouped collapsible sections with arrow-only expansion.
-- [x] Update tool profile switching logic so profile changes reset overrides but preserve elevated access.
-- [x] Fix tool toggle styling so the thumb aligns to the left and right bounds correctly.
-- [x] Add or update unit tests for grouped UI behavior and profile sync behavior.
+- [x] Inspect current accordion styles, preset structures, and agent construction flow.
+- [x] Update tool group chevrons to match the Extra Settings accordion behavior and styling.
+- [x] Add explicit `toolPolicy` support to preset agent definitions.
+- [x] Update shipped preset data so each template gets task-sufficient tool access.
+- [x] Add or update tests for chevron behavior and preset tool-policy application.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
 - [ ] Commit and push after validation succeeds.
 
 ## Notes
-- Apply the shared editor changes everywhere `ToolPolicyEditor` is used.
+- Apply the shared arrow styling consistently between ToolPolicyEditor and Extra Settings.
 - Preserve unrelated worktree changes.
-- No config schema or backend payload changes are expected for this follow-up.
+- Keep tool access conservative: narrowest practical profile plus needed overrides.

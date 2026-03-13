@@ -118,13 +118,18 @@ export default function ToolPolicyEditor({
               <div className="tool-policy-section-title">{section}</div>
               <button
                 type="button"
-                className={`tool-policy-section-arrow ${expandedSections[section] ? "expanded" : ""}`}
+                className="tool-policy-section-arrow"
                 onClick={() => toggleSection(section)}
                 aria-expanded={expandedSections[section] ? "true" : "false"}
                 aria-controls={`tool-section-${section}`}
                 aria-label={`${expandedSections[section] ? "Collapse" : "Expand"} ${section}`}
               >
-                <span aria-hidden="true">▾</span>
+                <span
+                  aria-hidden="true"
+                  className={`accordion-chevron ${expandedSections[section] ? "rotated" : ""}`}
+                >
+                  ▼
+                </span>
               </button>
             </div>
             {expandedSections[section] && (

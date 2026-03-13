@@ -3146,7 +3146,7 @@ Managed by Clawnetes.`,
                         soulMd: sub.soulMd,
                         toolsMd: sub.toolsMd || "",
                         agentsMd: sub.agentsMd || "",
-                        toolPolicy: DEFAULT_TOOL_POLICY,
+                        toolPolicy: normalizeToolPolicy(sub.toolPolicy),
                         cronJobs: [],
                       });
                     }
@@ -3711,7 +3711,7 @@ Managed by Clawnetes.`,
                 }}
               >
                 <span>Gateway Settings</span>
-                <span style={{ transform: extraSettingsOpen.gateway ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>▼</span>
+                <span className={`accordion-chevron ${extraSettingsOpen.gateway ? "rotated" : ""}`}>▼</span>
               </button>
               {extraSettingsOpen.gateway && (
                 <div style={{ padding: "1rem", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-card)" }}>
@@ -3757,7 +3757,7 @@ Managed by Clawnetes.`,
                 }}
               >
                 <span>Runtime Environment</span>
-                <span style={{ transform: extraSettingsOpen.runtime ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>▼</span>
+                <span className={`accordion-chevron ${extraSettingsOpen.runtime ? "rotated" : ""}`}>▼</span>
               </button>
               {extraSettingsOpen.runtime && (
                 <div style={{ padding: "1rem", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-card)" }}>
@@ -3786,7 +3786,7 @@ Managed by Clawnetes.`,
                 }}
               >
                 <span>Security (Sandbox)</span>
-                <span style={{ transform: extraSettingsOpen.security ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>▼</span>
+                <span className={`accordion-chevron ${extraSettingsOpen.security ? "rotated" : ""}`}>▼</span>
               </button>
               {extraSettingsOpen.security && (
                 <div style={{ padding: "1rem", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-card)" }}>
@@ -3815,7 +3815,7 @@ Managed by Clawnetes.`,
                 }}
               >
                 <span>Session Management</span>
-                <span style={{ transform: extraSettingsOpen.session ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>▼</span>
+                <span className={`accordion-chevron ${extraSettingsOpen.session ? "rotated" : ""}`}>▼</span>
               </button>
               {extraSettingsOpen.session && (
                 <div style={{ padding: "1rem", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-card)" }}>
