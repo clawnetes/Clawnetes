@@ -7,4 +7,4 @@
 - [x] Update unit tests.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
-- [ ] Commit and push changes.
+- [x] Commit and push changes.
