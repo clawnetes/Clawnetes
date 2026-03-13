@@ -49,17 +49,14 @@ struct SubagentConfig {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct AgentToolsConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     allow: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     deny: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     elevated: Option<ElevatedToolConfig>,
-    #[serde(rename = "agentToAgent")]
-    agent_to_agent: Option<AgentToAgentConfig>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-struct AgentToAgentConfig {
-    enabled: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -5468,7 +5465,6 @@ mod tests {
                 allow: Some(vec!["browser".to_string(), "web_search".to_string()]),
                 deny: Some(vec!["subagents".to_string()]),
                 elevated: Some(ElevatedToolConfig { enabled: true }),
-                agent_to_agent: Some(AgentToAgentConfig { enabled: true }),
             }),
         };
         let mut agent_obj = serde_json::json!({
@@ -5493,6 +5489,10 @@ mod tests {
                 .map(|values| values.len()),
             Some(2)
         );
+        assert!(agent_obj
+            .get("tools")
+            .and_then(|tools| tools.get("agentToAgent"))
+            .is_none());
         assert_eq!(
             agent_obj
                 .get("subagents")
@@ -5532,6 +5532,27 @@ mod tests {
 
         assert!(agent_obj.get("tools").is_none());
         assert!(agent_obj.get("subagents").is_none());
+    }
+
+    #[test]
+    fn test_agent_tools_config_omits_empty_optional_fields() {
+        let tools = AgentToolsConfig {
+            profile: Some("minimal".to_string()),
+            allow: None,
+            deny: None,
+            elevated: None,
+        };
+
+        let serialized = serde_json::to_value(&tools).expect("tool config should serialize");
+
+        assert_eq!(
+            serialized.get("profile").and_then(|value| value.as_str()),
+            Some("minimal")
+        );
+        assert!(serialized.get("allow").is_none());
+        assert!(serialized.get("deny").is_none());
+        assert!(serialized.get("elevated").is_none());
+        assert!(serialized.get("agentToAgent").is_none());
     }
 
     #[test]

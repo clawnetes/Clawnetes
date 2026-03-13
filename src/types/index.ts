@@ -238,7 +238,6 @@ export interface AgentPayloadData {
     profile?: ToolProfileId | null;
     allow?: string[] | null;
     deny?: string[] | null;
-    agentToAgent?: { enabled: boolean };
     elevated?: { enabled: boolean };
   } | null;
   allowed_tools?: string[] | null;

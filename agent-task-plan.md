@@ -1,15 +1,15 @@
-# Multi-Agent Tool + Session Fix Plan
+# Per-Agent Tool Schema Fix Plan
 
 ## Objective
-- Persist explicit per-agent tool presets from business-function agents into OpenClaw config during local installs.
-- Restore the sub-agent session bootstrap so non-main agents get initialized after gateway startup.
-- Keep local and remote multi-agent behavior aligned and verifiable with regression tests.
+- Stop Clawnetes from writing invalid per-agent `tools.agentToAgent` keys into OpenClaw config.
+- Keep multi-agent configs valid against OpenClaw `2026.3.12` so gateway restart succeeds.
+- Preserve current multi-agent behavior while tightening per-agent tool serialization.
 
 ## Implementation Outline
-- Patch the local Rust config writer to serialize nested `agents.list[].tools` when Clawnetes sends explicit per-agent tool settings.
-- Restore the removed session bootstrap command and re-enable it in the local install flow after gateway start or restart.
-- Re-add the remote SSH session bootstrap loop after remote gateway startup.
-- Add regression tests for local agent tool serialization and multi-agent session initialization triggering.
+- Remove unsupported `agentToAgent` from the nested per-agent tool payload types in Clawnetes.
+- Update the Rust per-agent tools serializer to omit unsupported and empty optional fields instead of writing `null` keys.
+- Add regression tests covering per-agent tool JSON shape and absence of `agentToAgent`.
+- Validate with `openclaw config validate`, `npm test`, and `npm run tauri dev`.
 - Run `npm test`.
 - Run `npm run tauri dev`.
 - Commit and push after validation succeeds.

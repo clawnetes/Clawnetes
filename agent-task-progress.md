@@ -1,10 +1,10 @@
 # Progress
 
-- [x] Inspect the current local and remote multi-agent config/session paths and confirm both regressions.
-- [x] Update task tracking files for the multi-agent tool/session fix.
-- [x] Serialize explicit per-agent tools in the local Rust config writer.
-- [x] Restore sub-agent session initialization for local and remote startup flows.
-- [x] Add or update regression tests for local tool serialization and session bootstrap triggering.
+- [x] Inspect the failing OpenClaw config and confirm the invalid per-agent `agentToAgent` key.
+- [x] Update task tracking files for the per-agent tool schema fix.
+- [x] Remove unsupported `agentToAgent` from nested agent tool payloads and serializers.
+- [x] Add or update regression tests for valid per-agent tool JSON shape.
+- [x] Run `openclaw config validate`.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
 - [x] Commit and push changes.
