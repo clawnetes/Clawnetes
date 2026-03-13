@@ -8,6 +8,7 @@ import {
   normalizeSkillAndToolSelection,
   normalizeToolPolicy,
   sanitizeAllowedTools,
+  setToolProfile,
 } from "../utils/toolSelection";
 
 describe("toolSelection", () => {
@@ -67,6 +68,22 @@ describe("toolSelection", () => {
       allow: ["session_status"],
       deny: [],
       elevatedEnabled: false,
+    });
+  });
+
+  it("resets overrides when changing the selected profile", () => {
+    expect(
+      setToolProfile({
+        profile: "minimal",
+        allow: ["read"],
+        deny: ["session_status"],
+        elevatedEnabled: true,
+      }, "coding"),
+    ).toEqual({
+      profile: "coding",
+      allow: [],
+      deny: [],
+      elevatedEnabled: true,
     });
   });
 });

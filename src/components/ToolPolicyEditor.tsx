@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   DEFAULT_TOOL_POLICY,
   TOOL_PROFILE_IDS,
@@ -40,6 +41,14 @@ export default function ToolPolicyEditor({
   const enabledTools = getEffectiveEnabledToolIds(effectivePolicy);
   const sections = getSectionedToolDefinitions();
   const unknownTools = getUnknownToolIds(effectivePolicy);
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+
+  const toggleSection = (section: string) => {
+    setExpandedSections((current) => ({
+      ...current,
+      [section]: !current[section],
+    }));
+  };
 
   return (
     <div className="tool-policy-editor">
@@ -105,29 +114,43 @@ export default function ToolPolicyEditor({
       <div className="tool-policy-sections">
         {sections.map(({ section, tools }) => (
           <div key={section} className="tool-policy-section">
-            <div className="tool-policy-section-title">{section}</div>
-            <div className="tool-policy-list">
-              {tools.map((tool) => {
-                const enabled = enabledTools.has(tool.id);
-                return (
-                  <div key={tool.id} className="tool-policy-row">
-                    <div>
-                      <div className="tool-row-title">{tool.name}</div>
-                      <div className="tool-row-description">{tool.description}</div>
-                    </div>
-                    <button
-                      type="button"
-                      className={`tool-toggle ${enabled ? "enabled" : ""}`}
-                      onClick={() => onChange(toggleToolInPolicy(effectivePolicy, tool.id, !enabled))}
-                      aria-pressed={enabled}
-                      aria-label={`Toggle ${tool.name}`}
-                    >
-                      <span />
-                    </button>
-                  </div>
-                );
-              })}
+            <div className="tool-policy-section-header">
+              <div className="tool-policy-section-title">{section}</div>
+              <button
+                type="button"
+                className={`tool-policy-section-arrow ${expandedSections[section] ? "expanded" : ""}`}
+                onClick={() => toggleSection(section)}
+                aria-expanded={expandedSections[section] ? "true" : "false"}
+                aria-controls={`tool-section-${section}`}
+                aria-label={`${expandedSections[section] ? "Collapse" : "Expand"} ${section}`}
+              >
+                <span aria-hidden="true">▾</span>
+              </button>
             </div>
+            {expandedSections[section] && (
+              <div className="tool-policy-list" id={`tool-section-${section}`}>
+                {tools.map((tool) => {
+                  const enabled = enabledTools.has(tool.id);
+                  return (
+                    <div key={tool.id} className="tool-policy-row">
+                      <div>
+                        <div className="tool-row-title">{tool.name}</div>
+                        <div className="tool-row-description">{tool.description}</div>
+                      </div>
+                      <button
+                        type="button"
+                        className={`tool-toggle ${enabled ? "enabled" : ""}`}
+                        onClick={() => onChange(toggleToolInPolicy(effectivePolicy, tool.id, !enabled))}
+                        aria-pressed={enabled}
+                        aria-label={`Toggle ${tool.name}`}
+                      >
+                        <span />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         ))}
       </div>

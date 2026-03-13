@@ -289,8 +289,10 @@ export function toggleToolInPolicy(policy: ToolPolicy, toolId: string, enabled: 
 
 export function setToolProfile(policy: ToolPolicy, profile: ToolPolicy["profile"]) {
   return normalizeToolPolicy({
-    ...policy,
     profile,
+    allow: [],
+    deny: [],
+    elevatedEnabled: policy.elevatedEnabled ?? false,
   });
 }
 
