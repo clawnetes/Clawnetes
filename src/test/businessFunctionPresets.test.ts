@@ -23,6 +23,8 @@ describe("businessFunctionPresets", () => {
     expect(enabledTools.has("read")).toBe(true);
     expect(enabledTools.has("edit")).toBe(true);
     expect(enabledTools.has("exec")).toBe(true);
+    expect(enabledTools.has("browser")).toBe(true);
+    expect(enabledTools.has("web_search")).toBe(true);
   });
 
   it("gives research-oriented agents browser and web tools", () => {
@@ -34,5 +36,23 @@ describe("businessFunctionPresets", () => {
     expect(enabledTools.has("browser")).toBe(true);
     expect(enabledTools.has("web_search")).toBe(true);
     expect(enabledTools.has("web_fetch")).toBe(true);
+  });
+
+  it("gives every shipped sub-agent more than a minimal built-in tool set", () => {
+    for (const preset of Object.values(BUSINESS_FUNCTION_PRESETS)) {
+      for (const agent of preset.subAgents) {
+        const enabledTools = getEffectiveEnabledToolIds(agent.toolPolicy);
+        expect(enabledTools.size).toBeGreaterThan(3);
+      }
+    }
+  });
+
+  it("gives orchestrator agents the tools needed to delegate to sub-agents", () => {
+    for (const preset of Object.values(BUSINESS_FUNCTION_PRESETS)) {
+      const enabledTools = getEffectiveEnabledToolIds(preset.mainAgent.toolPolicy);
+      expect(enabledTools.has("sessions_send")).toBe(true);
+      expect(enabledTools.has("agents_list")).toBe(true);
+      expect(enabledTools.has("sessions_spawn")).toBe(true);
+    }
   });
 });
