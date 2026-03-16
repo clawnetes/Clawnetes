@@ -2527,7 +2527,7 @@ Managed by Clawnetes.`,
               </p>
             )}
             <div className="button-group">
-              <button className="primary" onClick={() => setStep(9)}>Next</button>
+              <button className="primary" data-testid="btn-next" onClick={() => setStep(9)}>Next</button>
               <button className="secondary" onClick={() => setStep(6.5)}>Back</button>
             </div>
           </div>
@@ -2595,7 +2595,7 @@ Managed by Clawnetes.`,
             )}
 
             <div className="button-group" style={{ marginTop: "1.5rem" }}>
-              <button className="primary" onClick={() => {
+              <button className="primary" data-testid="btn-next" onClick={() => {
                 if (mode === "advanced" || skipBasicConfig) handleAdvancedTransition();
                 else setStep(16);
               }} disabled={loading}>
@@ -2636,7 +2636,7 @@ Managed by Clawnetes.`,
         );
       case 11:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-skills">
             <h2>Give {agentName ? `${agentName}` : "your agent"} some skills</h2>
             <p className="step-description">Enable capabilities and configure required keys.</p>
             <div className="skills-container" style={{ maxHeight: "450px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "12px", padding: "0.5rem" }}>
@@ -2760,7 +2760,7 @@ Managed by Clawnetes.`,
             )}
 
             <div className="button-group">
-              <button className="primary" onClick={() => {
+              <button className="primary" data-testid="btn-continue" onClick={() => {
                 if (mode === "advanced") {
                   setStep(11.1);
                 } else {
@@ -2773,7 +2773,7 @@ Managed by Clawnetes.`,
         );
       case 11.1:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-allowed-tools">
             <h2>Tool Access</h2>
             <p className="step-description">Configure the base tool profile and individual tool access.</p>
 
@@ -2784,7 +2784,7 @@ Managed by Clawnetes.`,
             />
 
             <div className="button-group">
-              <button className="primary" onClick={() => setStep(15)}>Next</button>
+              <button className="primary" data-testid="btn-next" onClick={() => setStep(15)}>Next</button>
               <button className="secondary" onClick={() => setStep(11)}>Back</button>
             </div>
           </div>
@@ -2894,7 +2894,7 @@ Managed by Clawnetes.`,
           fallbackModels: enableFallbacks ? fallbackModels.filter(Boolean) : [],
         });
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-models">
             <h2>Model Configuration</h2>
             <p className="step-description">Configure your primary and fallback models.</p>
 
@@ -3166,7 +3166,7 @@ Managed by Clawnetes.`,
             )}
 
             <div className="button-group">
-              <button className="primary" onClick={() => setStep(11)}>Continue</button>
+              <button className="primary" data-testid="btn-continue" onClick={() => setStep(11)}>Continue</button>
               <button className="secondary" onClick={() => setStep(10.5)}>Back</button>
             </div>
           </div>
@@ -3219,7 +3219,7 @@ Managed by Clawnetes.`,
         );
       case 15:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-business">
             <h2>Build your AI powered business</h2>
             <p className="step-description">Select specialized business functions to add pre-configured sub-agents to your setup.</p>
 
@@ -3295,7 +3295,7 @@ Managed by Clawnetes.`,
             </div>
 
             <div className="button-group" style={{ marginTop: "1.5rem" }}>
-              <button className="primary" onClick={() => {
+              <button className="primary" data-testid="btn-next" onClick={() => {
                 // Use local variables to track state changes within the click handler
                 // to avoid React batching issues with reading stale state
                 let willEnableMultiAgent = enableMultiAgent;
@@ -3876,7 +3876,7 @@ Managed by Clawnetes.`,
 
       case 15.7:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-extra-settings">
             <h2>Extra Settings</h2>
             <p className="step-description">Configure advanced gateway, runtime, security, and session settings.</p>
 
@@ -4030,7 +4030,7 @@ Managed by Clawnetes.`,
             </div>
 
             <div className="button-group">
-              <button className="primary" onClick={() => setStep(16)}>Next</button>
+              <button className="primary" data-testid="btn-next" onClick={() => setStep(16)}>Next</button>
               <button className="secondary" onClick={() => setStep(enableMultiAgent ? 15.5 : 15)}>Back</button>
             </div>
           </div>
@@ -4038,7 +4038,7 @@ Managed by Clawnetes.`,
 
       case 16:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-review">
             <h2>{initialConfigRef.current ? "Review Configuration" : "Deploy Your AI Agent"}</h2>
             <p className="step-description">{initialConfigRef.current ? "Review your changes before applying." : "Your agent is ready to be deployed."}</p>
 
@@ -4114,7 +4114,7 @@ Managed by Clawnetes.`,
 
             <div className="button-group">
               {hasChanges ? (
-                <button className="primary" onClick={handleInstall} disabled={loading}>
+                <button className="primary" data-testid="btn-finish-setup" onClick={handleInstall} disabled={loading}>
                   {loading ? (initialConfigRef.current ? "Updating..." : "Installing...") : (initialConfigRef.current ? "Update Configuration" : "Finish Setup")}
                 </button>
               ) : (
@@ -4129,7 +4129,7 @@ Managed by Clawnetes.`,
 
       case 10.5:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-personality">
             <h2>Customize {agentName ? `${agentName}'s` : "your agent's"} personality</h2>
             <p className="step-description">Edit your agent's identity, personality, and mission.</p>
 
@@ -4242,7 +4242,7 @@ Managed by Clawnetes.`,
               >
                 {savingWorkspace ? "Saving..." : "💾 Save Changes"}
               </button>
-              <button className="primary" onClick={() => setStep(isPresetAgent ? 15 : 13)} style={{ flex: 1 }}>
+              <button className="primary" data-testid="btn-next" onClick={() => setStep(isPresetAgent ? 15 : 13)} style={{ flex: 1 }}>
                 Next
               </button>
               <button className="secondary" onClick={() => setStep(9)} style={{ flex: "0 0 auto" }}>Back</button>
@@ -4251,7 +4251,7 @@ Managed by Clawnetes.`,
         );
       case 17:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-complete">
             <h2>Setup Complete! 🦞</h2>
             <p className="step-description">
               OpenClaw is running {targetEnvironment === "cloud" ? `on ${remoteIp}` : "locally"} and ready for your commands.
@@ -4504,7 +4504,7 @@ Managed by Clawnetes.`,
                       Open Web Dashboard
                     </button>
                     {mode !== "advanced" && (
-                      <button className="secondary" onClick={handleAdvancedTransition} disabled={!licenseStatusLoaded}>
+                      <button className="secondary" data-testid="btn-advanced-settings" onClick={handleAdvancedTransition} disabled={!licenseStatusLoaded}>
                         {licenseStatusLoaded ? "Continue to Advanced Settings" : "Checking license..."}
                       </button>
                     )}
