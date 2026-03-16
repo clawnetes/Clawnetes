@@ -1800,7 +1800,7 @@ Managed by Clawnetes.`,
         );
       case 0.5:
         return (
-          <div className="step-view welcome-view">
+          <div className="step-view welcome-view" data-testid="step-welcome">
             <div className="welcome-logo">🦞</div>
             <h1 className="welcome-title">Welcome to Clawnetes</h1>
             <p className="welcome-text">
@@ -1811,6 +1811,7 @@ Managed by Clawnetes.`,
                 className="primary"
                 style={{ minWidth: "200px", padding: "1rem 2rem", fontSize: "1.1rem" }}
                 onClick={() => setStep(1)}
+                data-testid="btn-start-setup"
               >
                 Start Setup
               </button>
@@ -1819,7 +1820,7 @@ Managed by Clawnetes.`,
         );
       case 1:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-environment">
             <h2>Target Environment</h2>
             <p className="step-description">Where will you be running OpenClaw?</p>
             <div className="mode-card-container">
@@ -1937,6 +1938,7 @@ Managed by Clawnetes.`,
                   }
                 }}
                 disabled={targetEnvironment === "cloud" && sshStatus !== "success"}
+                data-testid="btn-continue"
               >
                 Continue
               </button>
@@ -1945,7 +1947,7 @@ Managed by Clawnetes.`,
         );
       case 2:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-system-check">
             <h2>System Check</h2>
             <p className="step-description">
               {targetEnvironment === "cloud"
@@ -1986,6 +1988,7 @@ Managed by Clawnetes.`,
                 className="primary"
                 disabled={targetEnvironment === "local" && !checks.node}
                 onClick={() => setStep(3)}
+                data-testid="btn-continue"
               >
                 Continue
               </button>
@@ -1995,7 +1998,7 @@ Managed by Clawnetes.`,
         );
       case 3:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-security">
             <h2>Security Baseline</h2>
             <p className="step-description">Please read this carefully before proceeding.</p>
             <div className="security-alert">
@@ -2005,14 +2008,14 @@ Managed by Clawnetes.`,
             </div>
             <p style={{ fontWeight: 600 }}>Do you understand the risks and wish to continue?</p>
             <div className="button-group">
-              <button className="primary" onClick={() => setStep(5)}>I Understand</button>
+              <button className="primary" onClick={() => setStep(5)} data-testid="btn-i-understand">I Understand</button>
               <button className="secondary" onClick={() => setStep(2)}>Back</button>
             </div>
           </div>
         );
       case 5:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-identity">
             <h2>Your Identity</h2>
             <p className="step-description">What should the agent call you?</p>
             <div className="form-group">
@@ -2024,6 +2027,7 @@ Managed by Clawnetes.`,
                 spellCheck="false"
                 autoComplete="off"
                 placeholder="e.g. David"
+                data-testid="input-user-name"
                 value={userName}
                 onChange={(e) => {
                   const val = e.target.value;
@@ -2038,19 +2042,19 @@ Managed by Clawnetes.`,
               />
             </div>
             <div className="button-group">
-              <button className="primary" disabled={!userName} onClick={() => setStep(6)}>Next</button>
+              <button className="primary" disabled={!userName} onClick={() => setStep(6)} data-testid="btn-next">Next</button>
               <button className="secondary" onClick={() => setStep(3)}>Back</button>
             </div>
           </div>
         );
       case 6:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-agent-profile">
             <h2>Agent Profile</h2>
             <p className="step-description">Give your agent a name and a personality.</p>
             <div className="form-group">
               <label>Agent Name</label>
-              <input autoFocus placeholder="e.g. Jeeves" value={agentName} onChange={(e) => {
+              <input autoFocus placeholder="e.g. Jeeves" data-testid="input-agent-name" value={agentName} onChange={(e) => {
                 const val = e.target.value;
                 setAgentName(val);
                 if (identityMd) {
@@ -2087,14 +2091,14 @@ Managed by Clawnetes.`,
               </div>
             </div>
             <div className="button-group">
-              <button className="primary" disabled={!agentName} onClick={() => setStep(6.5)}>Next</button>
+              <button className="primary" disabled={!agentName} onClick={() => setStep(6.5)} data-testid="btn-next">Next</button>
               <button className="secondary" onClick={() => setStep(skipBasicConfig ? 0 : 5)}>Back</button>
             </div>
           </div>
         );
       case 6.5:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-agent-type">
             <h2>Agent Type</h2>
             <p className="step-description">Choose a pre-configured agent type or build your own from scratch.</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
@@ -2126,7 +2130,7 @@ Managed by Clawnetes.`,
               ))}
             </div>
             <div className="button-group" style={{ marginTop: "1.5rem" }}>
-              <button className="primary" onClick={() => {
+              <button className="primary" data-testid="btn-next" onClick={() => {
                 if (isPresetAgent) {
                   setStep(6.7);
                 } else {
@@ -2295,7 +2299,7 @@ Managed by Clawnetes.`,
         );
       case 8:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-connect-brain">
             <h2>Connect Brain</h2>
             <p className="step-description">Select your AI provider and authentication method.</p>
 
@@ -2530,7 +2534,7 @@ Managed by Clawnetes.`,
         );
       case 9:
         return (
-          <div className="step-view">
+          <div className="step-view" data-testid="step-channels">
             <h2>Messaging Channels</h2>
             <p className="step-description">Select a messaging channel for your agent.</p>
 
