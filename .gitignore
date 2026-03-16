@@ -18,6 +18,10 @@ Thumbs.db
 *.swp
 *.swo
 
+# Playwright
+test-results/
+playwright-report/
+
 # Temporary
 temp_*.txt
 *.log

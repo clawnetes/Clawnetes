@@ -10,8 +10,7 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "noEmit": true,
-    "types": ["node", "@wdio/mocha-framework", "webdriverio"]
+    "noEmit": true
   },
-  "include": ["e2e/**/*.ts", "wdio.conf.ts"]
+  "include": ["e2e/**/*.ts", "playwright.config.ts"]
 }

@@ -1,11 +1,9 @@
 /**
  * Centralized selectors for E2E tests.
- *
- * Uses a combination of data-testid attributes (preferred) and
- * text/class-based selectors as fallbacks.
+ * Prefer data-testid attributes added in Step 7 of the implementation.
  */
 
-// --- data-testid selectors (Step 7 additions) ---
+// data-testid helper
 export const testId = (id: string) => `[data-testid="${id}"]`;
 
 // Step containers
@@ -28,12 +26,3 @@ export const BTN_I_UNDERSTAND = testId("btn-i-understand");
 // Inputs
 export const INPUT_USER_NAME = testId("input-user-name");
 export const INPUT_AGENT_NAME = testId("input-agent-name");
-
-// --- Text-based selectors (fallback) ---
-export const btnText = (text: string) => `button=${text}`;
-export const inputPlaceholder = (placeholder: string) => `input[placeholder="${placeholder}"]`;
-
-// --- Class selectors ---
-export const STEP_VIEW = ".step-view";
-export const MODE_CARD = ".mode-card";
-export const WELCOME_TITLE = ".welcome-title";
