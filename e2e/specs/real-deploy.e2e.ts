@@ -158,7 +158,7 @@ test.describe.serial("Real Deployment", () => {
     await expect(page.locator("body")).not.toBeEmpty();
 
     // Give time to see the dashboard before the test suite tears it down
-    await page.waitForTimeout(15_000);
+    await page.waitForTimeout(60_000);
   });
 
   test("dashboard is accessible after deploy", async ({ page }) => {
