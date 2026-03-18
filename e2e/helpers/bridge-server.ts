@@ -285,8 +285,14 @@ function handleCommand(
       return configureAgent((args.config as Record<string, unknown>) || args);
 
     case "tauri": {
-      // shell.open() calls — log and no-op in bridge mode
-      console.log(`[bridge] tauri shell.open:`, args);
+      // Handle shell.open() — actually open the URL in the system browser
+      const message = args.message as Record<string, unknown> | undefined;
+      if (message?.cmd === "open" && typeof message.path === "string") {
+        console.log(`[bridge] opening URL: ${message.path}`);
+        shellSafe(`open "${message.path}"`);
+      } else {
+        console.log(`[bridge] tauri (unhandled):`, args);
+      }
       return null;
     }
 
