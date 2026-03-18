@@ -156,6 +156,9 @@ test.describe.serial("Real Deployment", () => {
     await page.goto("http://127.0.0.1:18789");
     await page.waitForLoadState("networkidle", { timeout: 30_000 });
     await expect(page.locator("body")).not.toBeEmpty();
+
+    // Give time to see the dashboard before the test suite tears it down
+    await page.waitForTimeout(15_000);
   });
 
   test("dashboard is accessible after deploy", async ({ page }) => {
