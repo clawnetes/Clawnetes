@@ -348,8 +348,35 @@ function handleCommand(
       // Return false initially; the test can poll
       return false;
 
-    case "get_dashboard_url":
+    case "get_dashboard_url": {
+      // Try `openclaw dashboard --no-open` first (returns "Dashboard URL: http://...")
+      const dashOutput = shellSafe("openclaw dashboard --no-open");
+      if (dashOutput) {
+        const urlLine = dashOutput.split("\n").find((l) => l.includes("Dashboard URL:"));
+        if (urlLine) {
+          const url = urlLine.replace("Dashboard URL:", "").trim();
+          if (url) return url;
+        }
+      }
+      // Fallback: read token from config and build tokenized URL
+      const tokenOutput = shellSafe("openclaw config get gateway.auth.token");
+      if (tokenOutput) {
+        const token = tokenOutput.trim().replace(/^"|"$/g, "");
+        if (token && token !== "null" && token !== "undefined") {
+          return `http://127.0.0.1:18789/#token=${token}`;
+        }
+      }
+      // Last resort: read from openclaw.json directly
+      const cfgPath = join(homedir(), ".openclaw", "openclaw.json");
+      if (existsSync(cfgPath)) {
+        try {
+          const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+          const token = cfg?.gateway?.auth?.token;
+          if (token) return `http://127.0.0.1:18789/#token=${token}`;
+        } catch { /* ignore */ }
+      }
       return "http://127.0.0.1:18789";
+    }
 
     case "validate_openclaw_config": {
       const result = shellSafe("openclaw config validate");

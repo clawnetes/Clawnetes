@@ -148,13 +148,32 @@ test.describe.serial("Real Deployment", () => {
     await waitForTestId(page, "btn-open-dashboard");
     await clickTestId(page, "btn-open-dashboard");
 
+    // Get the tokenized dashboard URL from the bridge
+    const urlRes = await fetch(`http://127.0.0.1:${bridge.port}/ipc`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cmd: "get_dashboard_url", args: { isRemote: false, remote: null } }),
+    });
+    const { result: dashboardUrl } = await urlRes.json();
+    console.log("[test] dashboard URL:", dashboardUrl);
+
     // Verify dashboard is actually accessible
     const dashboardResponse = await page.request.get("http://127.0.0.1:18789");
     expect(dashboardResponse.ok()).toBeTruthy();
 
-    // Navigate to dashboard and verify it renders
-    await page.goto("http://127.0.0.1:18789");
+    // Navigate to tokenized dashboard URL and verify it renders without errors
+    await page.goto(dashboardUrl);
     await page.waitForLoadState("networkidle", { timeout: 30_000 });
+    await page.screenshot({ path: "test-results/dashboard.png", fullPage: true });
+
+    // Check for common error indicators
+    const bodyText = await page.locator("body").innerText();
+    console.log("[dashboard] body text preview:", bodyText.slice(0, 500));
+
+    const hasAuthError = /unauthorized|forbidden|auth|login|401|403/i.test(bodyText);
+    const hasServerError = /500|502|503|internal server error|bad gateway/i.test(bodyText);
+    expect(hasAuthError, `Dashboard shows auth error: ${bodyText.slice(0, 200)}`).toBeFalsy();
+    expect(hasServerError, `Dashboard shows server error: ${bodyText.slice(0, 200)}`).toBeFalsy();
     await expect(page.locator("body")).not.toBeEmpty();
 
     // Give time to see the dashboard before the test suite tears it down
