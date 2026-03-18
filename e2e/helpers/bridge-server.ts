@@ -123,7 +123,7 @@ function configureAgent(config: Record<string, unknown>): string {
         workspace,
         model: { primary: effectiveModel },
         models: {
-          [effectiveModel]: { provider: profileName },
+          [effectiveModel]: {},
         },
       },
       list: [mainAgent],
@@ -141,7 +141,7 @@ function configureAgent(config: Record<string, unknown>): string {
         ...(existingConfig?.auth?.profiles || {}),
         [profileName]: {
           provider: authProviderId,
-          mode: authMethod === "token" ? "api-key" : authMethod,
+          mode: authMethod === "token" ? "api_key" : authMethod,
         },
       },
     },
@@ -168,9 +168,10 @@ function configureAgent(config: Record<string, unknown>): string {
       telegram: { accounts: { default: channelConfig } },
     };
 
-    // Ensure telegram plugin is enabled
-    configJson.plugins = configJson.plugins || {};
-    configJson.plugins.telegram = configJson.plugins.telegram || { enabled: true };
+    // Ensure telegram plugin is enabled (matches Rust: plugins.entries.{id})
+    configJson.plugins = configJson.plugins || { entries: {} };
+    configJson.plugins.entries = configJson.plugins.entries || {};
+    configJson.plugins.entries.telegram = configJson.plugins.entries.telegram || { enabled: true };
   }
 
   // Add whatsapp config
@@ -196,8 +197,9 @@ function configureAgent(config: Record<string, unknown>): string {
 
     configJson.channels = configJson.channels || {};
     configJson.channels.whatsapp = whatsappObj;
-    configJson.plugins = configJson.plugins || {};
-    configJson.plugins.whatsapp = { enabled: true };
+    configJson.plugins = configJson.plugins || { entries: {} };
+    configJson.plugins.entries = configJson.plugins.entries || {};
+    configJson.plugins.entries.whatsapp = { enabled: true };
   }
 
   // Write openclaw.json
@@ -220,7 +222,7 @@ function configureAgent(config: Record<string, unknown>): string {
   const authProfiles: Record<string, any> = {};
   authProfiles[profileName] = {
     provider: authProviderId,
-    mode: authMethod === "token" ? "api-key" : authMethod,
+    mode: authMethod === "token" ? "api_key" : authMethod,
     ...(authMethod === "token" ? { apiKey } : {}),
   };
   writeFileSync(

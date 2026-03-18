@@ -31,7 +31,7 @@ const CHANNEL_LABELS: Record<string, string> = {
 let config: E2EConfig;
 let bridge: BridgeServer;
 
-test.describe("Real Deployment", () => {
+test.describe.serial("Real Deployment", () => {
   test.beforeAll(async () => {
     config = loadE2EConfig();
     bridge = await startBridgeServer();
@@ -179,8 +179,19 @@ test.describe("Real Deployment", () => {
 
   test("shows maintenance screen on reopen", async ({ page }) => {
     // Navigate to / again (simulates app reopen)
-    // Bridge returns openclaw_installed: true for check_prerequisites
     await page.goto("/");
+
+    // App starts at Welcome page — navigate through to trigger maintenance redirect
+    await waitForTestId(page, "step-welcome");
+    await clickTestId(page, "btn-start-setup");
+
+    // Select Local environment — this triggers checkSystem(false) which
+    // detects openclaw is already installed and redirects to maintenance
+    await waitForTestId(page, "step-environment");
+    await selectModeCard(page, "Local");
+    await clickTestId(page, "btn-continue");
+
+    // Should redirect to maintenance screen instead of system check
     await waitForText(page, "Welcome Back");
     await waitForText(page, "Open Dashboard");
   });
