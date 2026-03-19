@@ -2,25 +2,25 @@
 
 ## Architecture
 
-### Decompose App.tsx God Component
+### Finish App.tsx Decomposition
 
-**What:** Extract App.tsx (4,659 lines) into WizardShell, step components, useWizardState reducer, ConfigBuilder util, and OAuthQueue hook.
+**What:** Finish extracting the remaining orchestration in App.tsx into focused hooks/controllers such as WizardShell flow control, deferred OAuth execution, install/maintenance actions, and existing-config loading.
 
-**Why:** The monolithic component is untestable (0 unit tests for core logic), unmaintainable, and prone to silent state interaction bugs. A state update in one flow can trigger unrelated re-renders that reset other state.
+**Why:** App.tsx is much smaller than before, but it still owns too many side-effect-heavy flows. That makes cross-step state changes hard to reason about and harder to test in isolation.
 
-**Context:** App.tsx contains 50+ useState calls, 20 wizard steps, config payload building, OAuth queue management, install orchestration, and all UI rendering. Accepted as issue 1A in eng review 2026-03-19. Decomposition target: WizardShell (navigation + layout), individual step components, useWizardState (useReducer + context), ConfigBuilder (constructConfigPayload extracted), OAuthQueue hook (deferred auth flow).
+**Context:** Step components, the reducer, the error boundary, and config payload utilities already exist. Remaining work is mostly orchestration: advanced/basic mode transitions, deferred provider auth completion, install and maintenance command flow, tunnel control, and config rehydration.
 
 **Effort:** L
 **Priority:** P0
 **Depends on:** None
 
-### Modularize Rust Backend + Add Tests
+### Finish Rust Backend Decomposition + Add Tests
 
-**What:** Extract main.rs (7,070 lines) into modules: mod license, mod ssh, mod config, mod install, mod system. Add unit tests for config generation and license crypto.
+**What:** Continue slimming main.rs by moving the remaining orchestration-heavy command bodies into modules, then add coverage around those extracted flows.
 
-**Why:** Single-file backend with 45 commands and 0 tests. Any change risks breaking unrelated functionality with no safety net. Crypto code (AES-256-GCM license system) has never been tested.
+**Why:** Backend modularization is real now, but main.rs is still large and still owns several command implementations. Keeping orchestration in modules lowers change risk and improves testability.
 
-**Context:** Accepted as issues 2A, 7A, 11A in eng review 2026-03-19. Include custom error enum (ClawError with Network, Config, License, Ssh, System variants) replacing 87 occurrences of `Result<T, String>`. Add round-trip crypto tests and config generation tests.
+**Context:** `config.rs`, `oauth.rs`, `gateway.rs`, `install.rs`, `maintenance.rs`, `models.rs`, and `pairing.rs` already exist. `ClawError` also exists, but new/edited internals should start preferring it instead of extending `Result<T, String>` everywhere.
 
 **Effort:** L
 **Priority:** P0
@@ -80,11 +80,11 @@
 
 ### Unit Test constructConfigPayload
 
-**What:** Comprehensive unit tests for constructConfigPayload — the function that converts 50+ state variables into the JSON payload sent to the backend.
+**What:** Keep the existing constructConfigPayload test coverage current as App orchestration is extracted further.
 
-**Why:** Single most critical data transformation in the app. Zero test coverage. If it drops a field, deployments silently use wrong config.
+**Why:** The payload builder is already covered and should stay stable while surrounding orchestration moves around it.
 
-**Context:** Accepted as issue 9A in eng review 2026-03-19. Test scenarios: basic config, preset config, multi-agent, remote deployment, all-features-enabled, minimal-fields-only.
+**Context:** This item is functionally complete; keep it here only as a reminder to avoid regressions when the remaining frontend breakup lands.
 
 **Effort:** M
 **Priority:** P0

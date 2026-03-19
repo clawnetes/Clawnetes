@@ -16,6 +16,7 @@ import { applyModelProviderAuth, buildDeferredOAuthQueue, buildReferencedProvide
 import ToolPolicyEditor from "./components/ToolPolicyEditor";
 import { createInheritedToolPolicy, DEFAULT_TOOL_POLICY, deriveToolPolicyFromLegacy, getSkillIdSet, materializeToolPolicy, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./utils/toolSelection";
 import { constructConfigPayload as buildConfigPayload, buildAgentToolsPayload as buildAgentTools } from "./utils/configPayload";
+import { executeDeferredOAuthQueue } from "./utils/oauthCompletion";
 import Dropdown from "./components/Dropdown";
 import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "./types";
 import { useWizardState, fieldSetter } from "./hooks/useWizardState";
@@ -460,55 +461,61 @@ function App() {
     })));
   }
 
+  const configPayloadInput = {
+    provider, apiKey, authMethod, model, userName, agentName, agentEmoji, agentType,
+    telegramToken, gatewayPort, gatewayBind, gatewayAuthMode, tailscaleMode, nodeManager,
+    selectedSkills, serviceKeys, providerAuths, sandboxMode, toolPolicy, enableFallbacks,
+    fallbackModels, heartbeatMode, idleTimeoutMs, identityMd, userMd, soulMd, toolsMd,
+    agentsMd, heartbeatMd, memoryMd, memoryEnabled, enableMultiAgent, agentConfigs, isPaired,
+    cronJobs, localBaseUrl, lmstudioBaseUrl, thinkingLevel, messagingChannel, whatsappDmPolicy,
+    whatsappPhoneNumber, mode,
+  };
+
   async function runDeferredOAuthQueue() {
     if (oauthCompletionRunning || deferredOAuthQueue.length === 0) return;
 
     setOauthCompletionRunning(true);
     setOauthCompletionStarted(true);
-    let nextProviderAuths = { ...providerAuths };
-    let hasSuccessfulAuth = false;
-
-    for (const item of deferredOAuthQueue) {
-      setOauthCompletionResults(prev => ({
-        ...prev,
-        [item.id]: { status: "pending", message: "Opening a terminal for interactive OpenClaw authentication..." },
-      }));
-      setProviderAuthBusy(prev => ({ ...prev, [item.targetProvider]: true }));
-      setProviderAuthErrors(prev => ({ ...prev, [item.targetProvider]: "" }));
-
-      try {
-        const result = await invoke<ProviderAuthConfig>("start_provider_auth", {
-          provider: item.targetProvider,
-          method: item.authMethod,
-          oauthProviderId: item.oauthProviderId,
-        });
-        nextProviderAuths = {
-          ...nextProviderAuths,
-          [item.targetProvider]: result,
-        };
-        hasSuccessfulAuth = true;
+    const { nextProviderAuths, successfulItems } = await executeDeferredOAuthQueue({
+      queue: deferredOAuthQueue,
+      initialProviderAuths: providerAuths,
+      invokeProviderAuth: (item) => invoke<ProviderAuthConfig>("start_provider_auth", {
+        provider: item.targetProvider,
+        method: item.authMethod,
+        oauthProviderId: item.oauthProviderId,
+      }),
+      onItemStart: (item) => {
+        setOauthCompletionResults(prev => ({
+          ...prev,
+          [item.id]: { status: "pending", message: "Opening a terminal for interactive OpenClaw authentication..." },
+        }));
+      },
+      onItemSuccess: (item, result) => {
         updateProviderAuth(item.targetProvider, result);
         setOauthCompletionResults(prev => ({
           ...prev,
           [item.id]: { status: "success", message: `Connected via ${item.label}. OpenClaw imported the auth profile.` },
         }));
-      } catch (e: any) {
-        const message = String(e);
-        setProviderAuthErrors(prev => ({ ...prev, [item.targetProvider]: message }));
+      },
+      onItemError: (item, message) => {
         setOauthCompletionResults(prev => ({
           ...prev,
           [item.id]: { status: "error", message },
         }));
-      } finally {
-        setProviderAuthBusy(prev => ({ ...prev, [item.targetProvider]: false }));
-      }
-    }
+      },
+      onProviderBusyChange: (providerId, busy) => {
+        setProviderAuthBusy(prev => ({ ...prev, [providerId]: busy }));
+      },
+      onProviderErrorChange: (providerId, message) => {
+        setProviderAuthErrors(prev => ({ ...prev, [providerId]: message }));
+      },
+    });
 
-    if (hasSuccessfulAuth && targetEnvironment !== "cloud") {
+    if (successfulItems.length > 0 && targetEnvironment !== "cloud") {
       try {
         await invoke("configure_agent", {
           config: {
-            ...constructConfigPayload(nextProviderAuths),
+            ...buildConfigPayload(configPayloadInput, nextProviderAuths),
             preserve_state: true,
           },
         });
@@ -516,10 +523,8 @@ function App() {
         const message = `OAuth succeeded, but saving the imported auth profile failed: ${String(e)}`;
         setOauthCompletionResults(prev => {
           const next = { ...prev };
-          for (const item of deferredOAuthQueue) {
-            if (next[item.id]?.status === "success") {
-              next[item.id] = { status: "error", message };
-            }
+          for (const item of successfulItems) {
+            next[item.id] = { status: "error", message };
           }
           return next;
         });
@@ -1024,18 +1029,6 @@ Managed by Clawnetes.`,
     };
   }
 
-  function constructConfigPayload(providerAuthsOverride?: Record<string, ProviderAuthConfig>) {
-    return buildConfigPayload({
-      provider, apiKey, authMethod, model, userName, agentName, agentEmoji, agentType,
-      telegramToken, gatewayPort, gatewayBind, gatewayAuthMode, tailscaleMode, nodeManager,
-      selectedSkills, serviceKeys, providerAuths, sandboxMode, toolPolicy, enableFallbacks,
-      fallbackModels, heartbeatMode, idleTimeoutMs, identityMd, userMd, soulMd, toolsMd,
-      agentsMd, heartbeatMd, memoryMd, memoryEnabled, enableMultiAgent, agentConfigs, isPaired,
-      cronJobs, localBaseUrl, lmstudioBaseUrl, thinkingLevel, messagingChannel, whatsappDmPolicy,
-      whatsappPhoneNumber, mode,
-    }, providerAuthsOverride);
-  }
-
   async function handleInstall() {
     setLoading(true);
     setError(false);
@@ -1082,7 +1075,7 @@ Managed by Clawnetes.`,
       }
     }
 
-    const configPayload = constructConfigPayload();
+    const configPayload = buildConfigPayload(configPayloadInput);
     const agentSessionIds = getAgentSessionInitIds(configPayload.agents);
     const effectiveMessagingLinked = isMessagingLinked(messagingChannel, {
       telegramPaired: actualIsPaired,
@@ -1533,7 +1526,7 @@ Managed by Clawnetes.`,
 
 
 
-  const currentPayload = constructConfigPayload();
+  const currentPayload = buildConfigPayload(configPayloadInput);
   const initialPayload = transformInitialToPayload(initialConfigRef.current);
   const hasChanges = !initialConfigRef.current || !isDeepEqual(initialPayload, currentPayload);
 

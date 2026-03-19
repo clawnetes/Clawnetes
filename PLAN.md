@@ -1,27 +1,31 @@
-# Rust Backend Modularization Plan
+# Remaining Work Plan
 
 ## Goal
-Finish the in-progress `main.rs` extraction by removing duplicated helper implementations and routing Tauri commands through the extracted modules without changing behavior.
+Finish the second-pass decomposition work from `TODOS.md`: further slim the frontend and backend orchestration layers, add coverage for the deferred OAuth flow, and validate the refactor end to end.
 
-## Current State
-- [x] Module files created: `error`, `types`, `license`, `ssh`, `system`, `config`, `oauth`, `gateway`, `install`, `maintenance`, `models`, `pairing`
-- [x] `main.rs` imports many module helpers already
-- [ ] `main.rs` still contains duplicated oauth helpers
-- [ ] `main.rs` still contains duplicated ssh helpers
-- [ ] `main.rs` still contains command bodies that should delegate to modules
-- [ ] Validation pass after cutover
-
-## Current Cutover Tasks
-- [x] Inspect duplicated helper regions and module coverage
-- [x] Remove duplicated oauth helpers from `src-tauri/src/main.rs`
-- [x] Remove duplicated ssh helpers from `src-tauri/src/main.rs`
-- [x] Replace remaining wrapper command bodies with module calls where module APIs already exist
+## Current Tranche
+- [x] Re-baseline `TODOS.md` and `PLAN.md` to match the post-modularization codebase
+- [x] Move remaining `main.rs` command bodies into backend modules
+- [x] Extract more `App.tsx` orchestration into focused hooks/controllers
+- [x] Add tests for deferred OAuth queue behavior and moved orchestration logic
 - [x] Run `cargo test`
 - [x] Run `npm test`
 - [x] Run `npm run tauri dev`
 - [ ] Commit and push if all validation passes
 
+## Backend Scope
+- [x] `config.rs` owns config write/read logic
+- [x] `main.rs` no longer owns WhatsApp gateway RPC flows
+- [ ] `main.rs` still owns some orchestration-heavy command wrappers
+- [ ] `ClawError` exists but is not yet used consistently across new backend internals
+
+## Frontend Scope
+- [x] Step rendering is split into `src/components/steps/`
+- [x] reducer state lives in `src/hooks/useWizardState.ts`
+- [ ] `App.tsx` still owns advanced transition, install, maintenance, and config-loading orchestration
+- [ ] post-decomposition memoization still needs a focused pass
+
 ## Notes
-- Preserve unrelated user changes already present in the worktree.
-- Prefer thin Tauri command wrappers in `main.rs`; keep implementation logic in modules.
-- If a command still needs logic not yet exposed by a module, add the smallest safe module API instead of leaving another large body in `main.rs`.
+- Keep Tauri command names and payloads stable during the refactor.
+- Prefer moving full command bodies into modules over introducing new duplicate helpers.
+- Validate after each tranche; do not leave stale checklist items behind.
