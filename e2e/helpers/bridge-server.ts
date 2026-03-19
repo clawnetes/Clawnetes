@@ -5,11 +5,12 @@
  * and filesystem operations, replicating what the Rust backend does.
  */
 import { createServer, IncomingMessage, ServerResponse, Server } from "http";
-import { execSync } from "child_process";
+import { execSync, ChildProcess } from "child_process";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
+import { sshExec, sshExecSafe, scpWrite, startSshTunnel, RemoteConfig } from "./ssh-exec";
 
 export interface BridgeServer {
   port: number;
@@ -21,6 +22,20 @@ export interface BridgeServer {
 // because `openclaw doctor --fix` may overwrite auth-profiles.json.
 let lastAuthProfilesPath: string | null = null;
 let lastAuthProfilesContent: string | null = null;
+
+// SSH tunnel background process
+let tunnelProcess: ChildProcess | null = null;
+
+function extractRemoteConfig(args: Record<string, unknown>): RemoteConfig | null {
+  const remote = args.remote as Record<string, unknown> | undefined;
+  if (!remote || !remote.ip || !remote.user) return null;
+  return {
+    ip: remote.ip as string,
+    user: remote.user as string,
+    password: (remote.password as string) || undefined,
+    sshKey: (remote.privateKeyPath as string) || (remote.private_key_path as string) || undefined,
+  };
+}
 
 function shell(cmd: string, timeoutMs = 60_000): string {
   return execSync(cmd, {
@@ -267,6 +282,173 @@ function configureAgent(config: Record<string, unknown>): string {
   return "Configured.";
 }
 
+/**
+ * Replicate the Rust `setup_remote_openclaw` logic via SSH.
+ * Reference: src-tauri/src/main.rs lines 1692-1930
+ */
+function setupRemoteOpenClaw(rc: RemoteConfig, config: Record<string, unknown>): void {
+  console.log("[bridge] setting up remote OpenClaw...");
+
+  // 1. Detect OS
+  const osName = sshExecSafe(rc, "uname -s") || "Linux";
+  console.log(`[bridge] remote OS: ${osName}`);
+
+  // 2. Install Node if missing
+  const nodeCheck = sshExecSafe(rc, "node -v");
+  if (!nodeCheck) {
+    console.log("[bridge] installing Node on remote...");
+    if (osName === "Darwin") {
+      sshExec(rc, "brew install node", 180_000);
+    } else {
+      sshExec(rc, "curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt-get install -y nodejs", 180_000);
+    }
+  }
+
+  // 3. Install OpenClaw if missing
+  const openclawCheck = sshExecSafe(rc, "openclaw --version");
+  if (!openclawCheck) {
+    console.log("[bridge] installing OpenClaw on remote...");
+    sshExec(rc, "npm install -g openclaw", 180_000);
+  }
+
+  // 4. Run gateway install --force
+  console.log("[bridge] running gateway install on remote...");
+  sshExecSafe(rc, "openclaw gateway stop");
+  sshExec(rc, "openclaw gateway install --force --profile messaging", 180_000);
+
+  // 5. Build and write config files
+  const provider = (config.provider as string) || "anthropic";
+  const apiKey = (config.api_key as string) || (config.apiKey as string) || "";
+  const modelStr = (config.model as string) || "claude-sonnet-4-20250514";
+  const authMethod = (config.auth_method as string) || (config.authMethod as string) || "token";
+  const userName = (config.user_name as string) || (config.userName as string) || "User";
+  const agentName = (config.agent_name as string) || (config.agentName as string) || "Agent";
+  const telegramToken = (config.telegram_token as string) || (config.telegramToken as string) || "";
+  const gatewayPort = (config.gateway_port as number) || (config.gatewayPort as number) || 18789;
+  const channel = (config.channel as string) || "telegram";
+
+  const effectiveModel = modelStr.includes("/") ? modelStr : `${provider}/${modelStr}`;
+  const gatewayToken = randomBytes(16).toString("hex");
+
+  const authProviderMap: Record<string, string> = {
+    anthropic: "anthropic",
+    openai: "openai",
+    google: "google-gemini",
+    openrouter: "openrouter",
+    xai: "xai",
+  };
+  const authProviderId = authProviderMap[provider] || provider;
+  const profileName = `${provider}:default`;
+
+  const openclawJson: Record<string, any> = {
+    messages: { ackReactionScope: "group-mentions" },
+    agents: {
+      defaults: {
+        maxConcurrent: 4,
+        subagents: { maxConcurrent: 8 },
+        compaction: { mode: "safeguard" },
+        workspace: "~/.openclaw/workspace",
+        model: { primary: effectiveModel },
+        models: { [effectiveModel]: {} },
+      },
+      list: [{
+        id: "main",
+        name: agentName,
+        workspace: "~/.openclaw/workspace",
+        agentDir: "~/.openclaw/agents/main/agent",
+        model: { primary: effectiveModel },
+      }],
+    },
+    gateway: {
+      mode: "local",
+      port: gatewayPort,
+      bind: "0.0.0.0",
+      auth: { mode: "token", token: gatewayToken },
+      tailscale: { mode: "off", resetOnExit: false },
+    },
+    auth: {
+      profiles: {
+        [profileName]: { provider: authProviderId, mode: "api_key" },
+      },
+    },
+    commands: { native: "auto", nativeSkills: "auto" },
+  };
+
+  // Add channel config
+  if (telegramToken && channel === "telegram") {
+    openclawJson.channels = {
+      telegram: { accounts: { default: { botToken: telegramToken, name: "Primary Bot", dmPolicy: "pairing" } } },
+    };
+    openclawJson.plugins = { entries: { telegram: { enabled: true } } };
+  }
+  if (config.whatsapp_enabled || config.whatsappEnabled) {
+    const dmPolicy = (config.whatsapp_dm_policy as string) || (config.whatsappDmPolicy as string) || "open";
+    const phone = (config.whatsapp_phone_number as string) || (config.whatsappPhone as string) || "";
+    const whatsappObj: Record<string, any> = {
+      enabled: true, selfChatMode: true, dmPolicy, groupPolicy: "allowlist", debounceMs: 0, mediaMaxMb: 50,
+    };
+    if (dmPolicy === "open") whatsappObj.allowFrom = ["*"];
+    else if (dmPolicy === "allowlist" && phone) whatsappObj.allowFrom = [phone.startsWith("+") ? phone : `+${phone}`];
+    openclawJson.channels = openclawJson.channels || {};
+    openclawJson.channels.whatsapp = whatsappObj;
+    openclawJson.plugins = openclawJson.plugins || { entries: {} };
+    openclawJson.plugins.entries.whatsapp = { enabled: true };
+  }
+
+  // Write openclaw.json to remote
+  console.log("[bridge] writing remote config files...");
+  scpWrite(rc, "~/.openclaw/openclaw.json", JSON.stringify(openclawJson, null, 2));
+
+  // Write auth-profiles.json
+  const authProfiles = {
+    version: 1,
+    profiles: { [profileName]: { type: "api_key", provider: authProviderId, key: apiKey } },
+    lastGood: { [provider]: profileName },
+    usageStats: {},
+  };
+  scpWrite(rc, "~/.openclaw/agents/main/agent/auth-profiles.json", JSON.stringify(authProfiles, null, 2));
+
+  // Write markdown files
+  sshExecSafe(rc, "mkdir -p ~/.openclaw/workspace");
+  scpWrite(rc, "~/.openclaw/workspace/IDENTITY.md",
+    `# IDENTITY.md - Who Am I?\n- **Name:** ${agentName}\n- **Emoji:** \u{1F99E}\n---\nManaged by Clawnetes.`);
+  scpWrite(rc, "~/.openclaw/workspace/USER.md",
+    `# USER.md - About Your Human\n- **Name:** ${userName}\n---`);
+  scpWrite(rc, "~/.openclaw/workspace/SOUL.md",
+    `# SOUL.md\n## Mission\nServe ${userName}.`);
+
+  // Write clawnetes-meta.json
+  const meta: Record<string, any> = {};
+  if (config.agent_type || config.agentType) {
+    meta.agent_type = (config.agent_type as string) || (config.agentType as string);
+  }
+  scpWrite(rc, "~/.openclaw/clawnetes-meta.json", JSON.stringify(meta, null, 2));
+
+  // Sync token via openclaw config
+  sshExecSafe(rc, `openclaw config set gateway.auth.token ${gatewayToken}`);
+
+  // Start gateway on remote
+  console.log("[bridge] starting remote gateway...");
+  sshExecSafe(rc, "openclaw gateway stop");
+  sshExecSafe(rc, "sleep 2");
+  sshExecSafe(rc, "openclaw doctor --fix --yes || true", 120_000);
+
+  // Re-write auth-profiles after doctor --fix
+  scpWrite(rc, "~/.openclaw/agents/main/agent/auth-profiles.json", JSON.stringify(authProfiles, null, 2));
+
+  sshExec(rc, "openclaw gateway start", 120_000);
+
+  // Poll for gateway to be ready on remote
+  const maxWait = 60_000;
+  const start = Date.now();
+  while (Date.now() - start < maxWait) {
+    const check = sshExecSafe(rc, "curl -sf http://127.0.0.1:18789 > /dev/null");
+    if (check !== null) break;
+    sshExecSafe(rc, "sleep 2");
+  }
+  console.log("[bridge] remote gateway started.");
+}
+
 function handleCommand(
   cmd: string,
   args: Record<string, unknown>
@@ -349,9 +531,16 @@ function handleCommand(
     }
 
     case "restart_openclaw_gateway": {
-      shellSafe("openclaw gateway stop");
-      shellSafe("sleep 2");
-      shell("openclaw gateway start", 120_000);
+      const rc = extractRemoteConfig(args);
+      if (rc) {
+        sshExecSafe(rc, "openclaw gateway stop");
+        sshExecSafe(rc, "sleep 2");
+        sshExec(rc, "openclaw gateway start", 120_000);
+      } else {
+        shellSafe("openclaw gateway stop");
+        shellSafe("sleep 2");
+        shell("openclaw gateway start", 120_000);
+      }
       return null;
     }
 
@@ -372,6 +561,30 @@ function handleCommand(
       return false;
 
     case "get_dashboard_url": {
+      const isRemote = args.isRemote === true || args.is_remote === true;
+      const rc = extractRemoteConfig(args);
+
+      if (isRemote && rc) {
+        // Read token from remote openclaw.json
+        const remoteToken = sshExecSafe(rc, "cat ~/.openclaw/openclaw.json | node -e \"const d=require('fs').readFileSync('/dev/stdin','utf8');const c=JSON.parse(d);console.log(c.gateway.auth.token)\"");
+        if (remoteToken) {
+          const token = remoteToken.trim().replace(/^"|"$/g, "");
+          if (token && token !== "null" && token !== "undefined") {
+            return `http://127.0.0.1:18789/#token=${token}`;
+          }
+        }
+        // Fallback: try openclaw config get on remote
+        const remoteTokenAlt = sshExecSafe(rc, "openclaw config get gateway.auth.token");
+        if (remoteTokenAlt) {
+          const token = remoteTokenAlt.trim().replace(/^"|"$/g, "");
+          if (token && token !== "null" && token !== "undefined") {
+            return `http://127.0.0.1:18789/#token=${token}`;
+          }
+        }
+        return "http://127.0.0.1:18789";
+      }
+
+      // Local path
       // Try `openclaw dashboard --no-open` first (returns "Dashboard URL: http://...")
       const dashOutput = shellSafe("openclaw dashboard --no-open");
       if (dashOutput) {
@@ -436,33 +649,121 @@ function handleCommand(
     case "save_license":
       return null;
 
-    case "install_node":
-    case "install_remote_skill":
+    case "install_node": {
+      const rc = extractRemoteConfig(args);
+      if (rc) {
+        // Install Node remotely
+        const os = sshExecSafe(rc, "uname -s") || "Linux";
+        if (os === "Darwin") {
+          sshExec(rc, "brew install node || true", 120_000);
+        } else {
+          sshExec(rc, "curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt-get install -y nodejs", 120_000);
+        }
+      } else {
+        shell("brew install node || true", 120_000);
+      }
+      return null;
+    }
+
+    case "install_remote_skill": {
+      const rc = extractRemoteConfig(args);
+      const skillName = (args.name as string) || (args.skill as string) || "";
+      if (rc && skillName) {
+        sshExec(rc, `npx clawhub install ${skillName}`, 120_000);
+      } else if (skillName) {
+        shell(`npx clawhub install ${skillName}`, 120_000);
+      }
+      return null;
+    }
+
     case "create_custom_skill":
       return null;
 
+    case "test_ssh_connection": {
+      const rc = extractRemoteConfig(args);
+      if (!rc) return "Error: missing remote config";
+      const result = sshExecSafe(rc, "echo ok");
+      if (result === "ok") return "SSH connection established successfully!";
+      throw new Error("SSH connection failed");
+    }
+
     case "ssh_connect":
+      return null;
+
     case "start_tunnel":
-    case "start_ssh_tunnel":
+    case "start_ssh_tunnel": {
+      const rc = extractRemoteConfig(args);
+      if (!rc) return "Error: missing remote config";
+      if (tunnelProcess) {
+        // Already running
+        return "SSH tunnel is already running";
+      }
+      tunnelProcess = startSshTunnel(rc, 18789, 18789);
+      // Wait a moment for tunnel to establish
+      shellSafe("sleep 3");
+      // Verify it's working
+      const check = shellSafe("curl -sf http://127.0.0.1:18789 > /dev/null");
+      if (check === null) {
+        console.log("[bridge] tunnel started but gateway not yet reachable — may need more time");
+      }
+      return "SSH tunnel started.";
+    }
+
     case "stop_tunnel":
-    case "stop_ssh_tunnel":
+    case "stop_ssh_tunnel": {
+      if (tunnelProcess) {
+        try { tunnelProcess.kill(); } catch { /* ignore */ }
+        tunnelProcess = null;
+      }
+      // Also kill any lingering SSH tunnel processes on port 18789
+      shellSafe("lsof -ti:18789 -sTCP:LISTEN | xargs kill 2>/dev/null || true");
       return null;
+    }
 
-    case "verify_tunnel_connectivity":
-      return true;
+    case "verify_tunnel_connectivity": {
+      try {
+        shell("curl -sf http://127.0.0.1:18789 > /dev/null", 10_000);
+        return true;
+      } catch {
+        return false;
+      }
+    }
 
-    case "check_remote_prerequisites":
+    case "check_remote_prerequisites": {
+      const rc = extractRemoteConfig(args);
+      if (!rc) return { node_installed: false, docker_running: true, openclaw_installed: false };
+      const nodeOk = sshExecSafe(rc, "node -v") !== null;
+      const openclawOk = sshExecSafe(rc, "openclaw --version") !== null;
       return {
-        node_installed: true,
+        node_installed: nodeOk,
         docker_running: true,
-        openclaw_installed: false,
+        openclaw_installed: openclawOk,
       };
+    }
 
-    case "get_remote_openclaw_version":
-      return "1.0.0";
+    case "get_remote_openclaw_version": {
+      const rc = extractRemoteConfig(args);
+      if (!rc) return "0.0.0";
+      const ver = sshExecSafe(rc, "openclaw --version");
+      return ver || "0.0.0";
+    }
 
-    case "setup_remote_openclaw":
-      return null;
+    case "setup_remote_openclaw": {
+      const rc = extractRemoteConfig(args);
+      if (!rc) throw new Error("Missing remote config");
+      const config = (args.config as Record<string, unknown>) || args;
+      setupRemoteOpenClaw(rc, config);
+      return "Remote OpenClaw setup complete.";
+    }
+
+    case "uninstall_remote_openclaw": {
+      const rc = extractRemoteConfig(args);
+      if (!rc) throw new Error("Missing remote config");
+      sshExecSafe(rc, "openclaw gateway stop");
+      sshExecSafe(rc, "sudo npm uninstall -g openclaw || npm uninstall -g openclaw", 60_000);
+      sshExecSafe(rc, "rm -rf ~/.openclaw");
+      return "Remote OpenClaw uninstalled.";
+    }
 
     case "get_current_config":
       return null;

@@ -42,3 +42,10 @@ export const STEP_COMPLETE = testId("step-complete");
 // Additional buttons
 export const BTN_FINISH_SETUP = testId("btn-finish-setup");
 export const BTN_ADVANCED_SETTINGS = testId("btn-advanced-settings");
+
+// Remote/SSH inputs
+export const INPUT_REMOTE_IP = testId("input-remote-ip");
+export const INPUT_REMOTE_USER = testId("input-remote-user");
+export const INPUT_REMOTE_KEY = testId("input-remote-key");
+export const INPUT_REMOTE_PASSWORD = testId("input-remote-password");
+export const BTN_TEST_CONNECTION = testId("btn-test-connection");

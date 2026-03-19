@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:real": "playwright test --config playwright.real.config.ts",
+    "test:e2e:remote": "playwright test --config playwright.real.config.ts -g 'Remote Deployment'",
     "test:e2e:build": "npm run tauri build && npm run test:e2e"
   },
   "dependencies": {

@@ -1844,6 +1844,7 @@ Managed by Clawnetes.`,
                 <div className="form-group">
                   <label>Server IP Address</label>
                   <input
+                    data-testid="input-remote-ip"
                     placeholder="192.168.1.100"
                     value={remoteIp}
                     onChange={(e) => setRemoteIp(e.target.value)}
@@ -1852,6 +1853,7 @@ Managed by Clawnetes.`,
                 <div className="form-group">
                   <label>SSH Username</label>
                   <input
+                    data-testid="input-remote-user"
                     placeholder="ubuntu"
                     value={remoteUser}
                     onChange={(e) => setRemoteUser(e.target.value)}
@@ -1864,6 +1866,7 @@ Managed by Clawnetes.`,
                   <label>SSH Private Key (Optional)</label>
                   <div style={{ display: "flex", gap: "0.5rem" }}>
                     <input
+                      data-testid="input-remote-key"
                       placeholder="/Users/you/.ssh/id_rsa"
                       value={remotePrivateKeyPath}
                       onChange={(e) => setRemotePrivateKeyPath(e.target.value)}
@@ -1891,6 +1894,7 @@ Managed by Clawnetes.`,
                 <div className="form-group">
                   <label>SSH Password (if not using key)</label>
                   <input
+                    data-testid="input-remote-password"
                     type="password"
                     placeholder="Password"
                     value={remotePassword}
@@ -1899,6 +1903,7 @@ Managed by Clawnetes.`,
                 </div>
 
                 <button
+                  data-testid="btn-test-connection"
                   className="secondary"
                   onClick={handleSshCheck}
                   disabled={!remoteIp || !remoteUser || sshStatus === "checking"}

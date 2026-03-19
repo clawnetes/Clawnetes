@@ -12,6 +12,11 @@ export interface E2EConfig {
   telegramBotToken?: string;
   whatsappDmPolicy?: string;
   whatsappPhone?: string;
+  deployTarget: "local" | "remote";
+  remoteIp?: string;
+  remoteUser?: string;
+  remotePassword?: string;
+  remoteSshKey?: string;
 }
 
 export function loadE2EConfig(): E2EConfig {
@@ -43,6 +48,13 @@ export function loadE2EConfig(): E2EConfig {
     require("WHATSAPP_PHONE");
   }
 
+  const deployTarget = ((env["DEPLOY_TARGET"] || process.env["DEPLOY_TARGET"] || "local") as "local" | "remote");
+
+  if (deployTarget === "remote") {
+    require("REMOTE_IP");
+    require("REMOTE_USER");
+  }
+
   return {
     userName: require("USER_NAME"),
     agentName: require("AGENT_NAME"),
@@ -54,5 +66,10 @@ export function loadE2EConfig(): E2EConfig {
     telegramBotToken: env["TELEGRAM_BOT_TOKEN"] || process.env["TELEGRAM_BOT_TOKEN"],
     whatsappDmPolicy: env["WHATSAPP_DM_POLICY"] || process.env["WHATSAPP_DM_POLICY"],
     whatsappPhone: env["WHATSAPP_PHONE"] || process.env["WHATSAPP_PHONE"],
+    deployTarget,
+    remoteIp: env["REMOTE_IP"] || process.env["REMOTE_IP"],
+    remoteUser: env["REMOTE_USER"] || process.env["REMOTE_USER"],
+    remotePassword: env["REMOTE_PASSWORD"] || process.env["REMOTE_PASSWORD"],
+    remoteSshKey: env["REMOTE_SSH_KEY"] || process.env["REMOTE_SSH_KEY"],
   };
 }
