@@ -32,6 +32,9 @@ import StepRuntime from "./components/steps/StepRuntime";
 import StepEnvironment from "./components/steps/StepEnvironment";
 import StepToolAccess from "./components/steps/StepToolAccess";
 import StepSecurityConfig from "./components/steps/StepSecurityConfig";
+import StepSession from "./components/steps/StepSession";
+import StepServiceKeys from "./components/steps/StepServiceKeys";
+import StepExtraSettings from "./components/steps/StepExtraSettings";
 
 function App() {
   const continueToAdvancedSettings = async () => {
@@ -2211,71 +2214,7 @@ Managed by Clawnetes.`,
       case 11.1:
         return <StepToolAccess />;
       case 11.5:
-        return (
-          <div className="step-view">
-            <h2>Service Key: {servicesToConfigure[currentServiceIdx].name}</h2>
-            <p className="step-description">Would you like to provide a key for this optional service now?</p>
-
-            <div style={{ marginBottom: "2rem" }}>
-              <Dropdown
-                value={isConfiguringService === true ? "yes" : "no"}
-                onChange={(val) => setIsConfiguringService(val === "yes")}
-                options={[
-                  { value: "yes", label: "Yes", description: `Configure ${servicesToConfigure[currentServiceIdx].name} now.` },
-                  { value: "no", label: "Skip", description: "I'll configure this later in the dashboard." }
-                ]}
-              />
-            </div>
-
-            {isConfiguringService === true && (
-              <div className="form-group animate-fadeIn">
-                <label>{servicesToConfigure[currentServiceIdx].name} API Key</label>
-                <input
-                  type="password"
-                  autoFocus
-                  placeholder={servicesToConfigure[currentServiceIdx].placeholder}
-                  value={serviceKeys[servicesToConfigure[currentServiceIdx].id] || ""}
-                  onChange={(e) => setServiceKeys({ ...serviceKeys, [servicesToConfigure[currentServiceIdx].id]: e.target.value })}
-                />
-              </div>
-            )}
-
-            <div className="button-group">
-              <button
-                className="primary"
-                disabled={isConfiguringService === true && !serviceKeys[servicesToConfigure[currentServiceIdx].id]}
-                onClick={() => {
-                  const sid = servicesToConfigure[currentServiceIdx].id;
-                  const newKeys = { ...serviceKeys };
-                  if (!isConfiguringService) delete newKeys[sid];
-                  setServiceKeys(newKeys);
-
-                  if (currentServiceIdx < servicesToConfigure.length - 1) {
-                    setCurrentServiceIdx(currentServiceIdx + 1);
-                    setIsConfiguringService(false);
-                  } else {
-                    // After last service, go to Step 12 if advanced, otherwise install
-                    if (mode === "advanced") {
-                      setStep(12);
-                    } else {
-                      setStep(16);
-                    }
-                  }
-                }}
-              >
-                {currentServiceIdx < servicesToConfigure.length - 1 ? "Next Service" : (mode === "advanced" ? "Continue to Advanced Settings" : "Next")}
-              </button>
-              <button className="secondary" onClick={() => {
-                if (currentServiceIdx > 0) {
-                  setCurrentServiceIdx(currentServiceIdx - 1);
-                  setIsConfiguringService(serviceKeys[servicesToConfigure[currentServiceIdx - 1].id] ? true : false);
-                } else {
-                  setStep(11);
-                }
-              }} disabled={loading}>Back</button>
-            </div>
-          </div>
-        );
+        return <StepServiceKeys />;
       case 12:
         return <StepSecurityConfig />;
       case 13: {
@@ -2563,50 +2502,7 @@ Managed by Clawnetes.`,
         );
       }
       case 14:
-        return (
-          <div className="step-view">
-            <h2>Session Management</h2>
-            <p className="step-description">Control when the agent resets context to save costs.</p>
-
-            <div className="mode-card-container" style={{ gridTemplateColumns: "1fr 1fr" }}>
-              {[
-                { mode: "1h", label: "Hourly", desc: "Reset every hour" },
-                { mode: "4h", label: "4 Hours", desc: "Reset every 4 hours" },
-                { mode: "24h", label: "Daily", desc: "Reset once per day" },
-                { mode: "idle", label: "Idle Timeout", desc: "Reset after inactivity" },
-                { mode: "never", label: "Never", desc: "Manual reset only" }
-              ].map(item => (
-                <div
-                  key={item.mode}
-                  className={`mode-card ${heartbeatMode === item.mode ? "active" : ""}`}
-                  onClick={() => setHeartbeatMode(item.mode)}
-                >
-                  <h3>{item.label}</h3>
-                  <p>{item.desc}</p>
-                </div>
-              ))}
-            </div>
-
-            {heartbeatMode === "idle" && (
-              <div className="form-group" style={{ marginTop: "1.5rem" }}>
-                <label>Idle Timeout (minutes)</label>
-                <input
-                  type="number"
-                  value={idleTimeoutMs / 60000}
-                  onChange={e => setIdleTimeoutMs(Number(e.target.value) * 60000)}
-                  min="1"
-                  max="1440"
-                />
-                <p className="input-hint">Agent will reset context after this many minutes of inactivity.</p>
-              </div>
-            )}
-
-            <div className="button-group">
-              <button className="primary" onClick={() => setStep(15)}>Continue</button>
-              <button className="secondary" onClick={() => setStep(13)}>Back</button>
-            </div>
-          </div>
-        );
+        return <StepSession />;
       case 15:
         return (
           <div className="step-view" data-testid="step-business">
@@ -3265,166 +3161,7 @@ Managed by Clawnetes.`,
 
 
       case 15.7:
-        return (
-          <div className="step-view" data-testid="step-extra-settings">
-            <h2>Extra Settings</h2>
-            <p className="step-description">Configure advanced gateway, runtime, security, and session settings.</p>
-
-            {/* Gateway Settings */}
-            <div className="accordion-section" style={{ marginBottom: "1rem" }}>
-              <button
-                className="accordion-header"
-                onClick={() => setExtraSettingsOpen(prev => ({ ...prev, gateway: !prev.gateway }))}
-                style={{
-                  width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center",
-                  padding: "1rem", background: "var(--bg-card)", border: "1px solid var(--border)",
-                  borderRadius: extraSettingsOpen.gateway ? "12px 12px 0 0" : "12px",
-                  cursor: "pointer", fontWeight: 600, fontSize: "0.9rem"
-                }}
-              >
-                <span>Gateway Settings</span>
-                <span className={`accordion-chevron ${extraSettingsOpen.gateway ? "rotated" : ""}`}>▼</span>
-              </button>
-              {extraSettingsOpen.gateway && (
-                <div style={{ padding: "1rem", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-card)" }}>
-                  <div className="form-group">
-                    <label>Port</label>
-                    <input type="number" value={gatewayPort} onChange={(e) => setGatewayPort(parseInt(e.target.value))} />
-                  </div>
-                  <div className="form-group" style={{ marginTop: "1rem" }}>
-                    <label>Bind Address</label>
-                    <Dropdown value={gatewayBind} onChange={setGatewayBind} options={[
-                      { value: "loopback", label: "Loopback (127.0.0.1)", description: "Only accessible from this machine" },
-                      { value: "all", label: "All Interfaces (0.0.0.0)", description: "Accessible from local network" }
-                    ]} />
-                  </div>
-                  <div className="form-group" style={{ marginTop: "1rem" }}>
-                    <label>Auth Mode</label>
-                    <Dropdown value={gatewayAuthMode} onChange={setGatewayAuthMode} options={[
-                      { value: "token", label: "Token (Secure)", description: "Requires authentication token" },
-                      { value: "none", label: "None (Insecure)", description: "No authentication required" }
-                    ]} />
-                  </div>
-                  <div className="form-group" style={{ marginTop: "1rem" }}>
-                    <label>Tailscale</label>
-                    <Dropdown value={tailscaleMode} onChange={setTailscaleMode} options={[
-                      { value: "off", label: "Disabled", description: "Standard networking" },
-                      { value: "on", label: "Enabled", description: "Expose securely via Tailscale" }
-                    ]} />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Runtime Environment */}
-            <div className="accordion-section" style={{ marginBottom: "1rem" }}>
-              <button
-                className="accordion-header"
-                onClick={() => setExtraSettingsOpen(prev => ({ ...prev, runtime: !prev.runtime }))}
-                style={{
-                  width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center",
-                  padding: "1rem", background: "var(--bg-card)", border: "1px solid var(--border)",
-                  borderRadius: extraSettingsOpen.runtime ? "12px 12px 0 0" : "12px",
-                  cursor: "pointer", fontWeight: 600, fontSize: "0.9rem"
-                }}
-              >
-                <span>Runtime Environment</span>
-                <span className={`accordion-chevron ${extraSettingsOpen.runtime ? "rotated" : ""}`}>▼</span>
-              </button>
-              {extraSettingsOpen.runtime && (
-                <div style={{ padding: "1rem", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-card)" }}>
-                  <div className="form-group">
-                    <label>Node Package Manager</label>
-                    <Dropdown value={nodeManager} onChange={setNodeManager} options={[
-                      { value: "npm", label: "npm" },
-                      { value: "pnpm", label: "pnpm" },
-                      { value: "bun", label: "bun" }
-                    ]} />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Security (Sandbox) */}
-            <div className="accordion-section" style={{ marginBottom: "1rem" }}>
-              <button
-                className="accordion-header"
-                onClick={() => setExtraSettingsOpen(prev => ({ ...prev, security: !prev.security }))}
-                style={{
-                  width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center",
-                  padding: "1rem", background: "var(--bg-card)", border: "1px solid var(--border)",
-                  borderRadius: extraSettingsOpen.security ? "12px 12px 0 0" : "12px",
-                  cursor: "pointer", fontWeight: 600, fontSize: "0.9rem"
-                }}
-              >
-                <span>Security (Sandbox)</span>
-                <span className={`accordion-chevron ${extraSettingsOpen.security ? "rotated" : ""}`}>▼</span>
-              </button>
-              {extraSettingsOpen.security && (
-                <div style={{ padding: "1rem", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-card)" }}>
-                  <div className="form-group">
-                    <label>Sandbox Mode</label>
-                    <Dropdown value={sandboxMode} onChange={setSandboxMode} options={[
-                      { value: "full", label: "Full Sandbox", description: "REQUIRES DOCKER! Select only if Docker is installed." },
-                      { value: "partial", label: "Partial Sandbox", description: "Standard isolation." },
-                      { value: "none", label: "No Sandbox", description: "Unrestricted access." }
-                    ]} />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Session Management */}
-            <div className="accordion-section" style={{ marginBottom: "1rem" }}>
-              <button
-                className="accordion-header"
-                onClick={() => setExtraSettingsOpen(prev => ({ ...prev, session: !prev.session }))}
-                style={{
-                  width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center",
-                  padding: "1rem", background: "var(--bg-card)", border: "1px solid var(--border)",
-                  borderRadius: extraSettingsOpen.session ? "12px 12px 0 0" : "12px",
-                  cursor: "pointer", fontWeight: 600, fontSize: "0.9rem"
-                }}
-              >
-                <span>Session Management</span>
-                <span className={`accordion-chevron ${extraSettingsOpen.session ? "rotated" : ""}`}>▼</span>
-              </button>
-              {extraSettingsOpen.session && (
-                <div style={{ padding: "1rem", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-card)" }}>
-                  <div className="mode-card-container" style={{ gridTemplateColumns: "1fr 1fr" }}>
-                    {[
-                      { mode: "1h", label: "Hourly", desc: "Reset every hour" },
-                      { mode: "4h", label: "4 Hours", desc: "Reset every 4 hours" },
-                      { mode: "24h", label: "Daily", desc: "Reset once per day" },
-                      { mode: "idle", label: "Idle Timeout", desc: "Reset after inactivity" },
-                      { mode: "never", label: "Never", desc: "Manual reset only" }
-                    ].map(item => (
-                      <div
-                        key={item.mode}
-                        className={`mode-card ${heartbeatMode === item.mode ? "active" : ""}`}
-                        onClick={() => setHeartbeatMode(item.mode)}
-                      >
-                        <h3>{item.label}</h3>
-                        <p>{item.desc}</p>
-                      </div>
-                    ))}
-                  </div>
-                  {heartbeatMode === "idle" && (
-                    <div className="form-group" style={{ marginTop: "1rem" }}>
-                      <label>Idle Timeout (minutes)</label>
-                      <input type="number" value={idleTimeoutMs / 60000} onChange={e => setIdleTimeoutMs(Number(e.target.value) * 60000)} min="1" max="1440" />
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="button-group">
-              <button className="primary" data-testid="btn-next" onClick={() => setStep(16)}>Next</button>
-              <button className="secondary" onClick={() => setStep(enableMultiAgent ? 15.5 : 15)}>Back</button>
-            </div>
-          </div>
-        );
+        return <StepExtraSettings />;
 
       case 16:
         return (
