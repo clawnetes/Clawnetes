@@ -17,6 +17,11 @@ export interface BridgeServer {
   close: () => void;
 }
 
+// Persisted auth-profiles data from configure_agent, re-applied after start_gateway
+// because `openclaw doctor --fix` may overwrite auth-profiles.json.
+let lastAuthProfilesPath: string | null = null;
+let lastAuthProfilesContent: string | null = null;
+
 function shell(cmd: string, timeoutMs = 60_000): string {
   return execSync(cmd, {
     shell: "/bin/zsh",
@@ -97,8 +102,8 @@ function configureAgent(config: Record<string, unknown>): string {
     model: { primary: effectiveModel },
   };
 
-  // Build auth profile
-  const profileName = `${provider}-token`;
+  // Build auth profile — must match Rust resolve_profile_name: "{provider}:default"
+  const profileName = `${provider}:default`;
   const authProviderMap: Record<string, string> = {
     anthropic: "anthropic",
     openai: "openai",
@@ -141,7 +146,7 @@ function configureAgent(config: Record<string, unknown>): string {
         ...(existingConfig?.auth?.profiles || {}),
         [profileName]: {
           provider: authProviderId,
-          mode: authMethod === "token" ? "api_key" : authMethod,
+          mode: "api_key",
         },
       },
     },
@@ -218,17 +223,27 @@ function configureAgent(config: Record<string, unknown>): string {
     JSON.stringify(meta, null, 2)
   );
 
-  // Write auth-profiles.json
-  const authProfiles: Record<string, any> = {};
-  authProfiles[profileName] = {
+  // Write auth-profiles.json (must match OpenClaw runtime expectations)
+  // OpenClaw resolveApiKeyForProfile expects:
+  //   type: "api_key" with field "key", OR type: "token" with field "token" + expires
+  const profileEntry: Record<string, any> = {
+    type: "api_key",
     provider: authProviderId,
-    mode: authMethod === "token" ? "api_key" : authMethod,
-    ...(authMethod === "token" ? { apiKey } : {}),
+    key: apiKey,
   };
-  writeFileSync(
-    join(agentsDir, "auth-profiles.json"),
-    JSON.stringify(authProfiles, null, 2)
-  );
+  const authProfiles = {
+    version: 1,
+    profiles: { [profileName]: profileEntry },
+    lastGood: { [provider]: profileName },
+    usageStats: {},
+  };
+  const authProfilesJson = JSON.stringify(authProfiles, null, 2);
+  writeFileSync(join(agentsDir, "auth-profiles.json"), authProfilesJson);
+
+  // Persist for re-application after gateway start (doctor --fix may overwrite)
+  lastAuthProfilesPath = join(agentsDir, "auth-profiles.json");
+  lastAuthProfilesContent = authProfilesJson;
+  console.log(`[bridge] auth-profiles.json written to: ${lastAuthProfilesPath}`);
 
   // Write markdown files
   const identityMd =
@@ -309,6 +324,14 @@ function handleCommand(
       // Small delay for cleanup
       shellSafe("sleep 2");
       shellSafe("openclaw doctor --fix --yes || true");
+
+      // Re-apply auth-profiles.json after doctor --fix may have overwritten it
+      if (lastAuthProfilesPath && lastAuthProfilesContent) {
+        mkdirSync(join(lastAuthProfilesPath, ".."), { recursive: true });
+        writeFileSync(lastAuthProfilesPath, lastAuthProfilesContent);
+        console.log(`[bridge] re-applied auth-profiles.json after doctor --fix`);
+      }
+
       shell("openclaw gateway start", 120_000);
 
       // Poll for gateway to be ready

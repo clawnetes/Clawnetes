@@ -26,3 +26,19 @@ export const BTN_I_UNDERSTAND = testId("btn-i-understand");
 // Inputs
 export const INPUT_USER_NAME = testId("input-user-name");
 export const INPUT_AGENT_NAME = testId("input-agent-name");
+export const INPUT_API_KEY = testId("input-api-key");
+export const INPUT_TELEGRAM_TOKEN = testId("input-telegram-token");
+export const INPUT_WHATSAPP_PHONE = testId("input-whatsapp-phone");
+
+// Dropdowns
+export const DROPDOWN_PROVIDER = testId("dropdown-provider");
+export const DROPDOWN_MODEL = testId("dropdown-model");
+export const DROPDOWN_CHANNEL = testId("dropdown-channel");
+
+// Additional steps
+export const STEP_REVIEW = testId("step-review");
+export const STEP_COMPLETE = testId("step-complete");
+
+// Additional buttons
+export const BTN_FINISH_SETUP = testId("btn-finish-setup");
+export const BTN_ADVANCED_SETTINGS = testId("btn-advanced-settings");

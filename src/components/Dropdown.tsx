@@ -8,6 +8,7 @@ interface DropdownProps {
   placeholder?: string;
   searchable?: boolean;
   maxHeight?: number;
+  testId?: string;
 }
 
 export default function Dropdown({
@@ -17,6 +18,7 @@ export default function Dropdown({
   placeholder = "Select...",
   searchable = false,
   maxHeight = 260,
+  testId,
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -53,7 +55,7 @@ export default function Dropdown({
     : options;
 
   return (
-    <div className="dropdown-container" ref={containerRef}>
+    <div className="dropdown-container" ref={containerRef} data-testid={testId}>
       <button
         type="button"
         className={`dropdown-trigger ${open ? "open" : ""}`}

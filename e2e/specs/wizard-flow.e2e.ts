@@ -83,6 +83,9 @@ test.describe("Basic Wizard Flow", () => {
     await waitForText(page, "Open Web Dashboard");
     await waitForText(page, "Continue to Advanced Settings");
     await waitForText(page, "Exit Setup");
+
+    // Click "Open Web Dashboard"
+    await clickTestId(page, "btn-open-dashboard");
   });
 });
 

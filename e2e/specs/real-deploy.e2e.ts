@@ -176,8 +176,8 @@ test.describe.serial("Real Deployment", () => {
     expect(hasServerError, `Dashboard shows server error: ${bodyText.slice(0, 200)}`).toBeFalsy();
     await expect(page.locator("body")).not.toBeEmpty();
 
-    // Give time to see the dashboard before the test suite tears it down
-    await page.waitForTimeout(60_000);
+    // Give time to see the dashboard before moving on
+    await page.waitForTimeout(5_000);
   });
 
   test("dashboard is accessible after deploy", async ({ page }) => {
@@ -197,6 +197,108 @@ test.describe.serial("Real Deployment", () => {
       }
     }
     if (lastError) throw lastError;
+  });
+
+  test("send message via dashboard chat and get response", async ({ page }) => {
+    // Get tokenized dashboard URL
+    const urlRes = await fetch(`http://127.0.0.1:${bridge.port}/ipc`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cmd: "get_dashboard_url", args: { isRemote: false, remote: null } }),
+    });
+    const { result: dashboardUrl } = await urlRes.json();
+    console.log("[test] navigating to dashboard:", dashboardUrl);
+
+    // Navigate to dashboard
+    await page.goto(dashboardUrl);
+    await page.waitForLoadState("networkidle", { timeout: 30_000 });
+
+    // Verify no auth/server errors on load
+    const bodyText = await page.locator("body").innerText();
+    const hasAuthError = /unauthorized|forbidden|401|403/i.test(bodyText);
+    const hasServerError = /500|502|503|internal server error|bad gateway/i.test(bodyText);
+    expect(hasAuthError, `Dashboard shows auth error: ${bodyText.slice(0, 200)}`).toBeFalsy();
+    expect(hasServerError, `Dashboard shows server error: ${bodyText.slice(0, 200)}`).toBeFalsy();
+
+    // The dashboard opens directly to the Chat page with an input at the bottom.
+    // Find the message input by its placeholder text.
+    const chatInput = page.getByPlaceholder(/Message.*Enter to send/i);
+    await expect(chatInput).toBeVisible({ timeout: 10_000 });
+
+    // Type a message and send with Enter
+    await chatInput.fill("Hello, what is your name?");
+    await chatInput.press("Enter");
+
+    // Take a screenshot right after sending
+    await page.waitForTimeout(2_000);
+    await page.screenshot({ path: "test-results/dashboard-chat-sent.png", fullPage: true });
+
+    // Wait for assistant response — look for a new message bubble that is NOT our user message.
+    // The dashboard renders messages in the chat area. Wait for any response content
+    // to appear (up to 2 minutes for LLM to respond).
+    // We watch for a response by waiting for text that wasn't there before.
+    const responseLocator = page.locator("[class*='assistant'], [class*='response'], [class*='message']")
+      .filter({ hasNotText: "Hello, what is your name?" })
+      .filter({ hasNotText: "Ready to chat" })
+      .filter({ hasNotText: "Type a message" });
+
+    // Also try: wait for any new content to appear after the quick-action chips disappear
+    // or for a streaming response indicator
+    let gotResponse = false;
+    const maxWait = 120_000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      // Check for error indicators
+      const bodyText = await page.locator("body").innerText();
+      const hasError = /error|failed|exception|unauthorized|forbidden/i.test(
+        bodyText.replace(/error-context|error-boundary|check system health/gi, "")
+      );
+
+      // Look for signs of a response: streaming dots, new message content, etc.
+      // The agent name or any substantial new text appearing after our message indicates a response
+      const chatArea = await page.locator("body").innerText();
+      const afterUserMsg = chatArea.split("Hello, what is your name?").pop() || "";
+      // Filter out static UI text to find actual response content
+      const staticTexts = [
+        "Ready to chat", "Type a message", "Enter to send", "for commands",
+        "What can you do", "Summarize my recent sessions", "Help me configure",
+        "Check system health", "Message TestAgent",
+      ];
+      let responseContent = afterUserMsg;
+      for (const t of staticTexts) {
+        responseContent = responseContent.replace(new RegExp(t, "gi"), "");
+      }
+      responseContent = responseContent.replace(/\s+/g, " ").trim();
+
+      if (responseContent.length > 20) {
+        console.log("[test] assistant response detected:", responseContent.slice(0, 300));
+
+        // Fail if the response is an agent error (e.g. missing API key)
+        const isAgentError = /agent failed|no api key|auth.*error|failed before reply/i.test(responseContent);
+        expect(isAgentError, `Agent error in chat response: ${responseContent.slice(0, 300)}`).toBeFalsy();
+
+        gotResponse = true;
+        break;
+      }
+
+      await page.waitForTimeout(3_000);
+    }
+
+    // Final screenshot
+    await page.screenshot({ path: "test-results/dashboard-chat-response.png", fullPage: true });
+
+    // Check for errors in the page
+    const finalBody = await page.locator("body").innerText();
+    const chatErrors = finalBody.match(/error[:\s].{0,100}/gi) || [];
+    const realErrors = chatErrors.filter(
+      (e) => !/error-context|error-boundary|check system health/i.test(e)
+    );
+    if (realErrors.length > 0) {
+      console.error("[test] errors found on page:", realErrors);
+    }
+
+    expect(gotResponse, "Expected assistant to respond to chat message within 2 minutes").toBeTruthy();
   });
 
   test("shows maintenance screen on reopen", async ({ page }) => {

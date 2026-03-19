@@ -561,6 +561,7 @@ function App() {
             </label>
             <input
               type="password"
+              data-testid="input-api-key"
               placeholder={auth.auth_method === "setup-token" ? "Paste `claude setup-token` output" : normalizedProvider === "google" ? "Paste your Gemini API key" : `Paste your ${normalizedProvider} API key`}
               value={auth.token}
               onChange={(e) => updateProviderAuth(normalizedProvider, { token: e.target.value })}
@@ -2306,6 +2307,7 @@ Managed by Clawnetes.`,
             <div className="form-group">
               <label>AI Provider</label>
               <Dropdown
+                testId="dropdown-provider"
                 value={provider}
                 onChange={(p) => {
                   setProvider(p);
@@ -2466,6 +2468,7 @@ Managed by Clawnetes.`,
                 </div>
               )}
               <Dropdown
+                testId="dropdown-model"
                 value={model}
                 onChange={setModel}
                 searchable={MODELS_BY_PROVIDER[provider] ? MODELS_BY_PROVIDER[provider].length > 10 : false}
@@ -2541,6 +2544,7 @@ Managed by Clawnetes.`,
             <div className="form-group">
               <label>Channel</label>
               <Dropdown
+                testId="dropdown-channel"
                 value={messagingChannel === "none" ? "telegram" : messagingChannel}
                 onChange={(v) => setMessagingChannel(v as "telegram" | "whatsapp")}
                 options={[
@@ -2553,7 +2557,7 @@ Managed by Clawnetes.`,
             {messagingChannel === "telegram" && (
               <div className="form-group" style={{ marginTop: "1rem" }}>
                 <label>Telegram Bot Token</label>
-                <input type="password" placeholder="123456:ABC-..." value={telegramToken} onChange={(e) => setTelegramToken(e.target.value)} />
+                <input type="password" data-testid="input-telegram-token" placeholder="123456:ABC-..." value={telegramToken} onChange={(e) => setTelegramToken(e.target.value)} />
                 <p className="input-hint">Get one from @BotFather on Telegram.</p>
               </div>
             )}
@@ -2580,6 +2584,7 @@ Managed by Clawnetes.`,
                     <label>Your Phone Number (Allowlist)</label>
                     <input
                       type="text"
+                      data-testid="input-whatsapp-phone"
                       placeholder="+1234567890"
                       value={whatsappPhoneNumber}
                       onChange={(e) => setWhatsappPhoneNumber(e.target.value)}
@@ -4500,7 +4505,7 @@ Managed by Clawnetes.`,
                     <p style={{ marginBottom: "1.5rem" }}>Your agent is paired and ready.</p>
                   )}
                   <div className="button-group" style={{ gap: "1rem" }}>
-                    <button className="primary" onClick={() => open(dashboardUrl)}>
+                    <button className="primary" data-testid="btn-open-dashboard" onClick={() => open(dashboardUrl)}>
                       Open Web Dashboard
                     </button>
                     {mode !== "advanced" && (

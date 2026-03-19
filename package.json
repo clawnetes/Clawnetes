@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:real": "playwright test --config playwright.real.config.ts",
     "test:e2e:build": "npm run tauri build && npm run test:e2e"
   },
   "dependencies": {
@@ -29,6 +30,7 @@
     "jsdom": "^28.1.0",
     "typescript": "^5.0.2",
     "vite": "^4.3.9",
+    "dotenv": "^16.4.7",
     "vitest": "^4.0.18"
   }
 }

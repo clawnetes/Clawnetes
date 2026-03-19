@@ -22,6 +22,9 @@ Thumbs.db
 test-results/
 playwright-report/
 
+# E2E secrets
+.env.e2e
+
 # Temporary
 temp_*.txt
 *.log

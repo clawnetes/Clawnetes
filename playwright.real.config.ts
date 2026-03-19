@@ -2,17 +2,17 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e/specs",
-  testMatch: "**/wizard-flow.e2e.ts",
-  timeout: 30000,
+  testMatch: "**/real-deploy.e2e.ts",
+  timeout: 300_000, // 5 minutes — real install takes time
   retries: 0,
   workers: 1,
   use: {
     baseURL: "http://localhost:1420",
-    headless: true,
+    headless: false,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
     launchOptions: {
-      slowMo: 800,
+      slowMo: 500,
     },
   },
   webServer: {
