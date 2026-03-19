@@ -38,6 +38,8 @@ import StepExtraSettings from "./components/steps/StepExtraSettings";
 import StepConnectBrain from "./components/steps/StepConnectBrain";
 import StepSkills from "./components/steps/StepSkills";
 import StepReview from "./components/steps/StepReview";
+import StepConfigReview from "./components/steps/StepConfigReview";
+import StepPersonality from "./components/steps/StepPersonality";
 
 function App() {
   const continueToAdvancedSettings = async () => {
@@ -1728,112 +1730,8 @@ Managed by Clawnetes.`,
         return <StepAgentProfile />;
       case 6.5:
         return <StepAgentType applyAgentTypePreset={applyAgentTypePreset} />;
-      case 6.7: {
-        const presetData = AGENT_TYPE_PRESETS[agentType];
-        return (
-          <div className="step-view">
-            <h2>Configuration Review</h2>
-            <p className="step-description">Your {presetData?.name || "agent"} is pre-configured with these settings. Enter your API key to continue.</p>
-
-            {presetData && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "1.5rem" }}>
-                <div className="status-card" style={{ padding: "1rem", borderRadius: "8px", backgroundColor: "var(--bg-card)", border: "1px solid var(--border)" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>Model</div>
-                  <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>{presetData.model.split("/").pop()}</div>
-                </div>
-                <div className="status-card" style={{ padding: "1rem", borderRadius: "8px", backgroundColor: "var(--bg-card)", border: "1px solid var(--border)" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>Fallback</div>
-                  <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>{presetData.fallbackModels[0]?.split("/").pop() || "None"}</div>
-                </div>
-                <div className="status-card" style={{ padding: "1rem", borderRadius: "8px", backgroundColor: "var(--bg-card)", border: "1px solid var(--border)" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>Skills</div>
-                  <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>{presetData.skills.length} configured</div>
-                </div>
-                <div className="status-card" style={{ padding: "1rem", borderRadius: "8px", backgroundColor: "var(--bg-card)", border: "1px solid var(--border)" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>Heartbeat</div>
-                  <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>{presetData.heartbeatMode === "never" ? "Disabled" : `Every ${presetData.heartbeatMode}`}</div>
-                </div>
-              </div>
-            )}
-
-            <div className="form-group">
-              <label>Skills Included</label>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginTop: "0.25rem" }}>
-                {selectedSkills.map(s => (
-                  <span key={s} style={{
-                    padding: "0.25rem 0.75rem",
-                    borderRadius: "20px",
-                    backgroundColor: "rgba(255, 59, 48, 0.08)",
-                    border: "1px solid var(--primary)",
-                    fontSize: "0.8rem",
-                    fontWeight: 500
-                  }}>
-                    {SKILL_ICONS[s] && <img src={SKILL_ICONS[s]} alt="" style={{ width: "14px", height: "14px", marginRight: "4px", verticalAlign: "middle", borderRadius: "3px" }} />}
-                    {s}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="form-group" style={{ marginTop: "1.5rem" }}>
-              {renderProviderAuthEditor(provider)}
-            </div>
-
-            {/* Show auth keys for skills that require them */}
-            {selectedSkills.filter(s => {
-              const skill = availableSkills.find(sk => sk.id === s);
-              return skill?.requiresAuth && skill.authMode !== "oauth";
-            }).length > 0 && (
-                <div className="form-group" style={{ marginTop: "1rem" }}>
-                  <label>Skill API Keys (Optional)</label>
-                  {selectedSkills.filter(s => {
-                    const skill = availableSkills.find(sk => sk.id === s);
-                    return skill?.requiresAuth && skill.authMode !== "oauth";
-                  }).map(s => {
-                    const skill = availableSkills.find(sk => sk.id === s)!;
-                    return (
-                      <div key={s} style={{ marginTop: "0.5rem" }}>
-                        <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>{skill.name}</label>
-                        <input
-                          type="password"
-                          value={serviceKeys[s] || ""}
-                          onChange={(e) => setServiceKeys({ ...serviceKeys, [s]: e.target.value })}
-                          placeholder={skill.authPlaceholder || "API Key"}
-                          autoComplete="off"
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-            {selectedSkills.filter(s => {
-              const skill = availableSkills.find(sk => sk.id === s);
-              return skill?.authMode === "oauth";
-            }).length > 0 && (
-                <div className="form-group" style={{ marginTop: "1rem" }}>
-                  <label>Skill OAuth (Deferred)</label>
-                  {selectedSkills.filter(s => {
-                    const skill = availableSkills.find(sk => sk.id === s);
-                    return skill?.authMode === "oauth";
-                  }).map(s => {
-                    const skill = availableSkills.find(sk => sk.id === s)!;
-                    return (
-                      <div key={s} style={{ marginTop: "0.5rem", fontSize: "0.85rem", color: "var(--text-muted)" }}>
-                        {skill.name}: an OpenClaw terminal auth step will run at the end of setup.
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-            <div className="button-group" style={{ marginTop: "1.5rem" }}>
-              <button className="primary" disabled={!LOCAL_PROVIDERS.has(provider) && !isOAuthMethod(getProviderAuth(provider).auth_method) && !getProviderAuth(provider).token} onClick={() => setStep(9)}>Next</button>
-              <button className="secondary" onClick={() => setStep(6.5)}>Back</button>
-            </div>
-          </div>
-        );
-      }
+      case 6.7:
+        return <StepConfigReview renderProviderAuthEditor={renderProviderAuthEditor} getProviderAuth={getProviderAuth} />;
       case 7:
         return <StepGateway />;
       case 8:
@@ -2800,127 +2698,7 @@ Managed by Clawnetes.`,
         return <StepReview handleInstall={handleInstall} hasChanges={hasChanges} initialConfigRef={initialConfigRef} />;
 
       case 10.5:
-        return (
-          <div className="step-view" data-testid="step-personality">
-            <h2>Customize {agentName ? `${agentName}'s` : "your agent's"} personality</h2>
-            <p className="step-description">Edit your agent's identity, personality, and mission.</p>
-
-            <div className="form-group" style={{ marginBottom: "1.5rem" }}>
-              <label>Persona Template</label>
-              <Dropdown
-                value={selectedPersona}
-                onChange={(val) => {
-                  setSelectedPersona(val);
-                  if (val !== "custom" && PERSONA_TEMPLATES[val]) {
-                    const t = PERSONA_TEMPLATES[val];
-                    let newIdentity = t.identity;
-                    let newSoul = t.soul;
-
-                    if (agentName) {
-                      newIdentity = updateIdentityField(newIdentity, "Name", agentName);
-                      newSoul = updateSoulMission(newSoul, agentName);
-                    }
-
-                    setIdentityMd(newIdentity);
-                    setSoulMd(newSoul);
-                  }
-                }}
-                options={[
-                  { value: "custom", label: "Custom / Empty" },
-                  ...Object.keys(PERSONA_TEMPLATES).filter(k => k !== "custom").sort().map(k => ({
-                    value: k,
-                    label: PERSONA_TEMPLATES[k].name
-                  }))
-                ]}
-              />
-            </div>
-
-            <div className="workspace-tabs">
-              {[
-                { id: "identity", label: "IDENTITY.md" },
-                { id: "user", label: "USER.md" },
-                { id: "soul", label: "SOUL.md" },
-                { id: "tools", label: "TOOLS.md" },
-                { id: "agents", label: "AGENTS.md" }
-              ].map(tab => (
-                <button
-                  key={tab.id}
-                  className={`tab ${activeWorkspaceTab === tab.id ? "active" : ""}`}
-                  onClick={() => setActiveWorkspaceTab(tab.id)}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="workspace-editor">
-              {activeWorkspaceTab === "identity" && (
-                <textarea
-                  className="markdown-editor"
-                  rows={12}
-                  value={identityMd}
-                  onChange={e => setIdentityMd(e.target.value)}
-                  placeholder={`# IDENTITY.md - Who Am I?\n- **Name:** ${agentName}\n- **Emoji:** ${agentEmoji}\n\nAdd more details about your agent's identity...`}
-                />
-              )}
-              {activeWorkspaceTab === "user" && (
-                <textarea
-                  className="markdown-editor"
-                  rows={12}
-                  value={userMd}
-                  onChange={e => setUserMd(e.target.value)}
-                  placeholder={`# USER.md - About Your Human\n- **Name:** ${userName}\n\nAdd more details about yourself...`}
-                />
-              )}
-              {activeWorkspaceTab === "soul" && (
-                <textarea
-                  className="markdown-editor"
-                  rows={12}
-                  value={soulMd}
-                  onChange={e => setSoulMd(e.target.value)}
-                  placeholder={`# SOUL.md\n## Mission\nServe ${userName}.\n\nAdd your agent's mission statement and guiding principles...`}
-                />
-              )}
-              {activeWorkspaceTab === "tools" && (
-                <textarea
-                  className="markdown-editor"
-                  rows={12}
-                  value={toolsMd}
-                  onChange={e => setToolsMd(e.target.value)}
-                  placeholder={`# TOOLS.md\nDefine tool usage policies and instructions for your agent...`}
-                />
-              )}
-              {activeWorkspaceTab === "agents" && (
-                <textarea
-                  className="markdown-editor"
-                  rows={12}
-                  value={agentsMd}
-                  onChange={e => setAgentsMd(e.target.value)}
-                  placeholder={`# AGENTS.md\nDefine agent routing and sub-agent configuration...`}
-                />
-              )}
-            </div>
-
-            <p className="input-hint" style={{ marginTop: "1rem" }}>
-              Leave blank to use auto-generated defaults. Changes can be edited later in the workspace folder.
-            </p>
-
-            <div className="button-group" style={{ gap: "0.5rem" }}>
-              <button
-                className="secondary"
-                disabled={!workspaceModified || savingWorkspace}
-                onClick={() => handleSaveWorkspace()}
-                style={{ flex: "0 0 auto", minWidth: "150px" }}
-              >
-                {savingWorkspace ? "Saving..." : "💾 Save Changes"}
-              </button>
-              <button className="primary" data-testid="btn-next" onClick={() => setStep(isPresetAgent ? 15 : 13)} style={{ flex: 1 }}>
-                Next
-              </button>
-              <button className="secondary" onClick={() => setStep(9)} style={{ flex: "0 0 auto" }}>Back</button>
-            </div>
-          </div>
-        );
+        return <StepPersonality handleSaveWorkspace={handleSaveWorkspace} />;
       case 17:
         return (
           <div className="step-view" data-testid="step-complete">
