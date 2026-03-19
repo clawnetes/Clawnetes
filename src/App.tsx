@@ -1,7 +1,5 @@
-import { useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/tauri";
-import { open } from "@tauri-apps/api/shell";
-import { open as openDialog } from "@tauri-apps/api/dialog";
+import { useCallback, useEffect, useRef } from "react";
+import { invoke, openDialog, openExternal } from "./lib/tauri";
 import "./App.css";
 import { PERSONA_TEMPLATES } from "./presets/personaTemplates";
 import { MODELS_BY_PROVIDER, DEFAULT_MODELS, PROVIDER_LOGOS, EMOJI_OPTIONS, SKILL_ICONS } from "./presets/modelsByProvider";
@@ -17,6 +15,14 @@ import ToolPolicyEditor from "./components/ToolPolicyEditor";
 import { createInheritedToolPolicy, DEFAULT_TOOL_POLICY, deriveToolPolicyFromLegacy, getSkillIdSet, materializeToolPolicy, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./utils/toolSelection";
 import { constructConfigPayload as buildConfigPayload, buildAgentToolsPayload as buildAgentTools } from "./utils/configPayload";
 import { executeDeferredOAuthQueue } from "./utils/oauthCompletion";
+import {
+  continueToAdvancedSettings as continueToAdvancedSettingsController,
+  handleAdvancedTransition as handleAdvancedTransitionController,
+  handleInstall as handleInstallController,
+  handleMaintenanceAction as handleMaintenanceActionController,
+  handleToggleTunnel as handleToggleTunnelController,
+  loadExistingConfig as loadExistingConfigController,
+} from "./utils/wizardControllers";
 import Dropdown from "./components/Dropdown";
 import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "./types";
 import { useWizardState, fieldSetter } from "./hooks/useWizardState";
@@ -48,40 +54,6 @@ import StepAgentConfigLoop from "./components/steps/StepAgentConfigLoop";
 import StepComplete from "./components/steps/StepComplete";
 
 function App() {
-  const continueToAdvancedSettings = async () => {
-    setMode("advanced");
-    setPairingStatus("");
-    setSkipBasicConfig(true);
-    setMaintCompleted(true);
-    // When coming from the success screen (step 17), load the just-deployed config as the
-    // comparison baseline so that clicking through advanced settings without any changes
-    // is correctly detected and does not trigger a redeploy.
-    if (step === 17 && !initialConfigRef.current) {
-      try {
-        const config: any = await invoke("get_current_config", { remote: null });
-        initialConfigRef.current = config;
-      } catch (e) {
-        console.warn("Could not load config baseline for change detection:", e);
-      }
-    }
-    setStep(10.5);
-  };
-
-  const handleAdvancedTransition = async () => {
-    const nextAction = getAdvancedTransitionAction(licenseStatusLoaded, licenseUnlocked);
-    if (nextAction === "wait") {
-      return;
-    }
-
-    if (nextAction === "prompt") {
-      setLicenseError(licenseStatusError);
-      setShowLicenseModal(true);
-      return;
-    }
-
-    await continueToAdvancedSettings();
-  };
-
   const [state, dispatch] = useWizardState();
   const initialConfigRef = useRef<any>(null);
 
@@ -470,6 +442,66 @@ function App() {
     cronJobs, localBaseUrl, lmstudioBaseUrl, thinkingLevel, messagingChannel, whatsappDmPolicy,
     whatsappPhoneNumber, mode,
   };
+
+  const continueToAdvancedSettings = useCallback(async () => {
+    await continueToAdvancedSettingsController({
+      step,
+      licenseStatusLoaded,
+      licenseUnlocked,
+      licenseStatusError,
+      setMode,
+      setPairingStatus,
+      setSkipBasicConfig,
+      setMaintCompleted,
+      setStep,
+      setLicenseError,
+      setShowLicenseModal,
+      initialConfigRef,
+    });
+  }, [
+    initialConfigRef,
+    licenseStatusError,
+    licenseStatusLoaded,
+    licenseUnlocked,
+    setLicenseError,
+    setMaintCompleted,
+    setMode,
+    setPairingStatus,
+    setShowLicenseModal,
+    setSkipBasicConfig,
+    setStep,
+    step,
+  ]);
+
+  const handleAdvancedTransition = useCallback(async () => {
+    await handleAdvancedTransitionController({
+      step,
+      licenseStatusLoaded,
+      licenseUnlocked,
+      licenseStatusError,
+      setMode,
+      setPairingStatus,
+      setSkipBasicConfig,
+      setMaintCompleted,
+      setStep,
+      setLicenseError,
+      setShowLicenseModal,
+      initialConfigRef,
+    });
+  }, [
+    initialConfigRef,
+    licenseStatusError,
+    licenseStatusLoaded,
+    licenseUnlocked,
+    setLicenseError,
+    setMaintCompleted,
+    setMode,
+    setPairingStatus,
+    setShowLicenseModal,
+    setSkipBasicConfig,
+    setStep,
+    step,
+  ]);
 
   async function runDeferredOAuthQueue() {
     if (oauthCompletionRunning || deferredOAuthQueue.length === 0) return;
@@ -1029,224 +1061,75 @@ Managed by Clawnetes.`,
     };
   }
 
-  async function handleInstall() {
-    setLoading(true);
-    setError(false);
-
-    const isUpdate = !!initialConfigRef.current;
-    setProgress(isUpdate ? "Applying changes..." : "Starting setup...");
-
-    const remoteConfig = targetEnvironment === "cloud" ? {
-      ip: remoteIp,
-      user: remoteUser,
-      password: remotePassword || null,
-      privateKeyPath: remotePrivateKeyPath || null
-    } : null;
-
-    // Check the active messaging channel state live before applying config so we
-    // don't force a redundant re-pair during reconfiguration.
-    let actualIsPaired = isPaired;
-    let actualWhatsappPaired = whatsappPaired;
-    const currentMessagingSettings = getCurrentMessagingSettings();
-    const initialMessagingSettings = initialConfigRef.current
-      ? getInitialMessagingSettings(initialConfigRef.current)
-      : null;
-    const messagingSettingsChanged = initialMessagingSettings
-      ? hasMessagingSettingsChanged(initialMessagingSettings, currentMessagingSettings)
-      : true;
-    if (checks.openclaw || isUpdate) {
-      try {
-        if (messagingChannel !== "none") {
-          const status: boolean = await invoke("check_messaging_link_status", {
-            channel: messagingChannel,
-            remote: remoteConfig
-          });
-          if (messagingChannel === "telegram") {
-            actualIsPaired = status;
-            setIsPaired(status);
-          } else if (messagingChannel === "whatsapp") {
-            actualWhatsappPaired = status;
-            setWhatsappPaired(status);
-            if (status) setWhatsappPhoneSubmitted(true);
-          }
-        }
-      } catch (e) {
-        console.warn("Pre-install pairing check failed:", e);
-      }
-    }
-
-    const configPayload = buildConfigPayload(configPayloadInput);
-    const agentSessionIds = getAgentSessionInitIds(configPayload.agents);
-    const effectiveMessagingLinked = isMessagingLinked(messagingChannel, {
-      telegramPaired: actualIsPaired,
-      whatsappPaired: actualWhatsappPaired,
+  const handleInstall = useCallback(async () => {
+    await handleInstallController({
+      state: {
+        targetEnvironment,
+        remoteIp,
+        remoteUser,
+        remotePassword,
+        remotePrivateKeyPath,
+        checks,
+        isPaired,
+        whatsappPaired,
+        messagingChannel,
+        telegramToken,
+        whatsappDmPolicy,
+        whatsappPhoneNumber,
+        selectedSkills,
+      },
+      configPayloadInput,
+      initialConfigRef,
+      transformInitialToPayload,
+      normalizeForComparison,
+      isDeepEqual,
+      setLoading,
+      setError,
+      setProgress,
+      setLogs,
+      setIsPaired,
+      setWhatsappPaired,
+      setWhatsappPhoneSubmitted,
+      setOpenClawVersion,
+      setChecks,
+      setTunnelActive,
+      setPairingCode,
+      setDashboardUrl,
+      setStep,
     });
-    configPayload.preserve_state = initialMessagingSettings && !messagingSettingsChanged
-      ? true
-      : effectiveMessagingLinked;
-
-    if (initialConfigRef.current) {
-      const initialPayload = transformInitialToPayload(initialConfigRef.current);
-      if (isDeepEqual(normalizeForComparison(initialPayload), normalizeForComparison(configPayload))) {
-        setProgress("Configuration unchanged.");
-        setTimeout(() => {
-          setLoading(false);
-          setStep(17);
-        }, 500);
-        return;
-      }
-    }
-
-    try {
-      if (targetEnvironment === "cloud") {
-        // Remote installation flow
-        setProgress(isUpdate ? "Updating remote configuration..." : "Deploying to remote server...");
-        setLogs(isUpdate ? "Updating remote configuration..." : "Preparing remote environment...");
-
-        await invoke("setup_remote_openclaw", {
-          remote: remoteConfig,
-          config: configPayload
-        });
-
-        // Install skills on remote server
-        for (const skill of selectedSkills) {
-          setProgress(`Installing skill on remote: ${skill}...`);
-          setLogs(`Installing skill: ${skill}...`);
-          try {
-            await invoke("install_remote_skill", {
-              remote: remoteConfig,
-              name: skill
-            });
-          } catch (e) {
-            console.error(`Failed to install skill ${skill}:`, e);
-            setLogs(prev => prev + `\nWarning: Failed to install skill ${skill}: ${e}`);
-          }
-        }
-
-        setProgress("Establishing SSH tunnel...");
-        setLogs("Creating SSH tunnel to remote gateway...");
-        try {
-          await invoke("start_ssh_tunnel", { remote: remoteConfig });
-        } catch (e: any) {
-          if (String(e).includes("SSH tunnel is already running")) {
-            setLogs(prev => prev + "\nTunnel already active.");
-          } else {
-            throw e;
-          }
-        }
-        setTunnelActive(true);
-
-        // Verify tunnel is working with HTTP connectivity test
-        setProgress("Verifying tunnel connectivity...");
-        try {
-          const tunnelWorking: boolean = await invoke("verify_tunnel_connectivity", {
-            remote: remoteConfig
-          });
-          if (!tunnelWorking) {
-            // If we get here with the new binary, verify_tunnel_connectivity should have returned Err, not Ok(false).
-            // So if we get Ok(false), it means we are definitely running the old binary.
-            throw new Error("Backend update pending. Please restart the application (Ctrl+C and npm run tauri dev) to apply the latest fixes.");
-          }
-        } catch (e) {
-          setProgress("");
-          const errStr = String(e);
-          if (errStr.includes("Backend update pending")) {
-            setLogs("Error: " + errStr);
-          } else {
-            setLogs("Error: Tunnel verification failed - " + errStr);
-          }
-          setError(true);
-          setTunnelActive(false);
-          setLoading(false);
-          return;
-        }
-
-        setProgress("Finalizing setup...");
-        if (shouldShowTelegramPairing(messagingChannel, actualIsPaired)) {
-          const instruction: string = await invoke("generate_pairing_code");
-          setPairingCode(instruction);
-        }
-
-        // Get dashboard URL (tunneled)
-        const url: string = await invoke("get_dashboard_url", {
-          isRemote: true,
-          remote: remoteConfig
-        });
-        setDashboardUrl(url);
-
-        setProgress("");
-        setStep(17);
-      } else {
-        // Local installation flow
-        if (!checks.openclaw) {
-          setProgress("Installing OpenClaw (this may take a minute)...");
-          setLogs("Installing OpenClaw (this may take a minute)...");
-          await invoke("install_openclaw");
-          const version: string = await invoke("get_openclaw_version");
-          setOpenClawVersion(version);
-          setChecks(prev => ({ ...prev, openclaw: true }));
-        }
-
-        setProgress("Configuring agent...");
-        setLogs("Configuring...");
-
-        await invoke("configure_agent", {
-          config: configPayload
-        });
-
-        for (const skill of selectedSkills) {
-          setProgress(`Installing skill: ${skill}...`);
-          setLogs(`Installing skill: ${skill}...`);
-          try {
-            await invoke("install_skill", { name: skill });
-          } catch (e) {
-            console.error(`Failed to install skill ${skill}:`, e);
-            setLogs(prev => prev + `\nWarning: Failed to install skill ${skill}: ${e}`);
-          }
-        }
-
-        if (isUpdate || messagingChannel === "whatsapp") {
-          setProgress("Restarting Gateway (this may take 20-30 seconds)...");
-          setLogs("Restarting Gateway...");
-          await invoke("restart_openclaw_gateway", { remote: targetEnvironment === "cloud" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null });
-        } else {
-          setProgress("Starting Gateway (this may take 20-30 seconds)...");
-          setLogs("Starting Gateway...");
-          await invoke("start_gateway");
-        }
-
-        if (targetEnvironment !== "cloud" && agentSessionIds.length > 0) {
-          setProgress("Initializing agent sessions...");
-          setLogs("Initializing agent sessions...");
-          try {
-            await invoke("initialize_agent_sessions", { agentIds: agentSessionIds });
-          } catch (e) {
-            console.warn("Agent session init failed (non-fatal):", e);
-          }
-        }
-
-        setProgress("Finalizing setup...");
-        if (shouldShowTelegramPairing(messagingChannel, actualIsPaired)) {
-          const instruction: string = await invoke("generate_pairing_code");
-          setPairingCode(instruction);
-        }
-
-        const url: string = await invoke("get_dashboard_url", {
-          isRemote: false,
-          remote: null
-        });
-        setDashboardUrl(url);
-
-        setProgress("");
-        setStep(17);
-      }
-    } catch (e) {
-      setProgress("");
-      setLogs("Error: " + e);
-      setError(true);
-    }
-    setLoading(false);
-  }
+  }, [
+    checks,
+    configPayloadInput,
+    initialConfigRef,
+    isPaired,
+    isDeepEqual,
+    messagingChannel,
+    normalizeForComparison,
+    remoteIp,
+    remotePassword,
+    remotePrivateKeyPath,
+    remoteUser,
+    selectedSkills,
+    setChecks,
+    setDashboardUrl,
+    setError,
+    setIsPaired,
+    setLoading,
+    setLogs,
+    setOpenClawVersion,
+    setPairingCode,
+    setProgress,
+    setStep,
+    setTunnelActive,
+    setWhatsappPaired,
+    setWhatsappPhoneSubmitted,
+    targetEnvironment,
+    telegramToken,
+    transformInitialToPayload,
+    whatsappDmPolicy,
+    whatsappPaired,
+    whatsappPhoneNumber,
+  ]);
 
   async function handlePairing() {
     if (!pairingInput) return;
@@ -1271,246 +1154,181 @@ Managed by Clawnetes.`,
     }
   }
 
-  async function handleMaintenanceAction(action: string) {
-    setLoading(true);
-    setMaintenanceStatus(`Running ${action}...`);
-    setLogs(`Starting maintenance: ${action}...\n`);
-    try {
-      let res: string;
+  const handleMaintenanceAction = useCallback(async (action: string) => {
+    await handleMaintenanceActionController({
+      state: {
+        targetEnvironment,
+        sshStatus,
+        remoteIp,
+        remoteUser,
+        remotePassword,
+        remotePrivateKeyPath,
+      },
+      setLoading,
+      setMaintenanceStatus,
+      setLogs,
+      setChecks,
+      setMaintCompleted,
+    }, action);
+  }, [
+    remoteIp,
+    remotePassword,
+    remotePrivateKeyPath,
+    remoteUser,
+    setChecks,
+    setLoading,
+    setLogs,
+    setMaintCompleted,
+    setMaintenanceStatus,
+    sshStatus,
+    targetEnvironment,
+  ]);
 
-      // Build remote config if cloud environment
-      const remoteConfig = targetEnvironment === "cloud" && sshStatus === "success" ? {
-        ip: remoteIp,
-        user: remoteUser,
-        password: remotePassword || null,
-        privateKeyPath: remotePrivateKeyPath || null
-      } : null;
+  const loadExistingConfig = useCallback(async () => {
+    return loadExistingConfigController({
+      state: {
+        targetEnvironment,
+        remoteIp,
+        remoteUser,
+        remotePassword,
+        remotePrivateKeyPath,
+      },
+      initialConfigRef,
+      availableSkillIds,
+      getLoadedTopLevelToolPolicy,
+      getLoadedAgentToolPolicy,
+      setLoading,
+      setMaintenanceStatus,
+      setMode,
+      setProvider,
+      setApiKey,
+      setAuthMethod,
+      setProviderAuths,
+      setModel,
+      setUserName,
+      setAgentName,
+      setAgentEmoji,
+      setAgentType,
+      setTelegramToken,
+      setGatewayPort,
+      setGatewayBind,
+      setGatewayAuthMode,
+      setTailscaleMode,
+      setNodeManager,
+      setSelectedSkills,
+      setServiceKeys,
+      setSandboxMode,
+      setToolPolicy,
+      setFallbackModels,
+      setEnableFallbacks,
+      setHeartbeatMode,
+      setIdleTimeoutMs,
+      setIdentityMd,
+      setUserMd,
+      setSoulMd,
+      setInitialWorkspace,
+      setToolsMd,
+      setAgentsMd,
+      setHeartbeatMd,
+      setMemoryMd,
+      setMemoryEnabled,
+      setCronJobs,
+      setMessagingChannel,
+      setWhatsappPaired,
+      setWhatsappPhoneSubmitted,
+      setWhatsappPhoneNumber,
+      setWhatsappDmPolicy,
+      setThinkingLevel,
+      setLmstudioBaseUrl,
+      setLocalBaseUrl,
+      setEnableMultiAgent,
+      setNumAgents,
+      setAgentConfigs,
+      setIsPaired,
+    });
+  }, [
+    availableSkillIds,
+    getLoadedAgentToolPolicy,
+    getLoadedTopLevelToolPolicy,
+    initialConfigRef,
+    remoteIp,
+    remotePassword,
+    remotePrivateKeyPath,
+    remoteUser,
+    setAgentConfigs,
+    setAgentEmoji,
+    setAgentName,
+    setAgentType,
+    setAgentsMd,
+    setApiKey,
+    setAuthMethod,
+    setCronJobs,
+    setEnableFallbacks,
+    setEnableMultiAgent,
+    setFallbackModels,
+    setGatewayAuthMode,
+    setGatewayBind,
+    setGatewayPort,
+    setHeartbeatMd,
+    setHeartbeatMode,
+    setIdentityMd,
+    setIdleTimeoutMs,
+    setInitialWorkspace,
+    setIsPaired,
+    setLmstudioBaseUrl,
+    setLoading,
+    setLocalBaseUrl,
+    setMaintenanceStatus,
+    setMemoryEnabled,
+    setMemoryMd,
+    setMessagingChannel,
+    setMode,
+    setModel,
+    setNodeManager,
+    setNumAgents,
+    setProvider,
+    setProviderAuths,
+    setSandboxMode,
+    setSelectedSkills,
+    setServiceKeys,
+    setSoulMd,
+    setTailscaleMode,
+    setTelegramToken,
+    setThinkingLevel,
+    setToolPolicy,
+    setToolsMd,
+    setUserMd,
+    setUserName,
+    setWhatsappDmPolicy,
+    setWhatsappPaired,
+    setWhatsappPhoneNumber,
+    setWhatsappPhoneSubmitted,
+    targetEnvironment,
+  ]);
 
-      if (action === "repair") {
-        res = remoteConfig
-          ? await invoke("run_remote_doctor_repair", { remote: remoteConfig })
-          : await invoke("run_doctor_repair");
-        setMaintenanceStatus(`✅ Repair completed successfully.`);
-      } else if (action === "audit") {
-        res = remoteConfig
-          ? await invoke("run_remote_security_audit_fix", { remote: remoteConfig })
-          : await invoke("run_security_audit_fix");
-        setMaintenanceStatus(`✅ Security Audit completed successfully.`);
-      } else if (action === "update") {
-        if (remoteConfig) {
-          res = await invoke("update_remote_openclaw", { remote: remoteConfig });
-          setMaintenanceStatus(`✅ Remote OpenClaw updated.`);
-        } else {
-          res = await invoke("install_openclaw"); // Re-run install to update
-          setMaintenanceStatus(`✅ OpenClaw updated.`);
-        }
-      } else {
-        res = remoteConfig
-          ? await invoke("uninstall_remote_openclaw", { remote: remoteConfig })
-          : await invoke("uninstall_openclaw");
-        // Reset everything after uninstall
-        setChecks(prev => ({ ...prev, openclaw: false }));
-        setMaintenanceStatus(`✅ Uninstall completed successfully.`);
-      }
-      setLogs(prev => prev + (res || ""));
-      setMaintCompleted(true);
-    } catch (e) {
-      setLogs(prev => prev + `\nError: ${e}`);
-      setMaintenanceStatus(`❌ ${action} failed.`);
-    }
-    setLoading(false);
-  }
-
-  async function loadExistingConfig() {
-    setLoading(true);
-    setMaintenanceStatus("Loading existing configuration...");
-    try {
-      const remoteConfig = targetEnvironment === "cloud" ? {
-        ip: remoteIp,
-        user: remoteUser,
-        password: remotePassword || null,
-        privateKeyPath: remotePrivateKeyPath || null
-      } : null;
-
-      const config: any = await invoke("get_current_config", { remote: remoteConfig });
-      initialConfigRef.current = config;
-      const normalizedProvider = getBaseProvider(config.provider);
-      const normalizedProviderAuths = normalizeProviderAuths(
-        config.provider_auths,
-        normalizedProvider,
-        config.api_key || "",
-        config.auth_method || "token",
-      );
-
-      // Populate state
-      setProvider(normalizedProvider);
-      setApiKey(normalizedProviderAuths[normalizedProvider]?.token || config.api_key);
-      setAuthMethod(normalizedProviderAuths[normalizedProvider]?.auth_method || config.auth_method);
-      setProviderAuths(normalizedProviderAuths);
-      setModel(normalizeModelRefForUi(config.model, normalizedProviderAuths));
-      setUserName(config.user_name);
-      setAgentName(config.agent_name);
-      setAgentEmoji(config.agent_emoji || "🦞");
-      setAgentType(config.agent_type || "custom");
-      setTelegramToken(config.telegram_token);
-
-      setGatewayPort(config.gateway_port);
-      setGatewayBind(config.gateway_bind);
-      setGatewayAuthMode(config.gateway_auth_mode);
-      setTailscaleMode(config.tailscale_mode);
-      setNodeManager(config.node_manager);
-
-      const normalizedTopLevelSelection = normalizeSkillAndToolSelection(
-        config.skills,
-        config.allowed_tools,
-        availableSkillIds,
-      );
-      const normalizedTopLevelToolPolicy = getLoadedTopLevelToolPolicy(config);
-      setSelectedSkills(normalizedTopLevelSelection.skills);
-      // Service keys might be partial, merge them?
-      setServiceKeys(config.service_keys);
-
-      setSandboxMode(config.sandbox_mode);
-      setToolPolicy(normalizedTopLevelToolPolicy);
-
-      setFallbackModels(config.fallback_models.map((modelRef: string) => normalizeModelRefForUi(modelRef, normalizedProviderAuths)));
-      setEnableFallbacks(config.fallback_models.length > 0);
-
-      setHeartbeatMode(config.heartbeat_mode);
-      setIdleTimeoutMs(config.idle_timeout_ms);
-
-      setIdentityMd(config.identity_md);
-      setUserMd(config.user_md);
-      setSoulMd(config.soul_md);
-      setInitialWorkspace({
-        identity: config.identity_md,
-        user: config.user_md,
-        soul: config.soul_md
-      });
-
-      // Load new preset fields
-      if (config.tools_md) setToolsMd(config.tools_md);
-      if (config.agents_md) setAgentsMd(config.agents_md);
-      if (config.heartbeat_md) setHeartbeatMd(config.heartbeat_md);
-      if (config.memory_md) setMemoryMd(config.memory_md);
-      if (config.memory_enabled !== undefined) setMemoryEnabled(config.memory_enabled);
-      if (config.cron_jobs) setCronJobs(config.cron_jobs);
-
-      // Load new fields
-      const loadedMessagingChannel = getMessagingChannelFromConfig(config);
-      setMessagingChannel(loadedMessagingChannel);
-      if (loadedMessagingChannel === "whatsapp") {
-        setWhatsappPaired(true);
-        setWhatsappPhoneSubmitted(true);
-      } else if (loadedMessagingChannel === "none") {
-        setWhatsappPaired(false);
-        setWhatsappPhoneSubmitted(false);
-      }
-      if (config.whatsapp_phone_number) setWhatsappPhoneNumber(config.whatsapp_phone_number);
-      if (config.whatsapp_dm_policy) setWhatsappDmPolicy(config.whatsapp_dm_policy);
-      if (config.thinking_level) setThinkingLevel(config.thinking_level);
-      if (config.local_base_url) {
-        if (config.provider === "lmstudio") setLmstudioBaseUrl(config.local_base_url);
-        else if (config.provider === "local") setLocalBaseUrl(config.local_base_url);
-      }
-
-      setEnableMultiAgent(config.enable_multi_agent);
-      if (config.enable_multi_agent && config.agent_configs) {
-        setNumAgents(config.agent_configs.length);
-        setAgentConfigs(config.agent_configs.map((a: any) => {
-          const normalizedAgentSelection = normalizeSkillAndToolSelection(
-            a.skills,
-            a.tools?.allow || a.allowed_tools,
-            availableSkillIds,
-          );
-          const normalizedAgentToolPolicy = getLoadedAgentToolPolicy(a);
-
-          return {
-            id: a.id,
-            name: a.name,
-            model: normalizeModelRefForUi(a.model, normalizedProviderAuths),
-            fallbackModels: (a.fallback_models || []).map((modelRef: string) => normalizeModelRefForUi(modelRef, normalizedProviderAuths)),
-            skills: normalizedAgentSelection.skills,
-            vibe: a.vibe,
-            emoji: a.emoji || "🦞",
-            identityMd: a.identity_md || "",
-            userMd: a.user_md || "",
-            soulMd: a.soul_md || "",
-            toolsMd: a.tools_md || "",
-            agentsMd: a.agents_md || "",
-            toolPolicy: normalizedAgentToolPolicy,
-            cronJobs: a.cron_jobs || [],
-          };
-        }));
-      }
-
-      if (config.is_paired !== undefined) {
-        setIsPaired(config.is_paired);
-      }
-
-      try {
-        if (loadedMessagingChannel !== "none") {
-          const remoteConfig = targetEnvironment === "cloud" ? {
-            ip: remoteIp,
-            user: remoteUser,
-            password: remotePassword || null,
-            privateKeyPath: remotePrivateKeyPath || null
-          } : null;
-          const linked: boolean = await invoke("check_messaging_link_status", {
-            channel: loadedMessagingChannel,
-            remote: remoteConfig
-          });
-          if (loadedMessagingChannel === "telegram") {
-            setIsPaired(linked);
-          } else if (loadedMessagingChannel === "whatsapp") {
-            setWhatsappPaired(linked);
-            setWhatsappPhoneSubmitted(linked || Boolean(config.whatsapp_phone_number));
-          }
-        }
-      } catch (e) {
-        console.warn("Failed to refresh messaging link state:", e);
-      }
-
-      setMaintenanceStatus("✅ Configuration loaded.");
-      setMode("advanced"); // Switch to advanced mode to show all settings
-      return true;
-    } catch (e) {
-      console.error("Failed to load config:", e);
-      setMaintenanceStatus(`❌ Failed to load config: ${e}`);
-      return false;
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleToggleTunnel() {
-    setLoading(true);
-    if (tunnelActive) {
-      try {
-        await invoke("stop_ssh_tunnel");
-        setTunnelActive(false);
-        setMaintenanceStatus("✅ SSH Tunnel disconnected.");
-      } catch (e) {
-        setMaintenanceStatus(`❌ Failed to stop tunnel: ${e}`);
-      }
-    } else {
-      setMaintenanceStatus("Establishing SSH tunnel...");
-      try {
-        const remote = {
-          ip: remoteIp,
-          user: remoteUser,
-          password: remotePassword || null,
-          privateKeyPath: remotePrivateKeyPath || null
-        };
-        await invoke("start_ssh_tunnel", { remote });
-        setTunnelActive(true);
-        setMaintenanceStatus("✅ SSH Tunnel established on port 18789.");
-      } catch (e) {
-        setMaintenanceStatus(`❌ Failed to establish tunnel: ${e}`);
-      }
-    }
-    setLoading(false);
-  }
+  const handleToggleTunnel = useCallback(async () => {
+    await handleToggleTunnelController({
+      state: {
+        tunnelActive,
+        remoteIp,
+        remoteUser,
+        remotePassword,
+        remotePrivateKeyPath,
+      },
+      setLoading,
+      setTunnelActive,
+      setMaintenanceStatus,
+    });
+  }, [
+    remoteIp,
+    remotePassword,
+    remotePrivateKeyPath,
+    remoteUser,
+    setLoading,
+    setMaintenanceStatus,
+    setTunnelActive,
+    tunnelActive,
+  ]);
 
   const toggleSkill = (id: string) => {
     setSelectedSkills(prev =>
@@ -1641,7 +1459,7 @@ Managed by Clawnetes.`,
             <div style={{ marginTop: "1rem", fontSize: "0.85rem" }}>
               <a
                 href="#"
-                onClick={(e) => { e.preventDefault(); open("https://aimodelscompass.gumroad.com/l/clawnetes-license"); }}
+                onClick={(e) => { e.preventDefault(); openExternal("https://aimodelscompass.gumroad.com/l/clawnetes-license"); }}
                 style={{ color: "var(--primary)" }}
               >
                 Get a license key &rarr;

@@ -1,4 +1,5 @@
-import { invoke } from "@tauri-apps/api/tauri";
+import { memo } from "react";
+import { invoke } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
 import { AVAILABLE_SKILLS } from "../../presets/availableSkills";
 import { SKILL_ICONS } from "../../presets/modelsByProvider";
@@ -7,7 +8,7 @@ interface StepSkillsProps {
   handleInstall: () => void;
 }
 
-export default function StepSkills({ handleInstall }: StepSkillsProps) {
+function StepSkills({ handleInstall }: StepSkillsProps) {
   const { state, dispatch } = useWizard();
   const {
     agentName, selectedSkills, serviceKeys, mode,
@@ -155,3 +156,5 @@ export default function StepSkills({ handleInstall }: StepSkillsProps) {
     </div>
   );
 }
+
+export default memo(StepSkills);

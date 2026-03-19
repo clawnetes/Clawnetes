@@ -1,6 +1,6 @@
 use std::net::TcpStream;
-use std::thread;
 use std::time::Duration;
+use tokio::time::sleep;
 
 use crate::ssh::{connect_ssh, execute_ssh, get_env_prefix};
 use crate::system::shell_command;
@@ -53,12 +53,12 @@ pub fn get_remote_gateway_token(remote: &RemoteInfo) -> Result<String, String> {
     extract_gateway_token_from_config(&content, "remote config")
 }
 
-pub fn start_gateway() -> Result<String, String> {
+pub async fn start_gateway() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
 
     let _ = shell_command("openclaw gateway stop");
-    thread::sleep(Duration::from_secs(2));
+    sleep(Duration::from_secs(2)).await;
 
     #[cfg(target_os = "macos")]
     {
@@ -81,7 +81,7 @@ pub fn start_gateway() -> Result<String, String> {
         return Err(format!("Gateway start may have failed: {}", start_output));
     }
 
-    thread::sleep(Duration::from_secs(5));
+    sleep(Duration::from_secs(5)).await;
 
     let mut last_error = String::new();
     for attempt in 1..=8 {
@@ -101,7 +101,7 @@ pub fn start_gateway() -> Result<String, String> {
         }
 
         if attempt < 8 {
-            thread::sleep(Duration::from_secs(3));
+            sleep(Duration::from_secs(3)).await;
         }
     }
 
@@ -121,21 +121,21 @@ pub fn start_gateway() -> Result<String, String> {
     ))
 }
 
-pub fn initialize_agent_sessions(agent_ids: &[String]) -> Result<String, String> {
+pub async fn initialize_agent_sessions(agent_ids: &[String]) -> Result<String, String> {
     let mut initialized = 0;
     for id in agent_ids {
         if id == "main" {
             continue;
         }
         let _ = shell_command(&crate::config::build_agent_session_init_command(id));
-        thread::sleep(Duration::from_millis(500));
+        sleep(Duration::from_millis(500)).await;
         initialized += 1;
     }
     Ok(format!("Initialized {} agent sessions", initialized))
 }
 
-pub fn generate_pairing_code() -> Result<String, String> {
-    thread::sleep(Duration::from_secs(2));
+pub async fn generate_pairing_code() -> Result<String, String> {
+    sleep(Duration::from_secs(2)).await;
     let _ = shell_command("openclaw gateway status");
     Ok("Ready! Send any message to your Telegram bot to start pairing. The bot will respond automatically with a code.".to_string())
 }
@@ -261,7 +261,7 @@ pub fn verify_tunnel_connectivity(remote: &RemoteInfo) -> Result<bool, String> {
 
     for i in 0..30 {
         if i > 0 {
-            thread::sleep(Duration::from_secs(2));
+            std::thread::sleep(Duration::from_secs(2));
         }
 
         if let Err(e) = TcpStream::connect("127.0.0.1:18789") {
@@ -345,12 +345,12 @@ pub fn verify_tunnel_connectivity(remote: &RemoteInfo) -> Result<bool, String> {
     ))
 }
 
-pub fn restart_openclaw_gateway(remote: &RemoteInfo) -> Result<String, String> {
+pub async fn restart_openclaw_gateway(remote: &RemoteInfo) -> Result<String, String> {
     let sess = connect_ssh(remote)?;
     let os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
     let prefix = get_env_prefix(&os_type);
     let _ = execute_ssh(&sess, &format!("{}openclaw gateway stop", prefix));
-    thread::sleep(Duration::from_secs(2));
+    sleep(Duration::from_secs(2)).await;
     execute_ssh(&sess, &format!("{}openclaw gateway start", prefix))?;
     Ok("Gateway restarted successfully.".to_string())
 }

@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/tauri";
-import { open } from "@tauri-apps/api/shell";
+import { memo } from "react";
+import { invoke, openExternal } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
 
 interface StepMaintenanceProps {
@@ -8,7 +8,7 @@ interface StepMaintenanceProps {
   formatSshError: (error: string) => string;
 }
 
-export default function StepMaintenance({ handleMaintenanceAction, loadExistingConfig, formatSshError }: StepMaintenanceProps) {
+function StepMaintenance({ handleMaintenanceAction, loadExistingConfig, formatSshError }: StepMaintenanceProps) {
   const { state, dispatch } = useWizard();
   const {
     targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
@@ -42,7 +42,7 @@ export default function StepMaintenance({ handleMaintenanceAction, loadExistingC
                   privateKeyPath: remotePrivateKeyPath || null
                 } : null
               });
-              await open(url);
+              await openExternal(url);
             } catch (e) {
               setField("maintenanceStatus", `❌ Failed to get dashboard URL: ${e}`);
             }
@@ -200,3 +200,5 @@ export default function StepMaintenance({ handleMaintenanceAction, loadExistingC
     </div>
   );
 }
+
+export default memo(StepMaintenance);

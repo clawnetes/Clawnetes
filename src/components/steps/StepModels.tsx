@@ -1,4 +1,5 @@
-import { invoke } from "@tauri-apps/api/tauri";
+import { memo } from "react";
+import { invoke } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
 import { MODELS_BY_PROVIDER, PROVIDER_LOGOS } from "../../presets/modelsByProvider";
 import { buildReferencedProviders, getBaseProviderFromModel } from "../../utils/providerAuth";
@@ -11,7 +12,7 @@ interface StepModelsProps {
   getProviderModelOptions: (provider: string) => { value: string; label: string }[];
 }
 
-export default function StepModels({ renderProviderAuthEditor, getProviderDefaultModel, getProviderModelOptions }: StepModelsProps) {
+function StepModels({ renderProviderAuthEditor, getProviderDefaultModel, getProviderModelOptions }: StepModelsProps) {
   const { state, dispatch } = useWizard();
   const {
     provider, model, enableFallbacks, fallbackModels,
@@ -307,3 +308,5 @@ export default function StepModels({ renderProviderAuthEditor, getProviderDefaul
     </div>
   );
 }
+
+export default memo(StepModels);

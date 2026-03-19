@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 
-vi.mock("@tauri-apps/api/tauri", () => ({
+vi.mock("../lib/tauri", () => ({
   invoke: vi.fn().mockImplementation((cmd: string) => {
     if (cmd === "check_prerequisites") {
       return Promise.resolve({ node_installed: true, docker_running: false, openclaw_installed: false });
@@ -9,9 +9,9 @@ vi.mock("@tauri-apps/api/tauri", () => ({
     if (cmd === "get_openclaw_version") return Promise.resolve("1.0.0");
     return Promise.resolve(null);
   }),
+  openExternal: vi.fn(),
+  openDialog: vi.fn(),
 }));
-vi.mock("@tauri-apps/api/shell", () => ({ open: vi.fn() }));
-vi.mock("@tauri-apps/api/dialog", () => ({ open: vi.fn() }));
 
 import App from "../App";
 

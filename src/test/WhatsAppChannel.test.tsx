@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 
 const QR_MOCK = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
-vi.mock("@tauri-apps/api/tauri", () => ({
+vi.mock("../lib/tauri", () => ({
   invoke: vi.fn().mockImplementation((cmd: string) => {
     if (cmd === "check_prerequisites") {
       return Promise.resolve({ node_installed: true, docker_running: false, openclaw_installed: false });
@@ -13,9 +13,9 @@ vi.mock("@tauri-apps/api/tauri", () => ({
     if (cmd === "wait_whatsapp_login") return Promise.resolve(true);
     return Promise.resolve(null);
   }),
+  openExternal: vi.fn(),
+  openDialog: vi.fn(),
 }));
-vi.mock("@tauri-apps/api/shell", () => ({ open: vi.fn() }));
-vi.mock("@tauri-apps/api/dialog", () => ({ open: vi.fn() }));
 
 import App from "../App";
 
@@ -75,14 +75,14 @@ describe("WhatsAppChannel", () => {
   });
 
   it("start_whatsapp_login mock returns QR data URL", async () => {
-    const { invoke } = await import("@tauri-apps/api/tauri");
+    const { invoke } = await import("../lib/tauri");
     const result = await invoke("start_whatsapp_login", { gatewayPort: 18789 });
     expect(typeof result).toBe("string");
     expect((result as string).startsWith("data:image/png;base64,")).toBe(true);
   });
 
   it("wait_whatsapp_login mock returns connected boolean", async () => {
-    const { invoke } = await import("@tauri-apps/api/tauri");
+    const { invoke } = await import("../lib/tauri");
     const result = await invoke("wait_whatsapp_login", { gatewayPort: 18789 });
     expect(typeof result).toBe("boolean");
     expect(result).toBe(true);

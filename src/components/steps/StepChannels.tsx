@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { useWizard } from "../../context/WizardContext";
 import Dropdown from "../Dropdown";
 
@@ -5,7 +6,7 @@ interface StepChannelsProps {
   handleAdvancedTransition: () => void;
 }
 
-export default function StepChannels({ handleAdvancedTransition }: StepChannelsProps) {
+function StepChannels({ handleAdvancedTransition }: StepChannelsProps) {
   const { state, dispatch } = useWizard();
   const {
     messagingChannel, telegramToken, whatsappDmPolicy, whatsappPhoneNumber,
@@ -90,3 +91,5 @@ export default function StepChannels({ handleAdvancedTransition }: StepChannelsP
     </div>
   );
 }
+
+export default memo(StepChannels);

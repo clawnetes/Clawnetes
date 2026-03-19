@@ -1,4 +1,5 @@
-import { invoke } from "@tauri-apps/api/tauri";
+import { memo } from "react";
+import { invoke } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
 
 interface StepReviewProps {
@@ -7,7 +8,7 @@ interface StepReviewProps {
   initialConfigRef: React.MutableRefObject<any>;
 }
 
-export default function StepReview({ handleInstall, hasChanges, initialConfigRef }: StepReviewProps) {
+function StepReview({ handleInstall, hasChanges, initialConfigRef }: StepReviewProps) {
   const { state, dispatch } = useWizard();
   const {
     loading, error, progress, logs, mode,
@@ -107,3 +108,5 @@ export default function StepReview({ handleInstall, hasChanges, initialConfigRef
     </div>
   );
 }
+
+export default memo(StepReview);

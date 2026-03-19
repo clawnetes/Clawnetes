@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/tauri";
-import { open } from "@tauri-apps/api/shell";
+import { memo } from "react";
+import { invoke, openExternal } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
 import { shouldShowTelegramPairing, getTelegramPairingDisplayCode, shouldShowWhatsAppPairing } from "../../utils/messagingPairing";
 import type { DeferredOAuthItem } from "../../utils/providerAuth";
@@ -12,7 +12,7 @@ interface StepCompleteProps {
   deferredOAuthQueue: DeferredOAuthItem[];
 }
 
-export default function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransition, runDeferredOAuthQueue, deferredOAuthQueue }: StepCompleteProps) {
+function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransition, runDeferredOAuthQueue, deferredOAuthQueue }: StepCompleteProps) {
   const { state, dispatch } = useWizard();
   const {
     targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
@@ -274,7 +274,7 @@ export default function StepComplete({ handleToggleTunnel, handlePairing, handle
               <p style={{ marginBottom: "1.5rem" }}>Your agent is paired and ready.</p>
             )}
             <div className="button-group" style={{ gap: "1rem" }}>
-              <button className="primary" data-testid="btn-open-dashboard" onClick={() => open(dashboardUrl)}>
+              <button className="primary" data-testid="btn-open-dashboard" onClick={() => openExternal(dashboardUrl)}>
                 Open Web Dashboard
               </button>
               {mode !== "advanced" && (
@@ -289,7 +289,7 @@ export default function StepComplete({ handleToggleTunnel, handlePairing, handle
             <div style={{ marginTop: "1.5rem", textAlign: "center" }}>
               <a
                 href="#"
-                onClick={(e) => { e.preventDefault(); open("https://aimodelscompass.gumroad.com/l/clawnetes-license"); }}
+                onClick={(e) => { e.preventDefault(); openExternal("https://aimodelscompass.gumroad.com/l/clawnetes-license"); }}
                 style={{ color: "var(--text-muted)", fontSize: "0.9rem", textDecoration: "underline", cursor: "pointer" }}
               >
                 If you find OpenClaw useful, please consider making a small donation to support development.
@@ -301,7 +301,7 @@ export default function StepComplete({ handleToggleTunnel, handlePairing, handle
 
       {false && (
         <div className="button-group" style={{ flexDirection: "column", gap: "10px" }}>
-          <button className="primary" style={{ width: "100%" }} onClick={() => open(dashboardUrl)}>
+          <button className="primary" style={{ width: "100%" }} onClick={() => openExternal(dashboardUrl)}>
             Open Web Dashboard {targetEnvironment === "cloud" && "(via Tunnel)"}
           </button>
           <button className="secondary" style={{ width: "100%" }} onClick={() => invoke("close_app")}>Exit Setup</button>
@@ -313,3 +313,5 @@ export default function StepComplete({ handleToggleTunnel, handlePairing, handle
     </div>
   );
 }
+
+export default memo(StepComplete);

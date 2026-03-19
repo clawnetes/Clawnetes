@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
 import { MODELS_BY_PROVIDER, PROVIDER_LOGOS } from "../../presets/modelsByProvider";
 import Dropdown from "../Dropdown";

@@ -275,12 +275,18 @@ export const INITIAL_WIZARD_STATE: WizardState = {
 
 export type WizardAction =
   | { type: "SET_FIELD"; field: keyof WizardState; value: unknown }
+  | { type: "UPDATE_FIELD"; field: keyof WizardState; updater: (prev: unknown) => unknown }
   | { type: "BATCH_UPDATE"; updates: Partial<WizardState> };
 
 export function wizardReducer(state: WizardState, action: WizardAction): WizardState {
   switch (action.type) {
     case "SET_FIELD":
       return { ...state, [action.field]: action.value };
+    case "UPDATE_FIELD":
+      return {
+        ...state,
+        [action.field]: action.updater(state[action.field]),
+      };
     case "BATCH_UPDATE":
       return { ...state, ...action.updates };
     default:
@@ -294,9 +300,16 @@ export function fieldSetter<K extends keyof WizardState>(
   field: K,
 ): (value: WizardState[K] | ((prev: WizardState[K]) => WizardState[K])) => void {
   return (value) => {
-    // Note: functional updates (prev => next) are not supported in this simple version.
-    // All current callers pass values directly, so this is safe.
-    dispatch({ type: "SET_FIELD", field, value: value as WizardState[K] });
+    if (typeof value === "function") {
+      dispatch({
+        type: "UPDATE_FIELD",
+        field,
+        updater: value as (prev: unknown) => unknown,
+      });
+      return;
+    }
+
+    dispatch({ type: "SET_FIELD", field, value });
   };
 }
 

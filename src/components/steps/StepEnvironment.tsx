@@ -1,4 +1,4 @@
-import { open as openDialog } from "@tauri-apps/api/dialog";
+import { openDialog } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
 
 interface StepEnvironmentProps {
