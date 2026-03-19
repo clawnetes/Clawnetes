@@ -1,88 +1,57 @@
-use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Nonce};
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use base64::Engine as _;
-use sha2::{Digest, Sha256};
-use tauri::command;
-// Updated: Force rebuild trigger
-use rand::Rng;
-use ssh2::Session;
-use std::fs;
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use std::time::{Duration, Instant};
+mod config;
+mod error;
+mod gateway;
+mod install;
+mod license;
+mod maintenance;
+mod models;
+mod oauth;
+mod pairing;
+mod ssh;
+mod system;
+mod types;
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use tauri::command;
+use rand::Rng;
+use std::fs;
+use std::net::TcpStream;
+use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
 
 #[macro_use]
 extern crate lazy_static;
 
-lazy_static! {
-    static ref TUNNEL_RUNNING: AtomicBool = AtomicBool::new(false);
-}
+use types::{
+    AgentConfig, AgentData, CronJobConfig, CurrentConfig,
+    PrereqCheck, ProviderAuthData, RemoteInfo,
+};
+use license::verify_license_with_gumroad;
+use ssh::{connect_ssh, execute_ssh, get_env_prefix};
+use system::{shell_command, shell_single_quote};
+use config::{apply_agent_overrides, build_agent_session_init_command};
+use oauth::{
+    apply_model_provider_auth, auth_provider_id_for_config,
+    build_auth_profiles_doc, build_effective_models_catalog,
+    collect_required_plugin_ids, default_provider_auth,
+    get_provider_auth_map,
+    merge_enabled_plugin_entries, normalize_auth_mode,
+    normalize_model_ref_for_ui, normalize_provider_for_ui,
+    resolve_profile_name, resolve_provider_auth_data,
+};
+use pairing::{
+    extract_telegram_dm_policy_from_config,
+    telegram_allow_from_is_linked_local,
+    telegram_pairing_status_from_dm_policy,
+};
+#[cfg(target_os = "windows")]
+use system::{
+    check_wsl2_installed, ensure_wsl2_installed, wait_for_wsl_ready,
+    wsl_home_dir, wsl_list_dirs, wsl_mkdir_p, wsl_read_file,
+    wsl_remove_dir, wsl_root_command, wsl_write_file,
+};
 
-const ADVANCED_LICENSE_PRODUCT_ID: &str = "gsFyrV978DfW2ZYp5pzetQ==";
 const ADVANCED_LICENSE_STORAGE_FILE: &str = "advanced-license.json";
-const ADVANCED_LICENSE_KEY_LABEL: &[u8] = b"clawnetes:advanced-license:v1";
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct SavedLicenseBlob {
-    version: u8,
-    nonce: String,
-    ciphertext: String,
-}
-
-fn verify_license_with_gumroad(key: &str) -> Result<(), String> {
-    let client = reqwest::blocking::Client::new();
-    let res = client
-        .post("https://api.gumroad.com/v2/licenses/verify")
-        .form(&[
-            ("product_id", ADVANCED_LICENSE_PRODUCT_ID),
-            ("license_key", key),
-        ])
-        .send()
-        .map_err(|e| format!("Network error: {}", e))?;
-
-    if !res.status().is_success() {
-        return Err("License verification failed (Invalid key or network error)".to_string());
-    }
-
-    let json: serde_json::Value = res
-        .json()
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
-    validate_license_response(&json)
-}
-
-fn validate_license_response(json: &serde_json::Value) -> Result<(), String> {
-    if let Some(success) = json.get("success").and_then(|v| v.as_bool()) {
-        if success {
-            if let Some(purchase) = json.get("purchase") {
-                if purchase
-                    .get("refunded")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-                {
-                    return Err("License has been refunded.".to_string());
-                }
-                if purchase
-                    .get("chargebacked")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-                {
-                    return Err("License has been chargebacked.".to_string());
-                }
-            }
-            return Ok(());
-        }
-    }
-
-    Err("Invalid license key.".to_string())
-}
 
 fn app_license_storage_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let app_dir = app
@@ -92,1467 +61,14 @@ fn app_license_storage_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(app_dir.join(ADVANCED_LICENSE_STORAGE_FILE))
 }
 
-fn derive_license_encryption_key(machine_id: &str) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(ADVANCED_LICENSE_KEY_LABEL);
-    hasher.update(machine_id.as_bytes());
-    let digest = hasher.finalize();
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&digest[..32]);
-    key
-}
-
-fn encrypt_saved_license_value(
-    license_key: &str,
-    encryption_key: &[u8; 32],
-) -> Result<String, String> {
-    let cipher = Aes256Gcm::new_from_slice(encryption_key)
-        .map_err(|e| format!("Failed to initialize license encryption: {}", e))?;
-    let mut nonce_bytes = [0u8; 12];
-    rand::thread_rng().fill(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher
-        .encrypt(nonce, license_key.as_bytes())
-        .map_err(|e| format!("Failed to encrypt saved license: {}", e))?;
-
-    serde_json::to_string(&SavedLicenseBlob {
-        version: 1,
-        nonce: BASE64_STANDARD.encode(nonce_bytes),
-        ciphertext: BASE64_STANDARD.encode(ciphertext),
-    })
-    .map_err(|e| format!("Failed to serialize saved license: {}", e))
-}
-
-fn decrypt_saved_license_value(
-    serialized: &str,
-    encryption_key: &[u8; 32],
-) -> Result<String, String> {
-    let blob: SavedLicenseBlob = serde_json::from_str(serialized)
-        .map_err(|e| format!("Saved license file is invalid JSON: {}", e))?;
-    if blob.version != 1 {
-        return Err("Saved license file has an unsupported version.".to_string());
-    }
-
-    let nonce_bytes = BASE64_STANDARD
-        .decode(blob.nonce)
-        .map_err(|e| format!("Saved license nonce is invalid: {}", e))?;
-    if nonce_bytes.len() != 12 {
-        return Err("Saved license nonce has an invalid length.".to_string());
-    }
-    let ciphertext = BASE64_STANDARD
-        .decode(blob.ciphertext)
-        .map_err(|e| format!("Saved license ciphertext is invalid: {}", e))?;
-    let cipher = Aes256Gcm::new_from_slice(encryption_key)
-        .map_err(|e| format!("Failed to initialize saved license decryption: {}", e))?;
-    let plaintext = cipher
-        .decrypt(Nonce::from_slice(&nonce_bytes), ciphertext.as_ref())
-        .map_err(|_| "Saved license cannot be decrypted on this machine.".to_string())?;
-
-    String::from_utf8(plaintext).map_err(|e| format!("Saved license contains invalid UTF-8: {}", e))
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn read_first_nonempty_file(paths: &[PathBuf]) -> Result<Option<String>, String> {
-    for path in paths {
-        if !path.exists() {
-            continue;
-        }
-
-        let content = fs::read_to_string(path).map_err(|e| {
-            format!(
-                "Failed to read machine identifier {}: {}",
-                path.display(),
-                e
-            )
-        })?;
-        let trimmed = content.trim();
-        if !trimmed.is_empty() {
-            return Ok(Some(trimmed.to_string()));
-        }
-    }
-
-    Ok(None)
-}
-
-#[cfg(any(target_os = "windows", test))]
-fn parse_windows_machine_guid(output: &str) -> Option<String> {
-    output
-        .lines()
-        .find(|line| line.contains("MachineGuid"))
-        .and_then(|line| line.split_whitespace().last())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-#[cfg(target_os = "linux")]
-fn get_machine_identifier() -> Result<String, String> {
-    let candidates = vec![
-        PathBuf::from("/etc/machine-id"),
-        PathBuf::from("/var/lib/dbus/machine-id"),
-    ];
-    read_first_nonempty_file(&candidates)?
-        .ok_or("Could not determine Linux machine identifier.".to_string())
-}
-
-#[cfg(target_os = "windows")]
-fn get_machine_identifier() -> Result<String, String> {
-    let output = Command::new("reg")
-        .args([
-            "query",
-            r"HKLM\SOFTWARE\Microsoft\Cryptography",
-            "/v",
-            "MachineGuid",
-        ])
-        .output()
-        .map_err(|e| format!("Failed to read Windows machine identifier: {}", e))?;
-    if !output.status.success() {
-        return Err("Failed to read Windows machine identifier.".to_string());
-    }
-    parse_windows_machine_guid(&String::from_utf8_lossy(&output.stdout))
-        .ok_or("Could not parse Windows machine identifier.".to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn get_machine_identifier() -> Result<String, String> {
-    let output = Command::new("ioreg")
-        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
-        .output()
-        .map_err(|e| format!("Failed to read macOS machine identifier: {}", e))?;
-    if !output.status.success() {
-        return Err("Failed to read macOS machine identifier.".to_string());
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .find(|line| line.contains("IOPlatformUUID"))
-        .and_then(|line| line.split('"').nth(3))
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or("Could not parse macOS machine identifier.".to_string())
-}
-
 fn write_saved_license(app: &tauri::AppHandle, license_key: &str) -> Result<(), String> {
     let path = app_license_storage_path(app)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create license storage directory: {}", e))?;
-    }
-
-    let machine_id = get_machine_identifier()?;
-    let encryption_key = derive_license_encryption_key(&machine_id);
-    let encrypted = encrypt_saved_license_value(license_key, &encryption_key)?;
-    fs::write(&path, encrypted)
-        .map_err(|e| format!("Failed to write saved license file: {}", e))?;
-
-    #[cfg(unix)]
-    {
-        let permissions = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(&path, permissions)
-            .map_err(|e| format!("Failed to secure saved license file permissions: {}", e))?;
-    }
-
-    Ok(())
+    license::write_saved_license(&path, license_key)
 }
 
 fn read_saved_license(app: &tauri::AppHandle) -> Result<Option<String>, String> {
     let path = app_license_storage_path(app)?;
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let serialized = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read saved license file: {}", e))?;
-    let machine_id = get_machine_identifier()?;
-    let encryption_key = derive_license_encryption_key(&machine_id);
-    let license_key = decrypt_saved_license_value(&serialized, &encryption_key)?;
-
-    if license_key.trim().is_empty() {
-        return Err("Saved license file contains an empty license key.".to_string());
-    }
-
-    Ok(Some(license_key))
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-struct AgentData {
-    id: String,
-    name: String,
-    model: String,
-    fallback_models: Option<Vec<String>>,
-    skills: Option<Vec<String>>,
-    vibe: Option<String>,
-    emoji: Option<String>,
-    identity_md: Option<String>,
-    user_md: Option<String>,
-    soul_md: Option<String>,
-    tools_md: Option<String>,
-    agents_md: Option<String>,
-    heartbeat_md: Option<String>,
-    memory_md: Option<String>,
-    subagents: Option<SubagentConfig>,
-    tools: Option<AgentToolsConfig>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-struct SubagentConfig {
-    #[serde(rename = "allowAgents")]
-    allow_agents: Vec<String>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-struct AgentToolsConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    profile: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    allow: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    deny: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    elevated: Option<ElevatedToolConfig>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-struct ElevatedToolConfig {
-    enabled: bool,
-}
-
-fn apply_agent_overrides(agent_obj: &mut serde_json::Value, agent: &AgentData) {
-    if let Some(tools) = &agent.tools {
-        if let Ok(tools_value) = serde_json::to_value(tools) {
-            if let Some(agent_obj_map) = agent_obj.as_object_mut() {
-                agent_obj_map.insert("tools".to_string(), tools_value);
-            }
-        }
-    }
-
-    if let Some(subagents) = &agent.subagents {
-        if let Ok(subagents_value) = serde_json::to_value(subagents) {
-            if let Some(agent_obj_map) = agent_obj.as_object_mut() {
-                agent_obj_map.insert("subagents".to_string(), subagents_value);
-            }
-        }
-    }
-}
-
-fn build_agent_session_init_command(agent_id: &str) -> String {
-    format!(
-        "openclaw agent --agent {} --message \"hello\" 2>/dev/null || true",
-        agent_id
-    )
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-struct CronJobConfig {
-    name: String,
-    schedule: String,
-    command: String,
-    session: Option<String>,
-}
-
-#[derive(serde::Serialize)]
-struct CurrentConfig {
-    provider: String,
-    api_key: String,
-    auth_method: String,
-    model: String,
-    user_name: String,
-    agent_name: String,
-    agent_vibe: String,
-    agent_emoji: String,
-    agent_type: String,
-    telegram_token: String,
-    gateway_port: u16,
-    gateway_bind: String,
-    gateway_auth_mode: String,
-    tailscale_mode: String,
-    node_manager: String,
-    skills: Vec<String>,
-    service_keys: std::collections::HashMap<String, String>,
-    provider_auths: std::collections::HashMap<String, ProviderAuthData>,
-    sandbox_mode: String,
-    tools_mode: String,
-    tools_profile: Option<String>,
-    allowed_tools: Vec<String>,
-    denied_tools: Vec<String>,
-    fallback_models: Vec<String>,
-    heartbeat_mode: String,
-    idle_timeout_ms: u64,
-    identity_md: String,
-    user_md: String,
-    soul_md: String,
-    tools_md: Option<String>,
-    agents_md: Option<String>,
-    heartbeat_md: Option<String>,
-    memory_md: Option<String>,
-    memory_enabled: bool,
-    enable_multi_agent: bool,
-    agent_configs: Vec<AgentData>,
-    is_paired: bool,
-    cron_jobs: Option<Vec<CronJobConfig>>,
-    local_base_url: Option<String>,
-    thinking_level: Option<String>,
-    whatsapp_enabled: Option<bool>,
-    whatsapp_dm_policy: Option<String>,
-    whatsapp_phone_number: Option<String>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
-struct ProviderAuthData {
-    auth_method: String,
-    token: String,
-    profile_key: Option<String>,
-    profile: Option<serde_json::Value>,
-    oauth_provider_id: Option<String>,
-}
-
-#[derive(serde::Deserialize)]
-struct AgentConfig {
-    provider: String,
-    api_key: String,
-    auth_method: Option<String>,
-    model: String,
-    user_name: String,
-    agent_name: String,
-    #[allow(dead_code)]
-    agent_vibe: Option<String>,
-    telegram_token: Option<String>,
-    // Advanced fields
-    gateway_port: Option<u16>,
-    gateway_bind: Option<String>,
-    gateway_auth_mode: Option<String>,
-    tailscale_mode: Option<String>,
-    node_manager: Option<String>,
-    skills: Option<Vec<String>>,
-    #[allow(dead_code)]
-    service_keys: Option<std::collections::HashMap<String, String>>,
-    provider_auths: Option<std::collections::HashMap<String, ProviderAuthData>>,
-    // NEW: Enhanced advanced fields
-    sandbox_mode: Option<String>,
-    tools_mode: Option<String>,
-    tools_profile: Option<String>,
-    allowed_tools: Option<Vec<String>>,
-    denied_tools: Option<Vec<String>>,
-    fallback_models: Option<Vec<String>>,
-    heartbeat_mode: Option<String>,
-    idle_timeout_ms: Option<u64>,
-    identity_md: Option<String>,
-    user_md: Option<String>,
-    soul_md: Option<String>,
-    // Multi-agent support
-    agents: Option<Vec<AgentData>>,
-    // New field to preserve state during updates
-    preserve_state: Option<bool>,
-    // New preset fields
-    agent_type: Option<String>,
-    tools_md: Option<String>,
-    agents_md: Option<String>,
-    heartbeat_md: Option<String>,
-    memory_md: Option<String>,
-    memory_enabled: Option<bool>,
-    cron_jobs: Option<Vec<CronJobConfig>>,
-    // Local model support
-    local_base_url: Option<String>,
-    // OpenClaw latest features
-    thinking_level: Option<String>,
-    // WhatsApp channel
-    whatsapp_enabled: Option<bool>,
-    whatsapp_dm_policy: Option<String>,
-    whatsapp_phone_number: Option<String>,
-}
-
-#[derive(serde::Serialize)]
-struct PrereqCheck {
-    node_installed: bool,
-    docker_running: bool,
-    openclaw_installed: bool,
-}
-
-#[derive(serde::Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct RemoteInfo {
-    ip: String,
-    user: String,
-    password: Option<String>,
-    private_key_path: Option<String>,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Copy)]
-enum TerminalPlatform {
-    Macos,
-    Windows,
-    Linux,
-}
-
-struct TerminalLaunchPlan {
-    program: String,
-    args: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PortListenerInfo {
-    pid: i32,
-    command: String,
-}
-
-fn default_provider_auth(
-    provider: &str,
-    api_key: &str,
-    auth_method: &str,
-    base_url: Option<&String>,
-) -> ProviderAuthData {
-    let mut profile = serde_json::Map::new();
-    let auth_type = normalize_auth_mode(auth_method);
-    let token = if provider == "ollama" || provider == "lmstudio" || provider == "local" {
-        "dummy-token".to_string()
-    } else {
-        api_key.to_string()
-    };
-
-    profile.insert(
-        "type".to_string(),
-        serde_json::Value::String(auth_type.clone()),
-    );
-    profile.insert(
-        "provider".to_string(),
-        serde_json::Value::String(provider.to_string()),
-    );
-    if provider == "lmstudio" || provider == "local" {
-        profile.insert(
-            "api".to_string(),
-            serde_json::Value::String("openai".to_string()),
-        );
-    }
-    if auth_type == "oauth" {
-        profile.insert(
-            "access".to_string(),
-            serde_json::Value::String(token.clone()),
-        );
-    } else {
-        profile.insert(
-            "token".to_string(),
-            serde_json::Value::String(token.clone()),
-        );
-    }
-    if let Some(url) = base_url {
-        if !url.is_empty() {
-            profile.insert(
-                "baseUrl".to_string(),
-                serde_json::Value::String(url.clone()),
-            );
-        }
-    }
-
-    ProviderAuthData {
-        auth_method: auth_method.to_string(),
-        token,
-        profile_key: Some(format!("{}:default", provider)),
-        profile: Some(serde_json::Value::Object(profile)),
-        oauth_provider_id: None,
-    }
-}
-
-fn normalize_auth_mode(auth_method: &str) -> String {
-    if auth_method == "setup-token" || auth_method == "claude-cli" {
-        "token".to_string()
-    } else if matches!(
-        auth_method,
-        "antigravity" | "gemini_cli" | "codex" | "openai-codex" | "google-gemini-cli"
-    ) {
-        "oauth".to_string()
-    } else {
-        auth_method.to_string()
-    }
-}
-
-fn normalize_provider_for_ui(provider: &str) -> String {
-    match provider {
-        "openai-codex" => "openai".to_string(),
-        "google-vertex" => "google".to_string(),
-        _ => provider.to_string(),
-    }
-}
-
-fn effective_model_provider(
-    provider: &str,
-    provider_auths: &std::collections::HashMap<String, ProviderAuthData>,
-) -> String {
-    match provider_auths
-        .get(provider)
-        .map(|auth| auth.auth_method.as_str())
-    {
-        Some("openai-codex") => "openai-codex".to_string(),
-        _ => provider.to_string(),
-    }
-}
-
-fn apply_model_provider_auth(
-    model_ref: &str,
-    provider_auths: &std::collections::HashMap<String, ProviderAuthData>,
-) -> String {
-    if let Some((provider, rest)) = model_ref.split_once('/') {
-        let base_provider = normalize_provider_for_ui(provider);
-        let effective_provider = effective_model_provider(&base_provider, provider_auths);
-        format!("{}/{}", effective_provider, rest)
-    } else {
-        model_ref.to_string()
-    }
-}
-
-fn build_effective_models_catalog(
-    primary_model: &str,
-    fallback_models: &[String],
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut models = serde_json::Map::new();
-    models.insert(primary_model.to_string(), serde_json::json!({}));
-
-    for fb_model in fallback_models {
-        if fb_model.split('/').next().is_some() {
-            models.insert(fb_model.clone(), serde_json::json!({}));
-        }
-    }
-
-    models
-}
-
-fn auth_provider_id_for_config(
-    provider: &str,
-    provider_auth: &ProviderAuthData,
-    provider_auths: &std::collections::HashMap<String, ProviderAuthData>,
-) -> String {
-    if let Some(profile_provider) = provider_auth
-        .profile
-        .as_ref()
-        .and_then(|profile| profile.get("provider"))
-        .and_then(|value| value.as_str())
-    {
-        return profile_provider.to_string();
-    }
-
-    provider_auth
-        .oauth_provider_id
-        .clone()
-        .unwrap_or_else(|| effective_model_provider(provider, provider_auths))
-}
-
-fn normalize_model_ref_for_ui(model_ref: &str) -> String {
-    if let Some(rest) = model_ref.strip_prefix("openai-codex/") {
-        format!("openai/{}", rest)
-    } else {
-        model_ref.to_string()
-    }
-}
-
-fn get_provider_auth_map(
-    config: &AgentConfig,
-) -> std::collections::HashMap<String, ProviderAuthData> {
-    let mut provider_auths = config.provider_auths.clone().unwrap_or_default();
-    if !provider_auths.contains_key(&config.provider) {
-        provider_auths.insert(
-            config.provider.clone(),
-            default_provider_auth(
-                &config.provider,
-                &config.api_key,
-                config.auth_method.as_deref().unwrap_or("token"),
-                config.local_base_url.as_ref(),
-            ),
-        );
-    }
-    provider_auths
-}
-
-fn required_plugin_for_oauth_provider_id(oauth_provider_id: &str) -> Option<&'static str> {
-    match oauth_provider_id {
-        "google-gemini-cli" => Some("google-gemini-cli-auth"),
-        _ => None,
-    }
-}
-
-fn oauth_failure_guidance(oauth_provider_id: &str) -> Option<&'static str> {
-    match oauth_provider_id {
-        "google-gemini-cli" => Some(
-            "Gemini CLI OAuth uses Google Code Assist and may be rejected for some Google accounts. Make sure the Gemini CLI is installed, try setting GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_PROJECT_ID if your account needs a project, or switch the Google provider auth method back to Gemini API Key.",
-        ),
-        _ => None,
-    }
-}
-
-fn decorate_oauth_launch_error(oauth_provider_id: &str, err: String) -> String {
-    match oauth_failure_guidance(oauth_provider_id) {
-        Some(guidance) => format!("{} {}", err, guidance),
-        None => err,
-    }
-}
-
-fn required_plugin_for_skill_id(skill_id: &str) -> Option<&'static str> {
-    match skill_id {
-        "gemini" => Some("google-gemini-cli-auth"),
-        _ => None,
-    }
-}
-
-fn collect_required_plugin_ids(
-    provider_auths: &std::collections::HashMap<String, ProviderAuthData>,
-    skills: Option<&Vec<String>>,
-) -> Vec<String> {
-    let mut required = std::collections::BTreeSet::new();
-
-    for auth in provider_auths.values() {
-        if normalize_auth_mode(&auth.auth_method) != "oauth" {
-            continue;
-        }
-
-        let oauth_provider_id = auth
-            .oauth_provider_id
-            .as_deref()
-            .unwrap_or(auth.auth_method.as_str());
-        if let Some(plugin_id) = required_plugin_for_oauth_provider_id(oauth_provider_id) {
-            required.insert(plugin_id.to_string());
-        }
-    }
-
-    for skill_id in skills.into_iter().flatten() {
-        if let Some(plugin_id) = required_plugin_for_skill_id(skill_id) {
-            required.insert(plugin_id.to_string());
-        }
-    }
-
-    required.into_iter().collect()
-}
-
-fn merge_enabled_plugin_entries(config: &mut serde_json::Value, plugin_ids: &[String]) {
-    if plugin_ids.is_empty() {
-        return;
-    }
-
-    if let Some(obj) = config.as_object_mut() {
-        let plugins_entry = obj
-            .entry("plugins".to_string())
-            .or_insert(serde_json::json!({ "entries": {} }));
-        if let Some(entries) = plugins_entry
-            .get_mut("entries")
-            .and_then(|value| value.as_object_mut())
-        {
-            for plugin_id in plugin_ids {
-                entries.insert(plugin_id.clone(), serde_json::json!({ "enabled": true }));
-            }
-        }
-    }
-}
-
-fn enable_openclaw_plugin(plugin_id: &str) -> Result<(), String> {
-    shell_command(&format!(
-        "openclaw plugins enable {}",
-        shell_single_quote(plugin_id)
-    ))
-    .map(|_| ())
-}
-
-fn provider_id_is_available(oauth_provider_id: &str) -> Result<bool, String> {
-    let output = shell_command("openclaw plugins list --json")?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&output).map_err(|e| format!("Failed to parse plugin list: {}", e))?;
-
-    Ok(parsed
-        .get("plugins")
-        .and_then(|plugins| plugins.as_array())
-        .map(|plugins| {
-            plugins.iter().any(|plugin| {
-                plugin
-                    .get("status")
-                    .and_then(|status| status.as_str())
-                    .map(|status| status == "loaded")
-                    .unwrap_or(false)
-                    && plugin
-                        .get("providerIds")
-                        .and_then(|provider_ids| provider_ids.as_array())
-                        .map(|provider_ids| {
-                            provider_ids
-                                .iter()
-                                .any(|provider_id| provider_id.as_str() == Some(oauth_provider_id))
-                        })
-                        .unwrap_or(false)
-            })
-        })
-        .unwrap_or(false))
-}
-
-fn resolve_profile_name(provider: &str, provider_auth: &ProviderAuthData) -> String {
-    provider_auth
-        .profile_key
-        .clone()
-        .unwrap_or_else(|| format!("{}:default", provider))
-}
-
-fn build_auth_profiles_doc(
-    provider_auths: &std::collections::HashMap<String, ProviderAuthData>,
-    fallback_models: Option<&Vec<String>>,
-    local_base_url: Option<&String>,
-    primary_provider: &str,
-) -> serde_json::Value {
-    let mut profiles_map = serde_json::Map::new();
-    let mut last_good = serde_json::Map::new();
-
-    for (provider, provider_auth) in provider_auths {
-        let profile_key = resolve_profile_name(provider, provider_auth);
-        let profile = provider_auth.profile.clone().unwrap_or_else(|| {
-            default_provider_auth(
-                provider,
-                &provider_auth.token,
-                &provider_auth.auth_method,
-                local_base_url,
-            )
-            .profile
-            .unwrap_or(serde_json::json!({}))
-        });
-        profiles_map.insert(profile_key.clone(), profile);
-        last_good.insert(provider.clone(), serde_json::Value::String(profile_key));
-    }
-
-    if let Some(fallbacks) = fallback_models {
-        for model in fallbacks {
-            if let Some(provider) = model.split('/').next() {
-                if provider == "ollama" || provider == "lmstudio" || provider == "local" {
-                    let fallback_auth =
-                        default_provider_auth(provider, "", "token", local_base_url);
-                    let profile_key = resolve_profile_name(provider, &fallback_auth);
-                    let profile = fallback_auth.profile.unwrap_or(serde_json::json!({}));
-                    profiles_map.entry(profile_key.clone()).or_insert(profile);
-                    last_good
-                        .entry(provider.to_string())
-                        .or_insert(serde_json::Value::String(profile_key));
-                }
-            }
-        }
-    }
-
-    if !last_good.contains_key(primary_provider) {
-        last_good.insert(
-            primary_provider.to_string(),
-            serde_json::Value::String(format!("{}:default", primary_provider)),
-        );
-    }
-
-    serde_json::json!({
-        "version": 1,
-        "profiles": profiles_map,
-        "lastGood": last_good,
-        "usageStats": {}
-    })
-}
-
-fn oauth_provider_matches(base_provider: &str, provider_id: &str) -> bool {
-    matches!(
-        (base_provider, provider_id),
-        ("openai", "openai-codex") | ("google", "google-gemini-cli") | ("anthropic", "anthropic")
-    ) || base_provider == provider_id
-}
-
-fn resolve_provider_auth_data(
-    base_provider: &str,
-    auth_config: &serde_json::Value,
-) -> Option<ProviderAuthData> {
-    let profiles = auth_config.get("profiles").and_then(|p| p.as_object())?;
-    let last_good_key = auth_config
-        .get("lastGood")
-        .and_then(|lg| lg.get(base_provider))
-        .and_then(|v| v.as_str());
-
-    let has_usable_credential = |profile: &serde_json::Value| {
-        profile
-            .get("token")
-            .and_then(|v| v.as_str())
-            .map(|v| !v.is_empty())
-            .unwrap_or(false)
-            || profile
-                .get("access")
-                .and_then(|v| v.as_str())
-                .map(|v| !v.is_empty())
-                .unwrap_or(false)
-    };
-
-    let matches_base_provider = |key: &str, profile: &serde_json::Value| {
-        let provider_id = profile
-            .get("provider")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        key.starts_with(&format!("{}:", base_provider))
-            || oauth_provider_matches(base_provider, provider_id)
-    };
-
-    let pick = last_good_key
-        .and_then(|profile_key| {
-            profiles.get(profile_key).and_then(|profile| {
-                if has_usable_credential(profile) {
-                    Some((profile_key.to_string(), profile.clone()))
-                } else {
-                    None
-                }
-            })
-        })
-        .or_else(|| {
-            profiles.iter().find_map(|(key, profile)| {
-                if matches_base_provider(key, profile) && has_usable_credential(profile) {
-                    Some((key.clone(), profile.clone()))
-                } else {
-                    None
-                }
-            })
-        })
-        .or_else(|| {
-            last_good_key.and_then(|profile_key| {
-                profiles
-                    .get(profile_key)
-                    .map(|profile| (profile_key.to_string(), profile.clone()))
-            })
-        })
-        .or_else(|| {
-            profiles.iter().find_map(|(key, profile)| {
-                if matches_base_provider(key, profile) {
-                    Some((key.clone(), profile.clone()))
-                } else {
-                    None
-                }
-            })
-        })?;
-
-    let (profile_key, profile) = pick;
-    let raw_auth_method = profile
-        .get("type")
-        .and_then(|v| v.as_str())
-        .or_else(|| profile.get("mode").and_then(|v| v.as_str()))
-        .unwrap_or("token")
-        .to_string();
-    let token = profile
-        .get("token")
-        .and_then(|v| v.as_str())
-        .or_else(|| profile.get("access").and_then(|v| v.as_str()))
-        .unwrap_or("")
-        .to_string();
-    let oauth_provider_id =
-        profile
-            .get("provider")
-            .and_then(|v| v.as_str())
-            .and_then(|provider_id| {
-                if provider_id != base_provider && raw_auth_method == "oauth" {
-                    Some(provider_id.to_string())
-                } else {
-                    None
-                }
-            });
-
-    let auth_method = if raw_auth_method == "oauth" {
-        match oauth_provider_id.as_deref() {
-            Some("openai-codex") => "openai-codex".to_string(),
-            Some("google-gemini-cli") => "google-gemini-cli".to_string(),
-            Some(other) => other.to_string(),
-            None if base_provider == "anthropic" => "setup-token".to_string(),
-            None => raw_auth_method.clone(),
-        }
-    } else {
-        raw_auth_method.clone()
-    };
-
-    Some(ProviderAuthData {
-        auth_method,
-        token,
-        profile_key: Some(profile_key),
-        profile: Some(profile),
-        oauth_provider_id,
-    })
-}
-
-fn shell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn oauth_callback_port(oauth_provider_id: &str) -> Option<u16> {
-    match oauth_provider_id {
-        "openai-codex" => Some(1455),
-        "google-gemini-cli" => Some(8085),
-        _ => None,
-    }
-}
-
-fn build_provider_auth_command(_provider: &str, method: &str, oauth_provider_id: &str) -> String {
-    let mut cmd = format!(
-        "openclaw models auth login --provider {}",
-        shell_single_quote(oauth_provider_id)
-    );
-    if !method.is_empty() && method != oauth_provider_id {
-        cmd.push_str(&format!(" --method {}", shell_single_quote(method)));
-    }
-    cmd
-}
-
-fn parse_lsof_listener_info(output: &str) -> Vec<PortListenerInfo> {
-    let mut listeners = Vec::new();
-    let mut current_pid: Option<i32> = None;
-    let mut current_command: Option<String> = None;
-
-    for line in output.lines() {
-        if line.is_empty() {
-            if let (Some(pid), Some(command)) = (current_pid.take(), current_command.take()) {
-                listeners.push(PortListenerInfo { pid, command });
-            }
-            continue;
-        }
-
-        let (prefix, value) = line.split_at(1);
-        match prefix {
-            "p" => {
-                if let (Some(pid), Some(command)) = (current_pid.take(), current_command.take()) {
-                    listeners.push(PortListenerInfo { pid, command });
-                }
-                current_pid = value.trim().parse::<i32>().ok();
-            }
-            "c" => current_command = Some(value.trim().to_string()),
-            _ => {}
-        }
-    }
-
-    if let (Some(pid), Some(command)) = (current_pid, current_command) {
-        listeners.push(PortListenerInfo { pid, command });
-    }
-
-    listeners
-}
-
-fn is_openclaw_listener(listener: &PortListenerInfo) -> bool {
-    let command = listener.command.to_ascii_lowercase();
-    command.contains("openclaw")
-}
-
-fn find_oauth_port_listeners(port: u16) -> Result<Vec<PortListenerInfo>, String> {
-    let cmd = format!(
-        "if command -v lsof >/dev/null 2>&1; then lsof -nP -iTCP:{} -sTCP:LISTEN -Fpc 2>/dev/null || true; fi",
-        port
-    );
-    shell_command(&cmd).map(|output| parse_lsof_listener_info(&output))
-}
-
-fn terminate_listener_process(listener: &PortListenerInfo, port: u16) -> Result<(), String> {
-    let cmd = format!("kill {}", listener.pid);
-    shell_command(&cmd).map(|_| ()).map_err(|err| {
-        format!(
-            "A previous OpenClaw OAuth session is still using localhost:{} and could not be replaced: {}",
-            port, err
-        )
-    })
-}
-
-fn cleanup_stale_oauth_listener(oauth_provider_id: &str) -> Result<(), String> {
-    let Some(port) = oauth_callback_port(oauth_provider_id) else {
-        return Ok(());
-    };
-
-    let listeners = find_oauth_port_listeners(port)?;
-    if listeners.is_empty() {
-        return Ok(());
-    }
-
-    let mut openclaw_listeners = Vec::new();
-    let mut foreign_listeners = Vec::new();
-
-    for listener in listeners {
-        if is_openclaw_listener(&listener) {
-            openclaw_listeners.push(listener);
-        } else {
-            foreign_listeners.push(listener);
-        }
-    }
-
-    if !foreign_listeners.is_empty() {
-        let details = foreign_listeners
-            .iter()
-            .map(|listener| format!("{} (pid {})", listener.command, listener.pid))
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(format!(
-            "localhost:{} is already in use by a non-OpenClaw process: {}. Close it and retry OAuth.",
-            port, details
-        ));
-    }
-
-    for listener in &openclaw_listeners {
-        terminate_listener_process(listener, port)?;
-    }
-
-    let started = Instant::now();
-    loop {
-        let remaining = find_oauth_port_listeners(port)?;
-        if remaining.is_empty() {
-            return Ok(());
-        }
-        if started.elapsed() > Duration::from_secs(5) {
-            let details = remaining
-                .iter()
-                .map(|listener| format!("{} (pid {})", listener.command, listener.pid))
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(format!(
-                "A previous OpenClaw OAuth session is still using localhost:{} after cleanup: {}",
-                port, details
-            ));
-        }
-        thread::sleep(Duration::from_millis(200));
-    }
-}
-
-#[allow(dead_code)]
-fn build_terminal_runner_command(command: &str, marker_path: &str) -> String {
-    format!(
-        "{}; auth_exit_code=$?; printf '%s' \"$auth_exit_code\" > {}; exit $auth_exit_code",
-        command,
-        shell_single_quote(marker_path)
-    )
-}
-
-fn build_unix_terminal_script(
-    platform: TerminalPlatform,
-    command: &str,
-    marker_path: &str,
-) -> String {
-    let wrapped_command = match platform {
-        TerminalPlatform::Macos => command.to_string(),
-        TerminalPlatform::Linux => format!("/bin/sh -lc {}", shell_single_quote(command)),
-        TerminalPlatform::Windows => command.to_string(),
-    };
-    let shebang = match platform {
-        TerminalPlatform::Macos => "#!/bin/zsh -l",
-        TerminalPlatform::Linux => "#!/bin/sh",
-        TerminalPlatform::Windows => "#!/bin/sh",
-    };
-
-    format!(
-        "{shebang}\n{wrapped_command}\nauth_exit_code=$?\nprintf '%s' \"$auth_exit_code\" > {marker}\nexit $auth_exit_code\n",
-        marker = shell_single_quote(marker_path)
-    )
-}
-
-fn build_macos_terminal_launch(script_path: &str) -> TerminalLaunchPlan {
-    TerminalLaunchPlan {
-        program: "open".to_string(),
-        args: vec![
-            "-a".to_string(),
-            "Terminal".to_string(),
-            script_path.to_string(),
-        ],
-    }
-}
-
-#[allow(dead_code)]
-fn build_linux_terminal_launches(script_path: &str) -> Vec<TerminalLaunchPlan> {
-    vec![
-        TerminalLaunchPlan {
-            program: "x-terminal-emulator".to_string(),
-            args: vec![
-                "-e".to_string(),
-                "/bin/sh".to_string(),
-                script_path.to_string(),
-            ],
-        },
-        TerminalLaunchPlan {
-            program: "gnome-terminal".to_string(),
-            args: vec![
-                "--".to_string(),
-                "/bin/sh".to_string(),
-                script_path.to_string(),
-            ],
-        },
-        TerminalLaunchPlan {
-            program: "konsole".to_string(),
-            args: vec![
-                "-e".to_string(),
-                "/bin/sh".to_string(),
-                script_path.to_string(),
-            ],
-        },
-        TerminalLaunchPlan {
-            program: "xfce4-terminal".to_string(),
-            args: vec![
-                "-x".to_string(),
-                "/bin/sh".to_string(),
-                script_path.to_string(),
-            ],
-        },
-        TerminalLaunchPlan {
-            program: "kitty".to_string(),
-            args: vec!["/bin/sh".to_string(), script_path.to_string()],
-        },
-        TerminalLaunchPlan {
-            program: "alacritty".to_string(),
-            args: vec![
-                "-e".to_string(),
-                "/bin/sh".to_string(),
-                script_path.to_string(),
-            ],
-        },
-        TerminalLaunchPlan {
-            program: "xterm".to_string(),
-            args: vec![
-                "-e".to_string(),
-                "/bin/sh".to_string(),
-                script_path.to_string(),
-            ],
-        },
-    ]
-}
-
-#[allow(dead_code)]
-fn build_windows_terminal_launches(runner_command: &str) -> Vec<TerminalLaunchPlan> {
-    vec![
-        TerminalLaunchPlan {
-            program: "wt.exe".to_string(),
-            args: vec![
-                "-w".to_string(),
-                "0".to_string(),
-                "wsl.exe".to_string(),
-                "-d".to_string(),
-                "Ubuntu".to_string(),
-                "--".to_string(),
-                "/bin/bash".to_string(),
-                "-lc".to_string(),
-                runner_command.to_string(),
-            ],
-        },
-        TerminalLaunchPlan {
-            program: "cmd.exe".to_string(),
-            args: vec![
-                "/C".to_string(),
-                "start".to_string(),
-                "".to_string(),
-                "wsl.exe".to_string(),
-                "-d".to_string(),
-                "Ubuntu".to_string(),
-                "--".to_string(),
-                "/bin/bash".to_string(),
-                "-lc".to_string(),
-                runner_command.to_string(),
-            ],
-        },
-    ]
-}
-
-fn create_local_terminal_artifacts(
-    platform: TerminalPlatform,
-    command: &str,
-) -> Result<(PathBuf, PathBuf), String> {
-    let temp_dir = std::env::temp_dir().join("clawnetes-oauth");
-    fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to prepare temp auth dir: {}", e))?;
-
-    let suffix = rand::thread_rng().gen::<u64>();
-    let marker_path = temp_dir.join(format!("openclaw-auth-{}.exit", suffix));
-    let extension = if matches!(platform, TerminalPlatform::Macos) {
-        "command"
-    } else {
-        "sh"
-    };
-    let script_path = temp_dir.join(format!("openclaw-auth-{}.{}", suffix, extension));
-    let script = build_unix_terminal_script(platform, command, &marker_path.to_string_lossy());
-    fs::write(&script_path, script)
-        .map_err(|e| format!("Failed to write temp auth script: {}", e))?;
-
-    #[cfg(unix)]
-    {
-        let mut perms = fs::metadata(&script_path)
-            .map_err(|e| format!("Failed to read auth script permissions: {}", e))?
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script_path, perms)
-            .map_err(|e| format!("Failed to mark auth script executable: {}", e))?;
-    }
-
-    Ok((marker_path, script_path))
-}
-
-fn wait_for_local_marker(marker_path: &Path, timeout: Duration) -> Result<(), String> {
-    let started = Instant::now();
-    loop {
-        if marker_path.exists() {
-            let status = fs::read_to_string(marker_path)
-                .map_err(|e| format!("Failed to read auth status: {}", e))?;
-            let exit_code = status.trim().parse::<i32>().unwrap_or(-1);
-            let _ = fs::remove_file(marker_path);
-            if exit_code == 0 {
-                return Ok(());
-            }
-            return Err(format!("OpenClaw auth exited with status {}.", exit_code));
-        }
-        if started.elapsed() > timeout {
-            return Err("Timed out waiting for the OpenClaw auth terminal to finish.".to_string());
-        }
-        thread::sleep(Duration::from_millis(500));
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn wait_for_wsl_marker(marker_path: &str, timeout: Duration) -> Result<(), String> {
-    let started = Instant::now();
-    loop {
-        if let Ok(status) = wsl_read_file(marker_path) {
-            let exit_code = status.trim().parse::<i32>().unwrap_or(-1);
-            let _ = shell_command(&format!("rm -f {}", shell_single_quote(marker_path)));
-            if exit_code == 0 {
-                return Ok(());
-            }
-            return Err(format!("OpenClaw auth exited with status {}.", exit_code));
-        }
-        if started.elapsed() > timeout {
-            return Err("Timed out waiting for the OpenClaw auth terminal to finish.".to_string());
-        }
-        thread::sleep(Duration::from_millis(500));
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn spawn_terminal_plan(plan: &TerminalLaunchPlan) -> Result<(), String> {
-    Command::new(&plan.program)
-        .args(&plan.args)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("Failed to launch {}: {}", plan.program, e))
-}
-
-#[cfg(target_os = "windows")]
-fn spawn_terminal_plan(plan: &TerminalLaunchPlan) -> Result<(), String> {
-    Command::new(&plan.program)
-        .args(&plan.args)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("Failed to launch {}: {}", plan.program, e))
-}
-
-#[cfg(target_os = "macos")]
-fn launch_provider_auth_terminal(command: &str) -> Result<(), String> {
-    let (marker_path, script_path) =
-        create_local_terminal_artifacts(TerminalPlatform::Macos, command)?;
-    let plan = build_macos_terminal_launch(&script_path.to_string_lossy());
-    let launch_result = spawn_terminal_plan(&plan);
-    if launch_result.is_err() {
-        let _ = fs::remove_file(&script_path);
-    }
-    launch_result?;
-    let wait_result = wait_for_local_marker(&marker_path, Duration::from_secs(300));
-    let _ = fs::remove_file(script_path);
-    wait_result
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-fn launch_provider_auth_terminal(command: &str) -> Result<(), String> {
-    let (marker_path, script_path) =
-        create_local_terminal_artifacts(TerminalPlatform::Linux, command)?;
-    let script_path_str = script_path.to_string_lossy().to_string();
-    let mut launched = false;
-    let mut last_error = None;
-
-    for plan in build_linux_terminal_launches(&script_path_str) {
-        match spawn_terminal_plan(&plan) {
-            Ok(_) => {
-                launched = true;
-                break;
-            }
-            Err(err) => last_error = Some(err),
-        }
-    }
-
-    if !launched {
-        let _ = fs::remove_file(&script_path);
-        return Err(last_error.unwrap_or_else(|| {
-            "No supported terminal emulator was found for OpenClaw auth.".to_string()
-        }));
-    }
-
-    let wait_result = wait_for_local_marker(&marker_path, Duration::from_secs(300));
-    let _ = fs::remove_file(script_path);
-    wait_result
-}
-
-#[cfg(target_os = "windows")]
-fn launch_provider_auth_terminal(command: &str) -> Result<(), String> {
-    let home = wsl_home_dir()?.trim().to_string();
-    let marker_dir = format!("{}/.openclaw/tmp", home);
-    wsl_mkdir_p(&marker_dir)?;
-    let marker_path = format!(
-        "{}/openclaw-auth-{}.exit",
-        marker_dir,
-        rand::thread_rng().gen::<u64>()
-    );
-    let runner_command = build_terminal_runner_command(command, &marker_path);
-
-    let mut launched = false;
-    let mut last_error = None;
-    for plan in build_windows_terminal_launches(&runner_command) {
-        match spawn_terminal_plan(&plan) {
-            Ok(_) => {
-                launched = true;
-                break;
-            }
-            Err(err) => last_error = Some(err),
-        }
-    }
-
-    if !launched {
-        return Err(last_error.unwrap_or_else(|| {
-            "No supported Windows terminal launcher was found for OpenClaw auth.".to_string()
-        }));
-    }
-
-    wait_for_wsl_marker(&marker_path, Duration::from_secs(300))
-}
-
-#[cfg(target_os = "windows")]
-fn read_provider_auth_profiles() -> Result<serde_json::Value, String> {
-    let home = wsl_home_dir()?.trim().to_string();
-    let auth_profiles_path = format!("{}/.openclaw/agents/main/agent/auth-profiles.json", home);
-    let auth_profiles_str = wsl_read_file(&auth_profiles_path)
-        .map_err(|e| format!("Failed to read auth profiles: {}", e))?;
-    serde_json::from_str(&auth_profiles_str)
-        .map_err(|e| format!("Failed to parse auth profiles: {}", e))
-}
-
-#[cfg(not(target_os = "windows"))]
-fn read_provider_auth_profiles() -> Result<serde_json::Value, String> {
-    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-    let auth_profiles_path = format!("{}/.openclaw/agents/main/agent/auth-profiles.json", home);
-    let auth_profiles_str = fs::read_to_string(&auth_profiles_path)
-        .map_err(|e| format!("Failed to read auth profiles: {}", e))?;
-    serde_json::from_str(&auth_profiles_str)
-        .map_err(|e| format!("Failed to parse auth profiles: {}", e))
-}
-
-// SSH Helper Functions
-
-fn get_env_prefix(os_type: &str) -> String {
-    if os_type == "Darwin" {
-        "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; ".to_string()
-    } else if os_type == "Windows" {
-        // WSL2: Source profile and try to load NVM explicitly
-        "export PATH=\"$PATH:/usr/local/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; ".to_string()
-    } else {
-        // Linux: Source profile and try to load NVM explicitly
-        "export PATH=\"$PATH:/usr/local/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; ".to_string()
-    }
-}
-
-fn authenticate_with_key(sess: &Session, user: &str, key_path: &Path) -> Result<(), String> {
-    // Strategy 1: Try with None for public key (modern libssh2 often handles this)
-    if sess
-        .userauth_pubkey_file(user, None, key_path, None)
-        .is_ok()
-    {
-        return Ok(());
-    }
-
-    // Strategy 2: Try with an explicit .pub file if it exists
-    let mut pubkey_path = key_path.to_path_buf();
-    pubkey_path.set_extension("pub");
-    if pubkey_path.exists() {
-        if sess
-            .userauth_pubkey_file(user, Some(&pubkey_path), key_path, None)
-            .is_ok()
-        {
-            return Ok(());
-        }
-    }
-
-    // Strategy 3: Try generating the public key on the fly using ssh-keygen
-    let output = Command::new("ssh-keygen")
-        .args(["-y", "-P", "", "-f", &key_path.to_string_lossy()])
-        .output();
-
-    if let Ok(out) = output {
-        if out.status.success() {
-            let pubkey_content = String::from_utf8_lossy(&out.stdout);
-            let temp_dir = std::env::temp_dir();
-            let temp_pubkey = temp_dir.join(format!("temp_ssh_key_{}.pub", rand::random::<u32>()));
-
-            if fs::write(&temp_pubkey, pubkey_content.as_bytes()).is_ok() {
-                let res = sess.userauth_pubkey_file(user, Some(&temp_pubkey), key_path, None);
-                let _ = fs::remove_file(temp_pubkey);
-                if res.is_ok() {
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    // If all failed, return a informative error
-    Err("Key authentication failed. libssh2 reported an error. Please ensure the key is a valid OpenSSH format, matches the remote user, and is not passphrase-protected.".to_string())
-}
-
-fn connect_ssh(remote: &RemoteInfo) -> Result<Session, String> {
-    let tcp = TcpStream::connect(format!("{}:22", remote.ip))
-        .map_err(|e| format!("Failed to connect to port 22: {}", e))?;
-    let mut sess = Session::new().map_err(|e| e.to_string())?;
-    sess.set_tcp_stream(tcp);
-    sess.handshake()
-        .map_err(|e| format!("SSH handshake failed: {}", e))?;
-
-    // 1. Try provided private key path if it exists
-    // If a key is explicitly provided, ONLY use that key and don't fallback
-    if let Some(ref path) = remote.private_key_path {
-        let key_path = Path::new(path);
-        if !key_path.exists() {
-            return Err(format!(
-                "The provided private key file does not exist at: {}",
-                path
-            ));
-        }
-
-        // Use the improved authentication helper - fail if it doesn't work
-        authenticate_with_key(&sess, &remote.user, key_path)?;
-        return Ok(sess);
-    }
-
-    // 2. Try SSH agent
-    if sess.userauth_agent(&remote.user).is_ok() {
-        return Ok(sess);
-    }
-
-    // 3. Try default keys
-    if let Some(home) = dirs::home_dir() {
-        let keys = [
-            home.join(".ssh").join("id_rsa"),
-            home.join(".ssh").join("id_ed25519"),
-        ];
-        for key in keys {
-            if key.exists() {
-                if sess
-                    .userauth_pubkey_file(&remote.user, None, &key, None)
-                    .is_ok()
-                {
-                    return Ok(sess);
-                }
-            }
-        }
-    }
-
-    // 4. Try password
-    if let Some(ref pw) = remote.password {
-        if sess.userauth_password(&remote.user, pw).is_ok() {
-            return Ok(sess);
-        }
-    }
-
-    Err("SSH Authentication failed".to_string())
-}
-
-fn execute_ssh(sess: &Session, cmd: &str) -> Result<String, String> {
-    let mut channel = sess.channel_session().map_err(|e| e.to_string())?;
-    channel.exec(cmd).map_err(|e| e.to_string())?;
-    let mut s = String::new();
-    channel.read_to_string(&mut s).map_err(|e| e.to_string())?;
-    let mut stderr = String::new();
-    channel
-        .stderr()
-        .read_to_string(&mut stderr)
-        .map_err(|e| e.to_string())?;
-    let _ = channel.wait_close();
-
-    if channel.exit_status().unwrap_or(0) != 0 {
-        return Err(format!("Command failed: {}\nStderr: {}", cmd, stderr));
-    }
-    Ok(s)
+    license::read_saved_license(&path)
 }
 
 #[command]
@@ -1578,35 +94,7 @@ async fn test_ssh_connection(remote: RemoteInfo) -> Result<String, String> {
 
 #[command]
 fn read_workspace_files() -> Result<serde_json::Value, String> {
-    #[cfg(target_os = "windows")]
-    {
-        let workspace = wsl_home_dir()?.trim().to_string() + "/.openclaw/workspace";
-        let identity = wsl_read_file(&format!("{}/IDENTITY.md", workspace)).unwrap_or_default();
-        let user = wsl_read_file(&format!("{}/USER.md", workspace)).unwrap_or_default();
-        let soul = wsl_read_file(&format!("{}/SOUL.md", workspace)).unwrap_or_default();
-
-        Ok(serde_json::json!({
-            "identity": identity,
-            "user": user,
-            "soul": soul
-        }))
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let home = dirs::home_dir().ok_or("Could not find home directory")?;
-        let workspace = home.join(".openclaw").join("workspace");
-
-        let identity = fs::read_to_string(workspace.join("IDENTITY.md")).unwrap_or_default();
-        let user = fs::read_to_string(workspace.join("USER.md")).unwrap_or_default();
-        let soul = fs::read_to_string(workspace.join("SOUL.md")).unwrap_or_default();
-
-        Ok(serde_json::json!({
-            "identity": identity,
-            "user": user,
-            "soul": soul
-        }))
-    }
+    config::read_workspace_files()
 }
 
 #[command]
@@ -1616,76 +104,12 @@ fn save_workspace_files(
     user: String,
     soul: String,
 ) -> Result<String, String> {
-    #[cfg(target_os = "windows")]
-    {
-        let home = wsl_home_dir()?.trim().to_string();
-        let workspace = if let Some(id) = agent_id {
-            format!("{}/.openclaw/agents/{}/workspace", home, id)
-        } else {
-            format!("{}/.openclaw/workspace", home)
-        };
-
-        wsl_mkdir_p(&workspace)?;
-
-        wsl_write_file(&format!("{}/IDENTITY.md", workspace), &identity)?;
-        wsl_write_file(&format!("{}/USER.md", workspace), &user)?;
-        wsl_write_file(&format!("{}/SOUL.md", workspace), &soul)?;
-
-        Ok("Workspace files saved successfully".to_string())
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let home = dirs::home_dir().ok_or("Could not find home directory")?;
-
-        let workspace = if let Some(id) = agent_id {
-            // Save to agent-specific workspace
-            home.join(".openclaw")
-                .join("agents")
-                .join(id)
-                .join("workspace")
-        } else {
-            // Save to global workspace
-            home.join(".openclaw").join("workspace")
-        };
-
-        fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
-
-        fs::write(workspace.join("IDENTITY.md"), identity).map_err(|e| e.to_string())?;
-        fs::write(workspace.join("USER.md"), user).map_err(|e| e.to_string())?;
-        fs::write(workspace.join("SOUL.md"), soul).map_err(|e| e.to_string())?;
-
-        Ok("Workspace files saved successfully".to_string())
-    }
+    config::save_workspace_files(agent_id.as_deref(), &identity, &user, &soul)
 }
 
 #[command]
 fn create_custom_skill(name: String, content: String) -> Result<String, String> {
-    #[cfg(target_os = "windows")]
-    {
-        let home = wsl_home_dir()?.trim().to_string();
-        let skill_dir = format!("{}/.openclaw/workspace/skills/{}", home, name);
-
-        wsl_mkdir_p(&skill_dir)?;
-        wsl_write_file(&format!("{}/SKILL.md", skill_dir), &content)?;
-
-        Ok(format!("Custom skill '{}' created successfully", name))
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let home = dirs::home_dir().ok_or("Could not find home directory")?;
-        let skill_dir = home
-            .join(".openclaw")
-            .join("workspace")
-            .join("skills")
-            .join(&name);
-
-        fs::create_dir_all(&skill_dir).map_err(|e| e.to_string())?;
-        fs::write(skill_dir.join("SKILL.md"), content).map_err(|e| e.to_string())?;
-
-        Ok(format!("Custom skill '{}' created successfully", name))
-    }
+    config::create_custom_skill(&name, &content)
 }
 
 #[command]
@@ -2637,223 +1061,48 @@ Serve {}."#,
 
 #[command]
 fn start_ssh_tunnel(remote: RemoteInfo) -> Result<String, String> {
-    if TUNNEL_RUNNING.load(Ordering::Relaxed) {
-        return Err("SSH tunnel is already running".to_string());
-    }
-
-    TUNNEL_RUNNING.store(true, Ordering::Relaxed);
-    // Needed to move into thread
-    let remote_info = remote.clone();
-
-    thread::spawn(move || {
-        let listener = match TcpListener::bind("127.0.0.1:18789") {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("Failed to bind local port 18789: {}", e);
-                TUNNEL_RUNNING.store(false, Ordering::Relaxed);
-                return;
-            }
-        };
-
-        let _ = listener.set_nonblocking(true);
-
-        while TUNNEL_RUNNING.load(Ordering::Relaxed) {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let remote_clone = remote_info.clone();
-                    thread::spawn(move || {
-                        let sess = match connect_ssh(&remote_clone) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                eprintln!("Failed to connect SSH for tunnel: {}", e);
-                                return;
-                            }
-                        };
-
-                        let mut remote_channel =
-                            match sess.channel_direct_tcpip("127.0.0.1", 18789, None) {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    eprintln!("Failed to open SSH channel for tunnel: {}", e);
-                                    return;
-                                }
-                            };
-
-                        let _ = stream.set_nonblocking(true);
-                        sess.set_blocking(false);
-
-                        let mut buf1 = [0; 16384];
-                        let mut buf2 = [0; 16384];
-
-                        loop {
-                            if !TUNNEL_RUNNING.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            let mut active = false;
-
-                            match stream.read(&mut buf1) {
-                                Ok(0) => break,
-                                Ok(n) => {
-                                    active = true;
-                                    let mut sent = 0;
-                                    while sent < n {
-                                        match remote_channel.write(&buf1[sent..n]) {
-                                            Ok(m) => sent += m,
-                                            Err(e)
-                                                if e.kind() == std::io::ErrorKind::WouldBlock =>
-                                            {
-                                                thread::sleep(Duration::from_millis(5));
-                                            }
-                                            Err(_) => break,
-                                        }
-                                    }
-                                }
-                                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                                Err(_) => break,
-                            }
-
-                            match remote_channel.read(&mut buf2) {
-                                Ok(0) => break,
-                                Ok(n) => {
-                                    active = true;
-                                    let mut sent = 0;
-                                    while sent < n {
-                                        match stream.write(&buf2[sent..n]) {
-                                            Ok(m) => sent += m,
-                                            Err(e)
-                                                if e.kind() == std::io::ErrorKind::WouldBlock =>
-                                            {
-                                                thread::sleep(Duration::from_millis(5));
-                                            }
-                                            Err(_) => break,
-                                        }
-                                    }
-                                }
-                                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                                Err(_) => break,
-                            }
-
-                            if !active {
-                                thread::sleep(Duration::from_millis(10));
-                            }
-                        }
-                    });
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(50));
-                }
-                Err(_) => break,
-            }
-        }
-        TUNNEL_RUNNING.store(false, Ordering::Relaxed);
-    });
-
-    Ok("SSH tunnel started".to_string())
+    ssh::start_ssh_tunnel(&remote)
 }
 
 #[command]
 fn stop_ssh_tunnel() -> Result<(), String> {
-    TUNNEL_RUNNING.store(false, Ordering::Relaxed);
+    ssh::stop_ssh_tunnel();
     Ok(())
 }
 
 #[command]
 async fn check_remote_prerequisites(remote: RemoteInfo) -> Result<PrereqCheck, String> {
-    let sess = connect_ssh(&remote)?;
-    let node = execute_ssh(&sess, "node -v").is_ok();
-    let openclaw = execute_ssh(&sess, "openclaw --version").is_ok();
-
-    Ok(PrereqCheck {
-        node_installed: node,
-        docker_running: true, // Not needed for OpenClaw native
-        openclaw_installed: openclaw,
-    })
+    install::check_remote_prerequisites(&remote)
 }
 
 #[command]
 async fn get_remote_openclaw_version(remote: RemoteInfo) -> Result<String, String> {
-    let sess = connect_ssh(&remote)?;
-    match execute_ssh(&sess, "openclaw --version") {
-        Ok(v) => Ok(v.trim().to_string()),
-        Err(_) => Ok("Not installed".to_string()),
-    }
+    maintenance::get_remote_openclaw_version(&remote)
 }
 
 #[command]
 async fn run_remote_doctor_repair(remote: RemoteInfo) -> Result<String, String> {
-    let sess = connect_ssh(&remote)?;
-    execute_ssh(&sess, "openclaw doctor --repair --yes")
+    maintenance::run_remote_doctor_repair(&remote)
 }
 
 #[command]
 async fn run_remote_security_audit_fix(remote: RemoteInfo) -> Result<String, String> {
-    let sess = connect_ssh(&remote)?;
-    execute_ssh(&sess, "openclaw security audit --fix")
+    maintenance::run_remote_security_audit_fix(&remote)
 }
 
 #[command]
 async fn uninstall_remote_openclaw(remote: RemoteInfo) -> Result<String, String> {
-    let sess = connect_ssh(&remote)?;
-    let _ = execute_ssh(&sess, "openclaw gateway stop");
-    execute_ssh(&sess, "sudo npm uninstall -g openclaw")?;
-    execute_ssh(&sess, "rm -rf ~/.openclaw")?;
-    Ok("OpenClaw has been completely uninstalled from the remote server.".to_string())
+    maintenance::uninstall_remote_openclaw(&remote)
 }
 
 #[command]
 async fn update_remote_openclaw(remote: RemoteInfo) -> Result<String, String> {
-    let sess = connect_ssh(&remote)?;
-    execute_ssh(&sess, "sudo npm install -g openclaw")?;
-    execute_ssh(&sess, "openclaw gateway restart")?;
-    Ok("OpenClaw has been updated on the remote server.".to_string())
-}
-
-fn parse_gateway_token_cli_output(output: &str) -> Option<String> {
-    let token = output.trim().trim_matches('"').to_string();
-    if token.is_empty() || token == "null" || token == "undefined" {
-        None
-    } else {
-        Some(token)
-    }
-}
-
-fn parse_dashboard_url_cli_output(output: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("Dashboard URL: ")
-            .map(|url| url.trim().to_string())
-            .filter(|url| !url.is_empty())
-    })
-}
-
-fn extract_gateway_token_from_config(config_str: &str, context: &str) -> Result<String, String> {
-    let json: serde_json::Value = serde_json::from_str(config_str).map_err(|e| e.to_string())?;
-    json.get("gateway")
-        .and_then(|g| g.get("auth"))
-        .and_then(|a| a.get("token"))
-        .and_then(|t| t.as_str())
-        .map(|token| token.to_string())
-        .ok_or_else(|| format!("Could not find gateway token in {}", context))
+    maintenance::update_remote_openclaw(&remote)
 }
 
 #[command]
 async fn get_remote_gateway_token(remote: RemoteInfo) -> Result<String, String> {
-    let sess = connect_ssh(&remote)?;
-    let os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
-    let prefix = get_env_prefix(&os_type);
-    let cli_token = execute_ssh(
-        &sess,
-        &format!("{}openclaw config get gateway.auth.token", prefix),
-    )
-    .ok()
-    .and_then(|output| parse_gateway_token_cli_output(&output));
-
-    if let Some(token) = cli_token {
-        return Ok(token);
-    }
-
-    let content = execute_ssh(&sess, "cat ~/.openclaw/openclaw.json")?;
-    extract_gateway_token_from_config(&content, "remote config")
+    gateway::get_remote_gateway_token(&remote)
 }
 
 #[command]
@@ -2862,39 +1111,7 @@ fn start_provider_auth(
     method: String,
     oauth_provider_id: String,
 ) -> Result<ProviderAuthData, String> {
-    if let Some(plugin_id) = required_plugin_for_oauth_provider_id(&oauth_provider_id) {
-        enable_openclaw_plugin(plugin_id).map_err(|err| {
-            format!(
-                "Gemini CLI OAuth depends on the OpenClaw plugin `{}`. Clawnetes tried to enable it automatically, but that failed: {}",
-                plugin_id, err
-            )
-        })?;
-
-        if !provider_id_is_available(&oauth_provider_id)? {
-            return Err(format!(
-                "Gemini CLI OAuth depends on the OpenClaw plugin `{}`. Clawnetes enabled that plugin, but the provider `{}` is still unavailable in OpenClaw.",
-                plugin_id, oauth_provider_id
-            ));
-        }
-    }
-
-    cleanup_stale_oauth_listener(&oauth_provider_id)?;
-    let cmd = build_provider_auth_command(&provider, &method, &oauth_provider_id);
-    launch_provider_auth_terminal(&cmd)
-        .map_err(|err| decorate_oauth_launch_error(&oauth_provider_id, err))?;
-
-    let auth_config = read_provider_auth_profiles()?;
-    resolve_provider_auth_data(&provider, &auth_config)
-        .map(|mut auth| {
-            auth.oauth_provider_id = Some(oauth_provider_id);
-            auth
-        })
-        .ok_or_else(|| {
-            format!(
-                "OAuth completed but no auth profile was found for provider {}",
-                provider
-            )
-        })
+    oauth::start_provider_auth(&provider, &method, &oauth_provider_id)
 }
 
 #[command]
@@ -2904,105 +1121,42 @@ fn close_app(window: tauri::Window) {
 
 #[command]
 fn install_skill(name: String) -> Result<String, String> {
-    shell_command(&format!("npx clawhub install {}", name))
+    install::install_skill(&name)
 }
 
 #[command]
 async fn install_remote_skill(remote: RemoteInfo, name: String) -> Result<String, String> {
-    let sess = connect_ssh(&remote)?;
-    execute_ssh(&sess, &format!("npx clawhub install {}", name))
+    install::install_remote_skill(&remote, &name)
 }
 
 #[command]
 fn get_openclaw_version() -> String {
-    match shell_command("openclaw --version") {
-        Ok(v) => v.trim().to_string(),
-        Err(_) => "v2026.2.8".to_string(),
-    }
+    maintenance::get_openclaw_version()
 }
 
 #[command]
 fn uninstall_openclaw() -> Result<String, String> {
-    let _ = shell_command("openclaw gateway stop");
-
-    // On Windows, global npm uninstall requires root inside WSL
-    #[cfg(target_os = "windows")]
-    wsl_root_command("npm uninstall -g openclaw")?;
-
-    #[cfg(not(target_os = "windows"))]
-    shell_command("npm uninstall -g openclaw")?;
-
-    #[cfg(target_os = "windows")]
-    {
-        wsl_remove_dir("~/.openclaw")?;
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let home = dirs::home_dir().ok_or("Could not find home directory")?;
-        let openclaw_root = home.join(".openclaw");
-        if openclaw_root.exists() {
-            fs::remove_dir_all(openclaw_root).map_err(|e| e.to_string())?;
-        }
-    }
-
-    Ok("OpenClaw has been completely uninstalled.".to_string())
+    maintenance::uninstall_openclaw()
 }
 
 #[command]
 fn run_doctor_repair() -> Result<String, String> {
-    shell_command("openclaw doctor --repair --yes")
+    maintenance::run_doctor_repair()
 }
 
 #[command]
 fn run_security_audit_fix() -> Result<String, String> {
-    shell_command("openclaw security audit --fix")
+    maintenance::run_security_audit_fix()
 }
 
 #[command]
 fn check_prerequisites() -> PrereqCheck {
-    #[cfg(target_os = "windows")]
-    {
-        // On Windows, shell_command routes through WSL, so check WSL2 first
-        let wsl2_ok = check_wsl2_installed();
-        if !wsl2_ok {
-            // WSL2 not installed — can't check node or openclaw yet
-            return PrereqCheck {
-                node_installed: false,
-                docker_running: true,
-                openclaw_installed: false,
-            };
-        }
-    }
-
-    let node = shell_command("node -v").is_ok();
-    let openclaw = shell_command("openclaw --version").is_ok();
-
-    PrereqCheck {
-        node_installed: node,
-        docker_running: true,
-        openclaw_installed: openclaw,
-    }
+    install::check_prerequisites()
 }
 
 #[command]
 fn install_openclaw() -> Result<String, String> {
-    #[cfg(target_os = "windows")]
-    {
-        ensure_wsl2_installed()?;
-        // Node.js should already be installed by install_local_nodejs()
-        // Global npm install needs root for /usr/lib/node_modules
-        wsl_root_command("npm install -g openclaw")?;
-        shell_command("openclaw --version")?;
-        Ok("OpenClaw installed successfully in WSL2.".to_string())
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        shell_command("npm install -g openclaw")?;
-        shell_command("openclaw --version")?;
-        Ok("OpenClaw installed successfully.".to_string())
-    }
+    install::install_openclaw()
 }
 
 #[command]
@@ -3828,752 +1982,37 @@ Serve {}."#,
 
 #[command]
 fn start_gateway() -> Result<String, String> {
-    #[cfg(target_os = "macos")]
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    // config_path removed as unused
-
-    let _ = shell_command("openclaw gateway stop");
-    thread::sleep(Duration::from_secs(2));
-
-    // Ensure service is loaded on macOS (fix for "Could not find service" error)
-    #[cfg(target_os = "macos")]
-    {
-        let plist_path = home.join("Library/LaunchAgents/ai.openclaw.gateway.plist");
-        if plist_path.exists() {
-            // Use 'launchctl bootstrap' to load the service into the gui domain
-            // We use shell_command so $(id -u) is expanded by zsh
-            let _ = shell_command(&format!(
-                "launchctl bootstrap gui/$(id -u) \"{}\"",
-                plist_path.to_string_lossy()
-            ));
-        }
-    }
-
-    // Removed gateway install --force logic to prevent overwriting custom config.
-    // Installation is now handled in configure_agent / setup_remote_openclaw.
-
-    // Run doctor --fix to auto-migrate any pairing stores and resolve schema quirks
-    let _ = shell_command("openclaw doctor --fix --yes || true");
-
-    let start_output = shell_command("openclaw gateway start")?;
-
-    if start_output.to_lowercase().contains("error")
-        || start_output.to_lowercase().contains("failed")
-    {
-        return Err(format!("Gateway start may have failed: {}", start_output));
-    }
-
-    thread::sleep(Duration::from_secs(5));
-
-    let mut last_error = String::new();
-    for attempt in 1..=8 {
-        if TcpStream::connect("127.0.0.1:18789").is_ok() {
-            return Ok("Gateway started successfully and is accessible on port 18789.".to_string());
-        }
-
-        if let Ok(status) = shell_command("openclaw gateway status") {
-            let status_lower = status.to_lowercase();
-            last_error = format!("Status: {} | Port 18789: not accessible", status.trim());
-
-            if status_lower.contains("starting") || status_lower.contains("initializing") {
-                last_error = format!("Gateway is starting... (attempt {}/8)", attempt);
-            }
-        } else {
-            last_error = format!("Gateway status check failed (attempt {}/8)", attempt);
-        }
-
-        if attempt < 8 {
-            thread::sleep(Duration::from_secs(3));
-        }
-    }
-
-    let final_status = shell_command("openclaw gateway status")
-        .unwrap_or_else(|_| "Unable to get status".to_string());
-
-    Err(format!(
-        "Gateway did not become accessible on port 18789 after 24+ seconds.\n\
-        Last status: {}\n\
-        Final gateway status:\n{}\n\n\
-        Troubleshooting:\n\
-        1. Check gateway logs: 'openclaw gateway logs'\n\
-        2. Check gateway status: 'openclaw gateway status'\n\
-        3. Try manual start: 'openclaw gateway stop && openclaw gateway start'\n\
-        4. Check if port 18789 is in use: 'lsof -i :18789'",
-        last_error, final_status
-    ))
+    gateway::start_gateway()
 }
 
 #[command]
 fn initialize_agent_sessions(agent_ids: Vec<String>) -> Result<String, String> {
-    let mut initialized = 0;
-    for id in &agent_ids {
-        if id == "main" {
-            continue;
-        }
-        let _ = shell_command(&build_agent_session_init_command(id));
-        thread::sleep(Duration::from_millis(500));
-        initialized += 1;
-    }
-    Ok(format!("Initialized {} agent sessions", initialized))
+    gateway::initialize_agent_sessions(&agent_ids)
 }
 
 #[command]
 fn generate_pairing_code() -> Result<String, String> {
-    thread::sleep(Duration::from_secs(2));
-    let _ = shell_command("openclaw gateway status");
-    Ok("Ready! Send any message to your Telegram bot to start pairing. The bot will respond automatically with a code.".to_string())
+    gateway::generate_pairing_code()
 }
 
 #[command]
 async fn approve_pairing(code: String, remote: Option<RemoteInfo>) -> Result<String, String> {
-    // Run: openclaw pairing approve <code> --channel telegram
-    let cmd_raw = format!("openclaw pairing approve {} --channel telegram", code);
-
-    let output = if let Some(r) = remote {
-        let sess = connect_ssh(&r)?;
-        let os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
-        let prefix = get_env_prefix(&os_type);
-        execute_ssh(&sess, &format!("{}{}", prefix, cmd_raw))
-    } else {
-        shell_command(&cmd_raw)
-    };
-
-    match output {
-        Ok(out) => {
-            let out_lower = out.to_lowercase();
-            if out_lower.contains("error") {
-                if out_lower.contains("no pending pairing request found") {
-                    return Err("Invalid pairing code. Please make sure you sent a message to the bot and try again.".to_string());
-                }
-                return Err(out);
-            }
-            Ok("Pairing successful!".to_string())
-        }
-        Err(err) => {
-            let err_lower = err.to_lowercase();
-            if err_lower.contains("no pending pairing request found") {
-                return Err("Invalid pairing code. Please make sure you sent a message to the bot and try again.".to_string());
-            }
-            Err(err)
-        }
-    }
+    gateway::approve_pairing(&code, remote.as_ref())
 }
 
 #[command]
 fn get_dashboard_url(is_remote: bool, remote: Option<RemoteInfo>) -> Result<String, String> {
-    let token = if is_remote && remote.is_some() {
-        let r = remote.unwrap();
-        let sess = connect_ssh(&r)?;
-        let os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
-        let prefix = get_env_prefix(&os_type);
-
-        if let Some(url) = execute_ssh(&sess, &format!("{}openclaw dashboard --no-open", prefix))
-            .ok()
-            .and_then(|output| parse_dashboard_url_cli_output(&output))
-        {
-            return Ok(url);
-        }
-
-        if let Some(token) = execute_ssh(
-            &sess,
-            &format!("{}openclaw config get gateway.auth.token", prefix),
-        )
-        .ok()
-        .and_then(|output| parse_gateway_token_cli_output(&output))
-        {
-            token
-        } else {
-            let content = execute_ssh(&sess, "cat ~/.openclaw/openclaw.json")?;
-            extract_gateway_token_from_config(&content, "remote config")?
-        }
-    } else {
-        #[cfg(target_os = "windows")]
-        {
-            if let Some(url) = wsl_root_command("openclaw dashboard --no-open")
-                .ok()
-                .and_then(|output| parse_dashboard_url_cli_output(&output))
-            {
-                return Ok(url);
-            }
-
-            if let Some(token) = wsl_root_command("openclaw config get gateway.auth.token")
-                .ok()
-                .and_then(|output| parse_gateway_token_cli_output(&output))
-            {
-                token
-            } else {
-                let home = wsl_home_dir()?.trim().to_string();
-                let config_path = format!("{}/.openclaw/openclaw.json", home);
-                let config_str = wsl_read_file(&config_path)?;
-                extract_gateway_token_from_config(&config_str, "config")?
-            }
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            if let Some(url) = shell_command("openclaw dashboard --no-open")
-                .ok()
-                .and_then(|output| parse_dashboard_url_cli_output(&output))
-            {
-                return Ok(url);
-            }
-
-            if let Some(token) = shell_command("openclaw config get gateway.auth.token")
-                .ok()
-                .and_then(|output| parse_gateway_token_cli_output(&output))
-            {
-                token
-            } else {
-                let home = dirs::home_dir().ok_or("Could not find home directory")?;
-                let config_path = home.join(".openclaw").join("openclaw.json");
-                let config_str = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-                extract_gateway_token_from_config(&config_str, "config")?
-            }
-        }
-    };
-
-    Ok(format!("http://127.0.0.1:18789/#token={}", token))
+    gateway::get_dashboard_url(is_remote, remote.as_ref())
 }
 
 #[command]
 fn verify_tunnel_connectivity(remote: RemoteInfo) -> Result<bool, String> {
-    let mut last_error = String::from("No attempts made");
-
-    // Retry loop: 30 attempts, 2 seconds between each (60s total)
-    for i in 0..30 {
-        if i > 0 {
-            thread::sleep(Duration::from_secs(2));
-        }
-
-        // 1. Basic TCP check to local tunnel port
-        if let Err(e) = TcpStream::connect("127.0.0.1:18789") {
-            last_error = format!("Local tunnel port 18789 not reachable: {}", e);
-            continue;
-        }
-
-        // 2. SSH into remote to get token AND check if gateway is actually running
-        let sess = match connect_ssh(&remote) {
-            Ok(s) => s,
-            Err(e) => {
-                last_error = format!("SSH connection failed during verification: {}", e);
-                continue;
-            }
-        };
-
-        // Check remote gateway status first
-        // We use a generous grep to see if the process exists
-        let check_process = execute_ssh(&sess, "ps aux | grep openclaw | grep -v grep");
-        if let Ok(output) = check_process {
-            if output.trim().is_empty() {
-                // Try the CLI status command as backup
-                let status_cmd = execute_ssh(&sess, "openclaw gateway status");
-                if let Ok(status) = status_cmd {
-                    if status.to_lowercase().contains("stopped")
-                        || status.to_lowercase().contains("error")
-                    {
-                        last_error =
-                            format!("Remote gateway is not running. Status: {}", status.trim());
-                        continue;
-                    }
-                } else {
-                    last_error = "Remote openclaw process not found".to_string();
-                    continue;
-                }
-            }
-        }
-
-        let content = match execute_ssh(&sess, "cat ~/.openclaw/openclaw.json") {
-            Ok(c) => c,
-            Err(e) => {
-                last_error = format!("Failed to read remote config: {}", e);
-                continue;
-            }
-        };
-
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(token) = json
-                .get("gateway")
-                .and_then(|g| g.get("auth"))
-                .and_then(|a| a.get("token"))
-                .and_then(|t| t.as_str())
-            {
-                let client = reqwest::blocking::Client::builder()
-                    .timeout(Duration::from_secs(5))
-                    // Important: Start with no proxy to avoid local env interference
-                    .no_proxy()
-                    .build()
-                    .unwrap_or_else(|_| reqwest::blocking::Client::new());
-
-                let url = format!("http://127.0.0.1:18789/?token={}", token);
-
-                match client.head(&url).send() {
-                    Ok(resp) => {
-                        if resp.status().is_success() || resp.status().is_redirection() {
-                            return Ok(true);
-                        } else {
-                            last_error = format!("HTTP Error: Status {}", resp.status());
-                        }
-                    }
-                    Err(e) => {
-                        last_error = format!("HTTP Connection failed: {}", e);
-                    }
-                }
-            } else {
-                last_error = "Could not find token in remote openclaw.json".to_string();
-            }
-        } else {
-            last_error = "Failed to parse remote openclaw.json".to_string();
-        }
-    }
-
-    // If we get here, all retries failed. Return the last specific error.
-    Err(format!(
-        "Tunnel verification failed after 60s. Last error: {}",
-        last_error
-    ))
-}
-
-// WSL2 Helper Functions
-
-#[cfg(target_os = "windows")]
-fn check_wsl2_installed() -> bool {
-    let output = Command::new("powershell")
-        .args(["-Command", "wsl -l -v 2>$null; exit $LASTEXITCODE"])
-        .output();
-
-    output.map(|o| o.status.success()).unwrap_or(false)
-}
-
-/// Poll WSL Ubuntu until it responds, with a configurable timeout.
-/// Used after installing WSL or before running commands that need WSL to be ready.
-#[cfg(target_os = "windows")]
-fn wait_for_wsl_ready(timeout_secs: u64) -> Result<(), String> {
-    let start = std::time::Instant::now();
-    let timeout = Duration::from_secs(timeout_secs);
-    while start.elapsed() < timeout {
-        let output = Command::new("wsl")
-            .args(["-d", "Ubuntu", "-u", "root", "--", "echo", "ready"])
-            .output();
-        if let Ok(o) = output {
-            if o.status.success() {
-                let stdout = String::from_utf8_lossy(&o.stdout);
-                if stdout.trim() == "ready" {
-                    return Ok(());
-                }
-            }
-        }
-        thread::sleep(Duration::from_secs(3));
-    }
-    Err(format!(
-        "WSL Ubuntu not ready after {} seconds",
-        timeout_secs
-    ))
-}
-
-#[cfg(target_os = "windows")]
-fn ensure_wsl2_installed() -> Result<(), String> {
-    // Check if WSL2 is already installed
-    if check_wsl2_installed() {
-        return Ok(());
-    }
-
-    // Install WSL2 using elevated PowerShell (triggers UAC admin prompt)
-    // Start-Process -Verb RunAs launches the command with admin privileges,
-    // showing the user a UAC confirmation dialog they can click to approve.
-    // -Wait ensures we block until the elevated process completes.
-    let output = Command::new("powershell")
-        .args([
-            "-Command",
-            "Start-Process -FilePath 'wsl.exe' -ArgumentList '--install --distribution Ubuntu' -Verb RunAs -Wait"
-        ])
-        .output()
-        .map_err(|e| format!("Failed to execute WSL2 installation: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // Check if user declined the UAC prompt
-        if stderr.contains("canceled")
-            || stderr.contains("denied")
-            || stderr.contains("not have permission")
-        {
-            return Err("WSL2 installation requires administrator approval. Please click 'Yes' on the admin dialog when prompted.".to_string());
-        }
-        return Err(format!(
-            "WSL2 installation failed. Please ensure virtualization is enabled in BIOS. Error: {}",
-            stderr
-        ));
-    }
-
-    // Wait for WSL Ubuntu to become responsive (first-time init can be slow)
-    wait_for_wsl_ready(90).map_err(|e| {
-        format!("WSL2 was installed but Ubuntu is not responding. You may need to restart your computer. Error: {}", e)
-    })?;
-
-    // Verify WSL2 is now available
-    if !check_wsl2_installed() {
-        return Err("WSL2 was installed but may require a system restart. Please restart your computer and run this setup again.".to_string());
-    }
-
-    // Configure Ubuntu with a default user non-interactively.
-    // Without this, Ubuntu prompts for username/password on first launch.
-
-    // Create a non-root user 'openclaw' with a password, for general use
-    let user_setup = Command::new("wsl")
-        .args(["-d", "Ubuntu", "-u", "root", "--", "/bin/bash", "-c",
-            "id openclaw >/dev/null 2>&1 || (useradd -m -s /bin/bash openclaw && echo 'openclaw:openclaw' | chpasswd && usermod -aG sudo openclaw)"
-        ])
-        .output()
-        .map_err(|e| format!("Failed to create openclaw user: {}", e))?;
-
-    if !user_setup.status.success() {
-        let stderr = String::from_utf8_lossy(&user_setup.stderr);
-        eprintln!(
-            "Warning: user setup returned error (may be harmless if user exists): {}",
-            stderr
-        );
-    }
-
-    // Write /etc/wsl.conf to set default user (more reliable than `ubuntu config --default-user`)
-    let wsl_conf = Command::new("wsl")
-        .args([
-            "-d",
-            "Ubuntu",
-            "-u",
-            "root",
-            "--",
-            "/bin/bash",
-            "-c",
-            "printf '[user]\\ndefault=openclaw\\n' > /etc/wsl.conf",
-        ])
-        .output()
-        .map_err(|e| format!("Failed to write /etc/wsl.conf: {}", e))?;
-
-    if !wsl_conf.status.success() {
-        let stderr = String::from_utf8_lossy(&wsl_conf.stderr);
-        eprintln!("Warning: failed to write wsl.conf: {}", stderr);
-    }
-
-    // Terminate Ubuntu so wsl.conf takes effect on next launch
-    let _ = Command::new("wsl").args(["--terminate", "Ubuntu"]).output();
-
-    thread::sleep(Duration::from_secs(2));
-
-    // Wait for Ubuntu to come back with the new default user
-    wait_for_wsl_ready(30).map_err(|e| {
-        format!(
-            "WSL Ubuntu failed to restart after user configuration: {}",
-            e
-        )
-    })?;
-
-    Ok(())
-}
-
-/// Run a command as root inside WSL (for apt-get, system setup, etc.)
-/// This avoids the sudo password prompt by using `wsl -u root` directly.
-#[cfg(target_os = "windows")]
-fn wsl_root_command(cmd: &str) -> Result<String, String> {
-    let output = Command::new("wsl")
-        .args([
-            "-d",
-            "Ubuntu",
-            "--user",
-            "root",
-            "--",
-            "/bin/bash",
-            "-c",
-            cmd,
-        ])
-        .output()
-        .map_err(|e| format!("Failed to execute command: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    if output.status.success() {
-        Ok(stdout)
-    } else {
-        Err(format!("{}\n{}", stdout, stderr))
-    }
-}
-
-// --- WSL filesystem helpers (Windows only) ---
-// On Windows, openclaw runs inside WSL but Tauri runs natively.
-// dirs::home_dir() returns C:\Users\... but we need /home/user/... inside WSL.
-
-#[cfg(target_os = "windows")]
-fn wsl_home_dir() -> Result<String, String> {
-    shell_command("echo $HOME").map(|s| s.trim().to_string())
-}
-
-#[cfg(target_os = "windows")]
-fn wsl_write_file(path: &str, content: &str) -> Result<(), String> {
-    // Escape single quotes for safe shell embedding: ' -> '\''
-    let escaped = content.replace('\'', "'\\''");
-    let cmd = format!("printf '%s' '{}' > \"{}\"", escaped, path);
-    shell_command(&cmd)?;
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn wsl_read_file(path: &str) -> Result<String, String> {
-    shell_command(&format!("cat \"{}\" 2>/dev/null", path))
-}
-
-#[cfg(target_os = "windows")]
-fn wsl_mkdir_p(path: &str) -> Result<(), String> {
-    shell_command(&format!("mkdir -p \"{}\"", path))?;
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn wsl_list_dirs(base_path: &str) -> Vec<String> {
-    let mut dirs_found = Vec::new();
-    if let Ok(output) = shell_command(&format!("ls -1 -F \"{}\" 2>/dev/null", base_path)) {
-        for line in output.lines() {
-            if line.trim().ends_with('/') {
-                dirs_found.push(line.trim().trim_matches('/').to_string());
-            }
-        }
-    }
-    dirs_found
-}
-
-#[cfg(target_os = "windows")]
-fn wsl_remove_dir(path: &str) -> Result<(), String> {
-    let cmd = if path.starts_with("~/") {
-        format!("rm -rf \"$HOME/{}\"", &path[2..])
-    } else {
-        format!("rm -rf \"{}\"", path)
-    };
-    shell_command(&cmd)?;
-    Ok(())
-}
-
-fn shell_command(cmd: &str) -> Result<String, String> {
-    #[cfg(target_os = "macos")]
-    let (shell, args) = ("/bin/zsh", vec!["-l", "-c"]);
-
-    #[cfg(target_os = "windows")]
-    let (shell, args) = ("wsl", vec!["--", "/bin/bash", "-c"]);
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let (shell, args) = ("sh", vec!["-c"]);
-
-    let output = Command::new(shell)
-        .args(&args)
-        .arg(cmd)
-        .output()
-        .map_err(|e| format!("Failed to execute command: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    if output.status.success() {
-        Ok(stdout)
-    } else {
-        // If stderr is populated, return it.
-        if !stderr.is_empty() {
-            Err(stderr)
-        } else if !stdout.is_empty() {
-            Err(stdout) // sometimes error messages are in stdout
-        } else {
-            Err(format!(
-                "Command failed with exit code: {}",
-                output.status.code().unwrap_or(-1)
-            ))
-        }
-    }
+    gateway::verify_tunnel_connectivity(&remote)
 }
 
 #[command]
 fn check_pairing_status(remote: Option<RemoteInfo>) -> Result<bool, String> {
-    if let Some(r) = remote {
-        let sess = connect_ssh(&r)?;
-        let os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
-        let prefix = get_env_prefix(&os_type);
-
-        if let Some(policy) = read_telegram_dm_policy_via_cli(|cmd| execute_ssh(&sess, &format!("{}{}", prefix, cmd)))? {
-            if telegram_pairing_status_from_dm_policy(&policy) {
-                return Ok(true);
-            }
-        }
-
-        if let Some(policy) =
-            read_telegram_dm_policy_from_config_str(&execute_ssh(&sess, "cat ~/.openclaw/openclaw.json")?)
-        {
-            if telegram_pairing_status_from_dm_policy(&policy) {
-                return Ok(true);
-            }
-        }
-
-        return telegram_allow_from_is_linked_remote(&sess);
-    }
-
-    if let Some(policy) = read_telegram_dm_policy_via_cli(shell_command)? {
-        if telegram_pairing_status_from_dm_policy(&policy) {
-            return Ok(true);
-        }
-    }
-
-    let home_dir = dirs::home_dir().ok_or("Could not determine local home directory.")?;
-    let config_path = home_dir.join(".openclaw").join("openclaw.json");
-    if let Ok(config_str) = fs::read_to_string(&config_path) {
-        if let Some(policy) = read_telegram_dm_policy_from_config_str(&config_str) {
-            if telegram_pairing_status_from_dm_policy(&policy) {
-                return Ok(true);
-            }
-        }
-    }
-
-    let credentials_dir = home_dir.join(".openclaw").join("credentials");
-    Ok(telegram_allow_from_is_linked_local(&credentials_dir))
-}
-
-fn telegram_pairing_status_from_dm_policy(policy: &str) -> bool {
-    policy.trim().trim_matches('"') != "pairing"
-}
-
-fn parse_config_string_output(output: &str) -> Option<String> {
-    let value = output.trim().trim_matches('"');
-    if value.is_empty() || value == "null" || value == "undefined" {
-        None
-    } else {
-        Some(value.to_string())
-    }
-}
-
-fn extract_telegram_dm_policy_from_config(config: &serde_json::Value) -> Option<String> {
-    config
-        .get("channels")
-        .and_then(|c| c.get("telegram"))
-        .and_then(|t| t.get("accounts"))
-        .and_then(|a| a.get("default"))
-        .and_then(|m| m.get("dmPolicy"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            config
-                .get("channels")
-                .and_then(|c| c.get("telegram"))
-                .and_then(|t| t.get("dmPolicy"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        })
-}
-
-fn read_telegram_dm_policy_from_config_str(config_str: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(config_str)
-        .ok()
-        .and_then(|config| extract_telegram_dm_policy_from_config(&config))
-}
-
-fn read_telegram_dm_policy_via_cli<F>(mut run_command: F) -> Result<Option<String>, String>
-where
-    F: FnMut(&str) -> Result<String, String>,
-{
-    for cmd in [
-        "openclaw config get channels.telegram.accounts.default.dmPolicy",
-        "openclaw config get channels.telegram.dmPolicy",
-    ] {
-        match run_command(cmd) {
-            Ok(output) => {
-                if let Some(policy) = parse_config_string_output(&output) {
-                    return Ok(Some(policy));
-                }
-            }
-            Err(_) => continue,
-        }
-    }
-
-    Ok(None)
-}
-
-fn telegram_allow_from_entries_from_str(content: &str) -> Option<usize> {
-    serde_json::from_str::<serde_json::Value>(content)
-        .ok()
-        .and_then(|json| json.get("allowFrom").and_then(|value| value.as_array()).map(|items| items.len()))
-}
-
-fn is_telegram_allow_from_filename(name: &str) -> bool {
-    name.starts_with("telegram") && name.ends_with("-allowFrom.json")
-}
-
-fn telegram_allow_from_is_linked_local(credentials_dir: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(credentials_dir) else {
-        return false;
-    };
-
-    entries.flatten().any(|entry| {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
-            return false;
-        };
-        if !path.is_file() || !is_telegram_allow_from_filename(name) {
-            return false;
-        }
-
-        fs::read_to_string(&path)
-            .ok()
-            .and_then(|content| telegram_allow_from_entries_from_str(&content))
-            .map(|count| count > 0)
-            .unwrap_or(false)
-    })
-}
-
-fn telegram_allow_from_is_linked_remote(sess: &Session) -> Result<bool, String> {
-    let files = execute_ssh(
-        sess,
-        "find \"$HOME/.openclaw/credentials\" -maxdepth 1 -type f -name 'telegram*-allowFrom.json' 2>/dev/null",
-    )?;
-
-    for file in files.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        let content = execute_ssh(sess, &format!("cat {}", shell_single_quote(file)))?;
-        if telegram_allow_from_entries_from_str(&content).unwrap_or(0) > 0 {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
-}
-
-fn whatsapp_session_is_linked(session_dir: &Path) -> bool {
-    if !session_dir.exists() {
-        return false;
-    }
-
-    let mut stack = vec![session_dir.to_path_buf()];
-    while let Some(path) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&path) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let child = entry.path();
-            if child.is_file() {
-                return true;
-            }
-            if child.is_dir() {
-                stack.push(child);
-            }
-        }
-    }
-
-    false
-}
-
-fn check_whatsapp_link_status(remote: Option<RemoteInfo>) -> Result<bool, String> {
-    if let Some(r) = remote {
-        let sess = connect_ssh(&r)?;
-        let output = execute_ssh(
-            &sess,
-            "if [ -d \"$HOME/.openclaw/credentials/whatsapp/default\" ] && find \"$HOME/.openclaw/credentials/whatsapp/default\" -type f 2>/dev/null | grep -q .; then printf linked; else printf unlinked; fi",
-        )?;
-        Ok(output.trim() == "linked")
-    } else {
-        let home_dir = dirs::home_dir().ok_or("Could not determine local home directory.")?;
-        let session_dir = home_dir.join(".openclaw/credentials/whatsapp/default");
-        Ok(whatsapp_session_is_linked(&session_dir))
-    }
+    pairing::check_pairing_status(remote.as_ref())
 }
 
 #[command]
@@ -4581,12 +2020,7 @@ fn check_messaging_link_status(
     channel: String,
     remote: Option<RemoteInfo>,
 ) -> Result<bool, String> {
-    match channel.as_str() {
-        "telegram" => check_pairing_status(remote),
-        "whatsapp" => check_whatsapp_link_status(remote),
-        "none" => Ok(true),
-        _ => Err(format!("Unsupported messaging channel: {}", channel)),
-    }
+    pairing::check_messaging_link_status(&channel, remote.as_ref())
 }
 
 #[command]
@@ -5176,95 +2610,12 @@ fn verify_and_store_license(app: tauri::AppHandle, key: String) -> Result<bool, 
 
 #[command]
 async fn install_local_nodejs() -> Result<String, String> {
-    #[cfg(target_os = "windows")]
-    {
-        // On Windows: install WSL2 first, then Node.js inside WSL2
-        ensure_wsl2_installed()?;
-        // Ensure WSL is responsive before running apt commands
-        wait_for_wsl_ready(30)
-            .map_err(|e| format!("WSL not ready for Node.js installation: {}", e))?;
-        // Use wsl_root_command to run as root directly (avoids sudo password prompt)
-        wsl_root_command("curl -fsSL https://deb.nodesource.com/setup_22.x | bash -")
-            .map_err(|e| format!("Failed to add NodeSource repository: {}", e))?;
-        wsl_root_command("apt-get install -y nodejs")
-            .map_err(|e| format!("Failed to install Node.js in WSL2: {}", e))?;
-        return Ok("Node.js installed successfully in WSL2.".to_string());
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        // 1. Try brew (macOS standard)
-        if shell_command("brew --version").is_ok() {
-            return shell_command("brew install node");
-        }
-
-        // 2. Try nvm (via curl) - Fallback for macOS without brew or Linux
-        let install_nvm_cmd =
-            "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash";
-        shell_command(install_nvm_cmd).map_err(|e| format!("Failed to install nvm: {}", e))?;
-
-        let install_node_cmd = "export NVM_DIR=\"$HOME/.nvm\"; \
-            [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; \
-            nvm install node && nvm use node && nvm alias default node";
-
-        shell_command(install_node_cmd)
-            .map_err(|e| format!("Failed to install Node.js via nvm: {}", e))
-    }
+    install::install_local_nodejs()
 }
 
 #[command]
 fn get_ollama_models(remote: Option<RemoteInfo>) -> Result<Vec<String>, String> {
-    if let Some(r) = remote {
-        // Remote: SSH exec curl to hit Ollama API on the remote host
-        let sess = connect_ssh(&r).map_err(|e| format!("SSH connect failed: {}", e))?;
-        let output = execute_ssh(
-            &sess,
-            "curl -sf http://localhost:11434/api/tags 2>/dev/null || echo '{}'",
-        );
-        match output {
-            Ok(json_str) => {
-                let val: serde_json::Value =
-                    serde_json::from_str(&json_str).unwrap_or(serde_json::json!({}));
-                let models: Vec<String> = val
-                    .get("models")
-                    .and_then(|m| m.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|m| {
-                                m.get("name")
-                                    .and_then(|n| n.as_str())
-                                    .map(|s| s.to_string())
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                Ok(models)
-            }
-            Err(_) => Ok(vec![]),
-        }
-    } else {
-        // Local: use reqwest blocking
-        match reqwest::blocking::get("http://localhost:11434/api/tags") {
-            Ok(resp) => {
-                let json: serde_json::Value = resp.json().unwrap_or(serde_json::json!({}));
-                let models: Vec<String> = json
-                    .get("models")
-                    .and_then(|m| m.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|m| {
-                                m.get("name")
-                                    .and_then(|n| n.as_str())
-                                    .map(|s| s.to_string())
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                Ok(models)
-            }
-            Err(_) => Ok(vec![]),
-        }
-    }
+    models::get_ollama_models(remote.as_ref())
 }
 
 #[command]
@@ -5272,54 +2623,7 @@ fn get_lmstudio_models(
     base_url: Option<String>,
     remote: Option<RemoteInfo>,
 ) -> Result<Vec<String>, String> {
-    let url_base = base_url.as_deref().unwrap_or("http://localhost:1234");
-    let models_url = format!("{}/v1/models", url_base);
-
-    if let Some(r) = remote {
-        let sess = connect_ssh(&r).map_err(|e| format!("SSH connect failed: {}", e))?;
-        let output = execute_ssh(
-            &sess,
-            &format!("curl -sf {}/v1/models 2>/dev/null || echo '{{}}'", url_base),
-        );
-        match output {
-            Ok(json_str) => {
-                let val: serde_json::Value =
-                    serde_json::from_str(&json_str).unwrap_or(serde_json::json!({}));
-                let models: Vec<String> = val
-                    .get("data")
-                    .and_then(|d| d.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|m| {
-                                m.get("id").and_then(|n| n.as_str()).map(|s| s.to_string())
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                Ok(models)
-            }
-            Err(_) => Ok(vec![]),
-        }
-    } else {
-        match reqwest::blocking::get(&models_url) {
-            Ok(resp) => {
-                let json: serde_json::Value = resp.json().unwrap_or(serde_json::json!({}));
-                let models: Vec<String> = json
-                    .get("data")
-                    .and_then(|d| d.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|m| {
-                                m.get("id").and_then(|n| n.as_str()).map(|s| s.to_string())
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                Ok(models)
-            }
-            Err(_) => Ok(vec![]),
-        }
-    }
+    models::get_lmstudio_models(base_url.as_deref(), remote.as_ref())
 }
 
 #[command]
@@ -5327,19 +2631,7 @@ fn validate_openclaw_config(
     remote: Option<RemoteInfo>,
     is_wsl: Option<bool>,
 ) -> Result<String, String> {
-    if let Some(r) = remote {
-        let sess = connect_ssh(&r).map_err(|e| format!("SSH connect failed: {}", e))?;
-        let os_type = execute_ssh(&sess, "uname -s")
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        let prefix = get_env_prefix(&os_type);
-        execute_ssh(&sess, &format!("{}openclaw config validate 2>&1", prefix))
-    } else if is_wsl.unwrap_or(false) {
-        shell_command("wsl -- openclaw config validate 2>&1")
-    } else {
-        shell_command("openclaw config validate 2>&1")
-    }
+    config::validate_openclaw_config(remote.as_ref(), is_wsl)
 }
 
 #[command]
@@ -5875,9 +3167,7 @@ async fn check_whatsapp_linked(gateway_port: u16) -> Result<bool, String> {
 #[command]
 async fn restart_openclaw_gateway(remote: Option<RemoteInfo>) -> Result<(), String> {
     if let Some(r) = remote {
-        let sess = connect_ssh(&r)?;
-        let nvm_prefix = get_env_prefix(&execute_ssh(&sess, "uname -s")?.trim().to_string());
-        execute_ssh(&sess, &format!("{}openclaw gateway restart", nvm_prefix))?;
+        gateway::restart_openclaw_gateway(&r).map(|_| ())?;
     } else {
         // 'openclaw gateway restart' uses launchctl kickstart which fails with
         // "Operation not permitted" from Tauri's subprocess context.
@@ -5961,6 +3251,37 @@ fn main() {
 mod tests {
     use super::*;
     use std::fs;
+    use crate::config::build_agent_session_init_command;
+    use crate::gateway::{
+        extract_gateway_token_from_config, parse_dashboard_url_cli_output,
+        parse_gateway_token_cli_output,
+    };
+    use crate::license::{
+        decrypt_saved_license_value, derive_license_encryption_key,
+        encrypt_saved_license_value, parse_windows_machine_guid,
+        read_first_nonempty_file, validate_license_response,
+    };
+    use crate::pairing::{
+        read_telegram_dm_policy_from_config_str, read_telegram_dm_policy_via_cli,
+        telegram_allow_from_entries_from_str, whatsapp_session_is_linked,
+    };
+    use crate::oauth::{
+        apply_model_provider_auth, auth_provider_id_for_config,
+        build_auth_profiles_doc, build_effective_models_catalog,
+        build_linux_terminal_launches, build_macos_terminal_launch,
+        build_provider_auth_command, build_terminal_runner_command,
+        build_unix_terminal_script, build_windows_terminal_launches,
+        collect_required_plugin_ids, decorate_oauth_launch_error,
+        is_openclaw_listener, merge_enabled_plugin_entries,
+        normalize_auth_mode, normalize_model_ref_for_ui,
+        normalize_provider_for_ui, oauth_callback_port,
+        parse_lsof_listener_info, required_plugin_for_oauth_provider_id,
+        resolve_provider_auth_data,
+    };
+    use crate::types::{
+        AgentToolsConfig, ElevatedToolConfig, PortListenerInfo, SubagentConfig,
+        TerminalPlatform,
+    };
 
     #[test]
     fn test_agent_config_deserialization() {

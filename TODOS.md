@@ -143,3 +143,15 @@
 **Depends on:** None
 
 ## Completed
+
+### ✓ Decompose App.tsx God Component (P0)
+Extracted 25 step components into `src/components/steps/`. Created `useWizardState` reducer (useReducer pattern replacing 70+ useState calls), `WizardContext` for state distribution. App.tsx reduced from 4,659 → 1,706 lines (63% reduction). All 164 tests pass.
+
+### ✓ Add React Error Boundary (P0)
+Added ErrorBoundary component wrapping the wizard with fallback UI.
+
+### ✓ Fix Gateway Token Shell Injection (P0)
+Wrapped gateway_token in shell_single_quote() at both local and remote code paths.
+
+### ✓ Unit Test constructConfigPayload (P0)
+39 unit tests covering basic config, preset config, multi-agent, remote deployment, all-features-enabled, minimal-fields-only.
