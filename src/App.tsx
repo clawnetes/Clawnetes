@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 import { open } from "@tauri-apps/api/shell";
 import { open as openDialog } from "@tauri-apps/api/dialog";
@@ -18,6 +18,8 @@ import { createInheritedToolPolicy, DEFAULT_TOOL_POLICY, deriveToolPolicyFromLeg
 import { constructConfigPayload as buildConfigPayload, buildAgentToolsPayload as buildAgentTools } from "./utils/configPayload";
 import Dropdown from "./components/Dropdown";
 import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "./types";
+import { useWizardState, fieldSetter } from "./hooks/useWizardState";
+import { WizardContext } from "./context/WizardContext";
 
 function App() {
   const continueToAdvancedSettings = async () => {
@@ -54,67 +56,149 @@ function App() {
     await continueToAdvancedSettings();
   };
 
-  const [step, setStep] = useState(0.5); // Start at Welcome page
-  const [mode, setMode] = useState("basic"); // "basic" or "advanced"
+  const [state, dispatch] = useWizardState();
   const initialConfigRef = useRef<any>(null);
 
-  // Environment selection
-  const [targetEnvironment, setTargetEnvironment] = useState("local");
+  // Destructure state for backwards-compatible access throughout the component
+  const {
+    step, mode, skipBasicConfig, targetEnvironment,
+    remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
+    sshStatus, sshError, tunnelActive,
+    checks, loading, error, logs, pairingCode, installingNode, nodeInstallError,
+    userName, agentName, selectedPersona, agentEmoji, agentType,
+    apiKey, authMethod, provider, model,
+    telegramToken, progress, dashboardUrl, openClawVersion,
+    maintenanceStatus, selectedMaint, maintCompleted,
+    showLicenseModal, licenseKey, verifyingLicense, licenseError,
+    licenseUnlocked, licenseStatusLoaded, licenseStatusError,
+    serviceKeys, providerAuths, providerAuthBusy, providerAuthErrors,
+    oauthCompletionRunning, oauthCompletionStarted, oauthCompletionResults,
+    currentServiceIdx, isConfiguringService,
+    gatewayPort, gatewayBind, gatewayAuthMode, tailscaleMode, nodeManager,
+    selectedSkills, sandboxMode, toolPolicy,
+    enableFallbacks, fallbackModels, heartbeatMode, idleTimeoutMs,
+    toolsMd, agentsMd, heartbeatMd, memoryMd, memoryEnabled,
+    identityMd, userMd, soulMd,
+    activeWorkspaceTab, initialWorkspace, workspaceModified, savingWorkspace,
+    customSkillName, customSkillContent, showCustomSkillForm,
+    selectedBusinessFunctions, cronJobs, extraSettingsOpen,
+    enableMultiAgent, numAgents, agentConfigs, currentAgentConfigIdx,
+    ollamaModels, ollamaDetecting, lmstudioBaseUrl, lmstudioModels, lmstudioDetecting,
+    localBaseUrl, localModels, localDetecting,
+    thinkingLevel, messagingChannel,
+    whatsappDmPolicy, whatsappPhoneNumber, whatsappPhoneSubmitted,
+    whatsappQrDataUrl, whatsappPaired, whatsappQrStep, whatsappQrLoading,
+    pairingInput, pairingStatus, isPaired,
+    validateOutput, validating,
+  } = state;
 
-  // SSH Remote Configuration
-  const [remoteIp, setRemoteIp] = useState("");
-  const [remoteUser, setRemoteUser] = useState("");
-  const [remotePassword, setRemotePassword] = useState("");
-  const [remotePrivateKeyPath, setRemotePrivateKeyPath] = useState("");
-  const [sshStatus, setSshStatus] = useState<"idle" | "checking" | "requesting_password" | "success" | "error">("idle");
-  const [sshError, setSshError] = useState("");
-  const [tunnelActive, setTunnelActive] = useState(false);
-
-  const [checks, setChecks] = useState({ node: false, docker: false, openclaw: false });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
-  const [logs, setLogs] = useState("");
-  const [pairingCode, setPairingCode] = useState("");
-  const [installingNode, setInstallingNode] = useState(false);
-  const [nodeInstallError, setNodeInstallError] = useState("");
-
-  // Form Data
-  const [userName, setUserName] = useState("");
-  const [agentName, setAgentName] = useState("");
-  const [selectedPersona, setSelectedPersona] = useState("custom");
-  const [agentEmoji, setAgentEmoji] = useState("🦞");
-  const [agentType, setAgentType] = useState<AgentTypeId>("custom");
-  const [apiKey, setApiKey] = useState("");
-  const [authMethod, setAuthMethod] = useState("token");
-  const [provider, setProvider] = useState("anthropic");
-  const [model, setModel] = useState("anthropic/claude-opus-4-6");
-  const [telegramToken, setTelegramToken] = useState("");
-  const [progress, setProgress] = useState("");
-  const [dashboardUrl, setDashboardUrl] = useState("http://127.0.0.1:18789");
-  const [openClawVersion, setOpenClawVersion] = useState("Checking...");
-  const [maintenanceStatus, setMaintenanceStatus] = useState("");
-  const [selectedMaint, setSelectedMaint] = useState<string>("repair");
-  const [maintCompleted, setMaintCompleted] = useState(false);
-  const [showLicenseModal, setShowLicenseModal] = useState(false);
-  const [licenseKey, setLicenseKey] = useState("");
-  const [verifyingLicense, setVerifyingLicense] = useState(false);
-  const [licenseError, setLicenseError] = useState("");
-  const [licenseUnlocked, setLicenseUnlocked] = useState(false);
-  const [licenseStatusLoaded, setLicenseStatusLoaded] = useState(false);
-  const [licenseStatusError, setLicenseStatusError] = useState("");
-
-  // Service Keys State
-  const [serviceKeys, setServiceKeys] = useState<Record<string, string>>({});
-  const [providerAuths, setProviderAuths] = useState<Record<string, ProviderAuthConfig>>({
-    anthropic: createDefaultProviderAuth("anthropic"),
-  });
-  const [providerAuthBusy, setProviderAuthBusy] = useState<Record<string, boolean>>({});
-  const [providerAuthErrors, setProviderAuthErrors] = useState<Record<string, string>>({});
-  const [oauthCompletionRunning, setOauthCompletionRunning] = useState(false);
-  const [oauthCompletionStarted, setOauthCompletionStarted] = useState(false);
-  const [oauthCompletionResults, setOauthCompletionResults] = useState<Record<string, { status: "pending" | "success" | "error"; message?: string }>>({});
-  const [currentServiceIdx, setCurrentServiceIdx] = useState(0);
-  const [isConfiguringService, setIsConfiguringService] = useState<boolean | null>(false);
+  // Create setter functions with same signatures as the original useState setters
+  const setStep = fieldSetter(dispatch, "step");
+  const setMode = fieldSetter(dispatch, "mode");
+  const setSkipBasicConfig = fieldSetter(dispatch, "skipBasicConfig");
+  const setTargetEnvironment = fieldSetter(dispatch, "targetEnvironment");
+  const setRemoteIp = fieldSetter(dispatch, "remoteIp");
+  const setRemoteUser = fieldSetter(dispatch, "remoteUser");
+  const setRemotePassword = fieldSetter(dispatch, "remotePassword");
+  const setRemotePrivateKeyPath = fieldSetter(dispatch, "remotePrivateKeyPath");
+  const setSshStatus = fieldSetter(dispatch, "sshStatus");
+  const setSshError = fieldSetter(dispatch, "sshError");
+  const setTunnelActive = fieldSetter(dispatch, "tunnelActive");
+  const setChecks = fieldSetter(dispatch, "checks");
+  const setLoading = fieldSetter(dispatch, "loading");
+  const setError = fieldSetter(dispatch, "error");
+  const setLogs = fieldSetter(dispatch, "logs");
+  const setPairingCode = fieldSetter(dispatch, "pairingCode");
+  const setInstallingNode = fieldSetter(dispatch, "installingNode");
+  const setNodeInstallError = fieldSetter(dispatch, "nodeInstallError");
+  const setUserName = fieldSetter(dispatch, "userName");
+  const setAgentName = fieldSetter(dispatch, "agentName");
+  const setSelectedPersona = fieldSetter(dispatch, "selectedPersona");
+  const setAgentEmoji = fieldSetter(dispatch, "agentEmoji");
+  const setAgentType = fieldSetter(dispatch, "agentType");
+  const setApiKey = fieldSetter(dispatch, "apiKey");
+  const setAuthMethod = fieldSetter(dispatch, "authMethod");
+  const setProvider = fieldSetter(dispatch, "provider");
+  const setModel = fieldSetter(dispatch, "model");
+  const setTelegramToken = fieldSetter(dispatch, "telegramToken");
+  const setProgress = fieldSetter(dispatch, "progress");
+  const setDashboardUrl = fieldSetter(dispatch, "dashboardUrl");
+  const setOpenClawVersion = fieldSetter(dispatch, "openClawVersion");
+  const setMaintenanceStatus = fieldSetter(dispatch, "maintenanceStatus");
+  const setSelectedMaint = fieldSetter(dispatch, "selectedMaint");
+  const setMaintCompleted = fieldSetter(dispatch, "maintCompleted");
+  const setShowLicenseModal = fieldSetter(dispatch, "showLicenseModal");
+  const setLicenseKey = fieldSetter(dispatch, "licenseKey");
+  const setVerifyingLicense = fieldSetter(dispatch, "verifyingLicense");
+  const setLicenseError = fieldSetter(dispatch, "licenseError");
+  const setLicenseUnlocked = fieldSetter(dispatch, "licenseUnlocked");
+  const setLicenseStatusLoaded = fieldSetter(dispatch, "licenseStatusLoaded");
+  const setLicenseStatusError = fieldSetter(dispatch, "licenseStatusError");
+  const setServiceKeys = fieldSetter(dispatch, "serviceKeys");
+  const setProviderAuths = fieldSetter(dispatch, "providerAuths");
+  const setProviderAuthBusy = fieldSetter(dispatch, "providerAuthBusy");
+  const setProviderAuthErrors = fieldSetter(dispatch, "providerAuthErrors");
+  const setOauthCompletionRunning = fieldSetter(dispatch, "oauthCompletionRunning");
+  const setOauthCompletionStarted = fieldSetter(dispatch, "oauthCompletionStarted");
+  const setOauthCompletionResults = fieldSetter(dispatch, "oauthCompletionResults");
+  const setCurrentServiceIdx = fieldSetter(dispatch, "currentServiceIdx");
+  const setIsConfiguringService = fieldSetter(dispatch, "isConfiguringService");
+  const setGatewayPort = fieldSetter(dispatch, "gatewayPort");
+  const setGatewayBind = fieldSetter(dispatch, "gatewayBind");
+  const setGatewayAuthMode = fieldSetter(dispatch, "gatewayAuthMode");
+  const setTailscaleMode = fieldSetter(dispatch, "tailscaleMode");
+  const setNodeManager = fieldSetter(dispatch, "nodeManager");
+  const setSelectedSkills = fieldSetter(dispatch, "selectedSkills");
+  const setSandboxMode = fieldSetter(dispatch, "sandboxMode");
+  const setToolPolicy = fieldSetter(dispatch, "toolPolicy");
+  const setEnableFallbacks = fieldSetter(dispatch, "enableFallbacks");
+  const setFallbackModels = fieldSetter(dispatch, "fallbackModels");
+  const setHeartbeatMode = fieldSetter(dispatch, "heartbeatMode");
+  const setIdleTimeoutMs = fieldSetter(dispatch, "idleTimeoutMs");
+  const setToolsMd = fieldSetter(dispatch, "toolsMd");
+  const setAgentsMd = fieldSetter(dispatch, "agentsMd");
+  const setHeartbeatMd = fieldSetter(dispatch, "heartbeatMd");
+  const setMemoryMd = fieldSetter(dispatch, "memoryMd");
+  const setMemoryEnabled = fieldSetter(dispatch, "memoryEnabled");
+  const setSelectedBusinessFunctions = fieldSetter(dispatch, "selectedBusinessFunctions");
+  const setCronJobs = fieldSetter(dispatch, "cronJobs");
+  const setExtraSettingsOpen = fieldSetter(dispatch, "extraSettingsOpen");
+  const setEnableMultiAgent = fieldSetter(dispatch, "enableMultiAgent");
+  const setNumAgents = fieldSetter(dispatch, "numAgents");
+  const setAgentConfigs = fieldSetter(dispatch, "agentConfigs");
+  const setCurrentAgentConfigIdx = fieldSetter(dispatch, "currentAgentConfigIdx");
+  const setIdentityMd = fieldSetter(dispatch, "identityMd");
+  const setUserMd = fieldSetter(dispatch, "userMd");
+  const setSoulMd = fieldSetter(dispatch, "soulMd");
+  const setActiveWorkspaceTab = fieldSetter(dispatch, "activeWorkspaceTab");
+  const setInitialWorkspace = fieldSetter(dispatch, "initialWorkspace");
+  const setWorkspaceModified = fieldSetter(dispatch, "workspaceModified");
+  const setSavingWorkspace = fieldSetter(dispatch, "savingWorkspace");
+  const setCustomSkillName = fieldSetter(dispatch, "customSkillName");
+  const setCustomSkillContent = fieldSetter(dispatch, "customSkillContent");
+  const setShowCustomSkillForm = fieldSetter(dispatch, "showCustomSkillForm");
+  const setPairingInput = fieldSetter(dispatch, "pairingInput");
+  const setPairingStatus = fieldSetter(dispatch, "pairingStatus");
+  const setIsPaired = fieldSetter(dispatch, "isPaired");
+  const setOllamaModels = fieldSetter(dispatch, "ollamaModels");
+  const setOllamaDetecting = fieldSetter(dispatch, "ollamaDetecting");
+  const setLmstudioBaseUrl = fieldSetter(dispatch, "lmstudioBaseUrl");
+  const setLmstudioModels = fieldSetter(dispatch, "lmstudioModels");
+  const setLmstudioDetecting = fieldSetter(dispatch, "lmstudioDetecting");
+  const setLocalBaseUrl = fieldSetter(dispatch, "localBaseUrl");
+  const setLocalModels = fieldSetter(dispatch, "localModels");
+  const setLocalDetecting = fieldSetter(dispatch, "localDetecting");
+  const setThinkingLevel = fieldSetter(dispatch, "thinkingLevel");
+  const setMessagingChannel = fieldSetter(dispatch, "messagingChannel");
+  const setWhatsappDmPolicy = fieldSetter(dispatch, "whatsappDmPolicy");
+  const setWhatsappPhoneNumber = fieldSetter(dispatch, "whatsappPhoneNumber");
+  const setWhatsappPhoneSubmitted = fieldSetter(dispatch, "whatsappPhoneSubmitted");
+  const setWhatsappQrDataUrl = fieldSetter(dispatch, "whatsappQrDataUrl");
+  const setWhatsappPaired = fieldSetter(dispatch, "whatsappPaired");
+  const setWhatsappQrStep = fieldSetter(dispatch, "whatsappQrStep");
+  const setWhatsappQrLoading = fieldSetter(dispatch, "whatsappQrLoading");
+  const setValidateOutput = fieldSetter(dispatch, "validateOutput");
+  const setValidating = fieldSetter(dispatch, "validating");
 
   const servicesToConfigure = [
     { id: "goplaces", name: "Google Places", placeholder: "API Key" },
@@ -123,100 +207,6 @@ function App() {
     { id: "nano-banana", name: "Nano Banana Pro", placeholder: "API Key" },
     { id: "openai-images", name: "OpenAI Image Gen", placeholder: "API Key" }
   ];
-
-  // Advanced Form Data
-  const [gatewayPort, setGatewayPort] = useState(18789);
-  const [gatewayBind, setGatewayBind] = useState("loopback");
-  const [gatewayAuthMode, setGatewayAuthMode] = useState("token");
-  const [tailscaleMode, setTailscaleMode] = useState("off");
-  const [nodeManager, setNodeManager] = useState("npm");
-  const [selectedSkills, setSelectedSkills] = useState<string[]>(["filesystem", "terminal"]);
-  const [skipBasicConfig, setSkipBasicConfig] = useState(false);
-
-  // NEW: Security Best Practices (Step 11)
-  const [sandboxMode, setSandboxMode] = useState("none");
-  const [toolPolicy, setToolPolicy] = useState<ToolPolicy>(DEFAULT_TOOL_POLICY);
-
-  // NEW: Fallback Models (Step 12)
-  const [enableFallbacks, setEnableFallbacks] = useState(false);
-  const [fallbackModels, setFallbackModels] = useState<string[]>([]);
-
-  // NEW: Session Management (Step 13)
-  const [heartbeatMode, setHeartbeatMode] = useState("1h");
-  const [idleTimeoutMs, setIdleTimeoutMs] = useState(3600000);
-
-  // NEW: Preset-related markdown files
-  const [toolsMd, setToolsMd] = useState("");
-  const [agentsMd, setAgentsMd] = useState("");
-  const [heartbeatMd, setHeartbeatMd] = useState("");
-  const [memoryMd, setMemoryMd] = useState("");
-  const [memoryEnabled, setMemoryEnabled] = useState(false);
-
-  // NEW: Business Functions (Step 15)
-  const [selectedBusinessFunctions, setSelectedBusinessFunctions] = useState<BusinessFunctionId[]>([]);
-  const [cronJobs, setCronJobs] = useState<CronJobConfig[]>([]);
-
-  // Extra Settings accordion state
-  const [extraSettingsOpen, setExtraSettingsOpen] = useState<Record<string, boolean>>({
-    gateway: false,
-    runtime: false,
-    security: false,
-    session: false
-  });
-
-  // NEW: Multi-Agent (Step 15)
-  const [enableMultiAgent, setEnableMultiAgent] = useState(false);
-  const [numAgents, setNumAgents] = useState(1);
-  const [agentConfigs, setAgentConfigs] = useState<AgentConfigData[]>([]);
-  const [currentAgentConfigIdx, setCurrentAgentConfigIdx] = useState(0);
-  // const [isConfiguringAgent, setIsConfiguringAgent] = useState(false);
-
-  // NEW: Workspace Customization (Step 16)
-  const [identityMd, setIdentityMd] = useState("");
-  const [userMd, setUserMd] = useState("");
-  const [soulMd, setSoulMd] = useState("");
-  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState("identity");
-  const [initialWorkspace, setInitialWorkspace] = useState({ identity: "", user: "", soul: "" });
-  const [workspaceModified, setWorkspaceModified] = useState(false);
-  const [savingWorkspace, setSavingWorkspace] = useState(false);
-
-  // NEW: Custom Skills
-  const [customSkillName, setCustomSkillName] = useState("");
-  const [customSkillContent, setCustomSkillContent] = useState("");
-  const [showCustomSkillForm, setShowCustomSkillForm] = useState(false);
-
-  // Pairing Data
-  const [pairingInput, setPairingInput] = useState("");
-  const [pairingStatus, setPairingStatus] = useState("");
-  const [isPaired, setIsPaired] = useState(false);
-
-  // Local model detection state
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
-  const [ollamaDetecting, setOllamaDetecting] = useState(false);
-  const [lmstudioBaseUrl, setLmstudioBaseUrl] = useState("http://localhost:1234");
-  const [lmstudioModels, setLmstudioModels] = useState<string[]>([]);
-  const [lmstudioDetecting, setLmstudioDetecting] = useState(false);
-  const [localBaseUrl, setLocalBaseUrl] = useState("http://localhost:8080");
-  const [localModels, setLocalModels] = useState<string[]>([]);
-  const [localDetecting, setLocalDetecting] = useState(false);
-
-  // OpenClaw latest features
-  const [thinkingLevel, setThinkingLevel] = useState("adaptive");
-
-  // Messaging channel state
-  const [messagingChannel, setMessagingChannel] = useState<"none" | "telegram" | "whatsapp">("telegram");
-  const [whatsappDmPolicy, setWhatsappDmPolicy] = useState("allowlist");
-  const [whatsappPhoneNumber, setWhatsappPhoneNumber] = useState("");
-  const [whatsappPhoneSubmitted, setWhatsappPhoneSubmitted] = useState(false);
-  const [whatsappQrDataUrl, setWhatsappQrDataUrl] = useState("");
-  const [whatsappPaired, setWhatsappPaired] = useState(false);
-  const [whatsappQrStep, setWhatsappQrStep] = useState(false);
-  const [whatsappQrLoading, setWhatsappQrLoading] = useState(false);
-
-
-  // Config validation
-  const [validateOutput, setValidateOutput] = useState("");
-  const [validating, setValidating] = useState(false);
 
 
   const availableSkills = AVAILABLE_SKILLS;
@@ -4461,6 +4451,7 @@ Managed by Clawnetes.`,
   };
 
   return (
+    <WizardContext.Provider value={{ state, dispatch }}>
     <div className="app-container">
       <div className="top-bar">
         <span className="top-bar-title">Clawnetes</span>
@@ -4560,6 +4551,7 @@ Managed by Clawnetes.`,
       )}
 
     </div>
+    </WizardContext.Provider>
   );
 }
 
