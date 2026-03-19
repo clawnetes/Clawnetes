@@ -15,6 +15,7 @@ import { getMessagingChannelFromConfig, getTelegramPairingDisplayCode, hasMessag
 import { applyModelProviderAuth, buildDeferredOAuthQueue, buildReferencedProviders, createDefaultProviderAuth, getBaseProvider, getBaseProviderFromModel, getDefaultModelForProvider, getDisplayModelOptions, getProviderAuthOptions, isOAuthMethod, LOCAL_PROVIDERS, normalizeModelRefForUi, normalizeProviderAuths, OAUTH_METHODS_BY_PROVIDER } from "./utils/providerAuth";
 import ToolPolicyEditor from "./components/ToolPolicyEditor";
 import { createInheritedToolPolicy, DEFAULT_TOOL_POLICY, deriveToolPolicyFromLegacy, getSkillIdSet, materializeToolPolicy, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./utils/toolSelection";
+import { constructConfigPayload as buildConfigPayload, buildAgentToolsPayload as buildAgentTools } from "./utils/configPayload";
 import Dropdown from "./components/Dropdown";
 import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "./types";
 
@@ -885,18 +886,7 @@ function App() {
   }
 
   function buildAgentToolsPayload(policy: ToolPolicy, inheritedPolicy: ToolPolicy = toolPolicy) {
-    const normalizedPolicy = normalizeToolPolicy(policy, availableSkillIds);
-    if (normalizedPolicy.inherit) {
-      return null;
-    }
-
-    const materializedPolicy = materializeToolPolicy(normalizedPolicy, inheritedPolicy);
-    return {
-      profile: materializedPolicy.profile,
-      allow: materializedPolicy.allow,
-      deny: materializedPolicy.deny,
-      elevated: { enabled: materializedPolicy.elevatedEnabled ?? false },
-    };
+    return buildAgentTools(policy, inheritedPolicy, availableSkillIds);
   }
 
   // Helper to transform the loaded config (from get_current_config)
@@ -1020,98 +1010,15 @@ Managed by Clawnetes.`,
   }
 
   function constructConfigPayload(providerAuthsOverride?: Record<string, ProviderAuthConfig>) {
-    const mappedSandboxMode = sandboxMode === "full" ? "all" : (sandboxMode === "partial" ? "non-main" : "off");
-    const defaultIdentity = `# IDENTITY.md - Who Am I?
-- **Name:** ${agentName}
-- **Emoji:** ${agentEmoji}
----
-Managed by Clawnetes.`;
-    const effectiveProviderAuths = providerAuthsOverride || providerAuths;
-
-    // For preset agents, always include preset-configured fields
-    const usePresetFields = isPresetAgent || mode === "advanced";
-    const normalizedTopLevelToolPolicy = normalizeToolPolicy(toolPolicy, availableSkillIds);
-
-    return {
-      provider,
-      api_key: effectiveProviderAuths[provider]?.token || apiKey,
-      auth_method: effectiveProviderAuths[provider]?.auth_method || authMethod,
-      model: applyModelProviderAuth(model, effectiveProviderAuths),
-      user_name: userName,
-      agent_name: agentName,
-      agent_vibe: "",
-      telegram_token: telegramToken,
-      gateway_port: gatewayPort,
-      gateway_bind: gatewayBind,
-      gateway_auth_mode: gatewayAuthMode,
-      tailscale_mode: tailscaleMode,
-      node_manager: nodeManager,
-      skills: selectedSkills,
-      service_keys: serviceKeys,
-      provider_auths: effectiveProviderAuths,
-      sandbox_mode: usePresetFields ? mappedSandboxMode : null,
-      tools_mode: usePresetFields
-        ? (normalizedTopLevelToolPolicy.profile === "full" && normalizedTopLevelToolPolicy.allow.length === 0 && normalizedTopLevelToolPolicy.deny.length === 0 ? "all" : "allowlist")
-        : "all",
-      tools_profile: usePresetFields ? normalizedTopLevelToolPolicy.profile : null,
-      allowed_tools: usePresetFields ? normalizedTopLevelToolPolicy.allow : null,
-      denied_tools: usePresetFields ? normalizedTopLevelToolPolicy.deny : null,
-      fallback_models: usePresetFields && enableFallbacks
-        ? fallbackModels.filter(m => m).map(m => applyModelProviderAuth(m, effectiveProviderAuths))
-        : null,
-      heartbeat_mode: usePresetFields ? heartbeatMode : null,
-      idle_timeout_ms: usePresetFields && heartbeatMode === "idle" ? idleTimeoutMs : null,
-      identity_md: (usePresetFields && identityMd) ? identityMd : defaultIdentity,
-      user_md: usePresetFields && userMd ? userMd : null,
-      soul_md: usePresetFields && soulMd ? soulMd : null,
-      agents: enableMultiAgent ? agentConfigs.map(a => {
-        const normalizedAgentSelection = normalizeSkillAndToolSelection(
-          a.skills,
-          a.toolPolicy.allow,
-          availableSkillIds,
-        );
-        const normalizedAgentToolPolicy = normalizeToolPolicy(a.toolPolicy, availableSkillIds);
-        const agentToolsPayload = buildAgentToolsPayload(normalizedAgentToolPolicy, normalizedTopLevelToolPolicy);
-
-        return {
-          id: a.id,
-          name: a.name,
-          model: applyModelProviderAuth(a.model, effectiveProviderAuths),
-          fallback_models: a.fallbackModels.length > 0
-            ? a.fallbackModels.map(m => applyModelProviderAuth(m, effectiveProviderAuths))
-            : null,
-          skills: normalizedAgentSelection.skills.length > 0 ? normalizedAgentSelection.skills : null,
-          vibe: a.vibe,
-          identity_md: a.identityMd || `# IDENTITY.md - Who Am I?
-- **Name:** ${a.name}
-- **Emoji:** ${a.emoji || "🦞"}
----
-Managed by Clawnetes.`,
-          user_md: a.userMd || null,
-          soul_md: a.soulMd || null,
-          tools_md: a.toolsMd || null,
-          agents_md: a.agentsMd || null,
-          tools: agentToolsPayload,
-        };
-      }) : null,
-      preserve_state: isPaired,
-      // New preset fields
-      agent_type: agentType,
-      tools_md: usePresetFields && toolsMd ? toolsMd : null,
-      agents_md: usePresetFields && agentsMd ? agentsMd : null,
-      heartbeat_md: usePresetFields && heartbeatMd ? heartbeatMd : null,
-      memory_md: usePresetFields && memoryMd ? memoryMd : null,
-      memory_enabled: usePresetFields ? memoryEnabled : false,
-      cron_jobs: cronJobs.length > 0 ? cronJobs : null,
-      // Local model support
-      local_base_url: provider === "local" ? localBaseUrl : (provider === "lmstudio" ? lmstudioBaseUrl : null),
-      // OpenClaw latest features
-      thinking_level: (provider === "anthropic" && (model.includes("claude-") && model.includes("-4"))) ? thinkingLevel : null,
-      // WhatsApp channel
-      whatsapp_enabled: messagingChannel === "whatsapp",
-      whatsapp_dm_policy: messagingChannel === "whatsapp" ? whatsappDmPolicy : null,
-      whatsapp_phone_number: messagingChannel === "whatsapp" ? whatsappPhoneNumber : null,
-    };
+    return buildConfigPayload({
+      provider, apiKey, authMethod, model, userName, agentName, agentEmoji, agentType,
+      telegramToken, gatewayPort, gatewayBind, gatewayAuthMode, tailscaleMode, nodeManager,
+      selectedSkills, serviceKeys, providerAuths, sandboxMode, toolPolicy, enableFallbacks,
+      fallbackModels, heartbeatMode, idleTimeoutMs, identityMd, userMd, soulMd, toolsMd,
+      agentsMd, heartbeatMd, memoryMd, memoryEnabled, enableMultiAgent, agentConfigs, isPaired,
+      cronJobs, localBaseUrl, lmstudioBaseUrl, thinkingLevel, messagingChannel, whatsappDmPolicy,
+      whatsappPhoneNumber, mode,
+    }, providerAuthsOverride);
   }
 
   async function handleInstall() {

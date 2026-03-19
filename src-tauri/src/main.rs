@@ -2337,7 +2337,7 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
         &sess,
         &format!(
             "{}openclaw config set gateway.auth.token {}",
-            nvm_prefix, gateway_token
+            nvm_prefix, shell_single_quote(&gateway_token)
         ),
     );
 
@@ -3647,7 +3647,7 @@ fn configure_agent(config: AgentConfig) -> Result<String, String> {
     // Force sync the token to keychain to permanently fix any token mismatches
     let _ = shell_command(&format!(
         "openclaw config set gateway.auth.token {}",
-        gateway_token
+        shell_single_quote(&gateway_token)
     ));
 
     // Store Clawnetes-specific metadata in a separate file
