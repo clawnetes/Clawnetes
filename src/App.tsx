@@ -20,6 +20,18 @@ import Dropdown from "./components/Dropdown";
 import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "./types";
 import { useWizardState, fieldSetter } from "./hooks/useWizardState";
 import { WizardContext } from "./context/WizardContext";
+import StepWelcome from "./components/steps/StepWelcome";
+import StepSecurity from "./components/steps/StepSecurity";
+import StepIdentity from "./components/steps/StepIdentity";
+import StepAgentProfile from "./components/steps/StepAgentProfile";
+import StepAgentType from "./components/steps/StepAgentType";
+import StepSystemCheck from "./components/steps/StepSystemCheck";
+import StepGateway from "./components/steps/StepGateway";
+import StepChannels from "./components/steps/StepChannels";
+import StepRuntime from "./components/steps/StepRuntime";
+import StepEnvironment from "./components/steps/StepEnvironment";
+import StepToolAccess from "./components/steps/StepToolAccess";
+import StepSecurityConfig from "./components/steps/StepSecurityConfig";
 
 function App() {
   const continueToAdvancedSettings = async () => {
@@ -1697,353 +1709,19 @@ Managed by Clawnetes.`,
           </div>
         );
       case 0.5:
-        return (
-          <div className="step-view welcome-view" data-testid="step-welcome">
-            <div className="welcome-logo">🦞</div>
-            <h1 className="welcome-title">Welcome to Clawnetes</h1>
-            <p className="welcome-text">
-              The fastest way to deploy your AI agent. Get started in minutes.
-            </p>
-            <div className="button-group" style={{ justifyContent: "center" }}>
-              <button
-                className="primary"
-                style={{ minWidth: "200px", padding: "1rem 2rem", fontSize: "1.1rem" }}
-                onClick={() => setStep(1)}
-                data-testid="btn-start-setup"
-              >
-                Start Setup
-              </button>
-            </div>
-          </div>
-        );
+        return <StepWelcome />;
       case 1:
-        return (
-          <div className="step-view" data-testid="step-environment">
-            <h2>Target Environment</h2>
-            <p className="step-description">Where will you be running OpenClaw?</p>
-            <div className="mode-card-container">
-              <div className={`mode-card ${targetEnvironment === "local" ? "active" : ""}`} onClick={() => {
-                setTargetEnvironment("local");
-                setSshStatus("idle");
-              }}>
-                <h3>💻 Local Machine</h3>
-                <p>Run OpenClaw directly on your computer (macOS/Linux/Windows)</p>
-              </div>
-              <div className={`mode-card ${targetEnvironment === "cloud" ? "active" : ""}`} onClick={() => setTargetEnvironment("cloud")}>
-                <h3>☁️ Cloud Server</h3>
-                <p>Deploy to a cloud VM (AWS, GCP, Azure, etc.)</p>
-              </div>
-            </div>
-
-            {targetEnvironment === "cloud" && (
-              <div className="remote-config" style={{ marginTop: "2rem" }}>
-                <h3 style={{ marginBottom: "1rem" }}>SSH Configuration</h3>
-                <div className="form-group">
-                  <label>Server IP Address</label>
-                  <input
-                    data-testid="input-remote-ip"
-                    placeholder="192.168.1.100"
-                    value={remoteIp}
-                    onChange={(e) => setRemoteIp(e.target.value)}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>SSH Username</label>
-                  <input
-                    data-testid="input-remote-user"
-                    placeholder="ubuntu"
-                    value={remoteUser}
-                    onChange={(e) => setRemoteUser(e.target.value)}
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                    spellCheck="false"
-                  />
-                </div>
-                <div className="form-group">
-                  <label>SSH Private Key (Optional)</label>
-                  <div style={{ display: "flex", gap: "0.5rem" }}>
-                    <input
-                      data-testid="input-remote-key"
-                      placeholder="/Users/you/.ssh/id_rsa"
-                      value={remotePrivateKeyPath}
-                      onChange={(e) => setRemotePrivateKeyPath(e.target.value)}
-                      style={{ flex: 1 }}
-                    />
-                    <button
-                      className="secondary"
-                      onClick={async () => {
-                        const path = await openDialog({
-                          title: "Select SSH Private Key",
-                          directory: false,
-                          multiple: false,
-                          defaultPath: "~/.ssh",
-                        });
-                        if (path && typeof path === "string") {
-                          setRemotePrivateKeyPath(path);
-                        }
-                      }}
-                    >
-                      Browse
-                    </button>
-                  </div>
-                  <p className="input-hint">Leave empty to use default keys (~/.ssh/id_rsa, id_ed25519) or SSH agent</p>
-                </div>
-                <div className="form-group">
-                  <label>SSH Password (if not using key)</label>
-                  <input
-                    data-testid="input-remote-password"
-                    type="password"
-                    placeholder="Password"
-                    value={remotePassword}
-                    onChange={(e) => setRemotePassword(e.target.value)}
-                  />
-                </div>
-
-                <button
-                  data-testid="btn-test-connection"
-                  className="secondary"
-                  onClick={handleSshCheck}
-                  disabled={!remoteIp || !remoteUser || sshStatus === "checking"}
-                  style={{ width: "100%", marginTop: "1rem" }}
-                >
-                  {sshStatus === "checking" ? "Testing..." : "Test Connection"}
-                </button>
-
-                {sshStatus === "success" && (
-                  <div style={{ marginTop: "1rem", padding: "0.75rem", backgroundColor: "rgba(34, 197, 94, 0.1)", borderRadius: "8px", border: "1px solid rgba(34, 197, 94, 0.3)" }}>
-                    <strong style={{ color: "rgb(34, 197, 94)" }}>✅ Success:</strong> <span style={{ color: "var(--text)" }}>SSH connection established successfully!</span>
-                  </div>
-                )}
-
-                {sshError && (
-                  <div className="error" style={{ marginTop: "1rem", padding: "0.75rem", backgroundColor: "rgba(239, 68, 68, 0.1)", borderRadius: "8px", border: "1px solid rgba(239, 68, 68, 0.3)" }}>
-                    <strong style={{ color: "rgb(239, 68, 68)" }}>❌ Error:</strong> <span style={{ color: "var(--text)" }}>{sshError}</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="button-group" style={{ marginTop: "2rem" }}>
-              <button
-                className="primary"
-                onClick={async () => {
-                  if (targetEnvironment === "cloud") {
-                    const redirected = await checkRemoteSystem(false);
-                    if (!redirected) {
-                      setStep(2);
-                    }
-                  } else {
-                    // Local environment - check local system and redirect if installed
-                    const redirected = await checkSystem(false);
-                    if (!redirected) {
-                      setStep(2);
-                    }
-                  }
-                }}
-                disabled={targetEnvironment === "cloud" && sshStatus !== "success"}
-                data-testid="btn-continue"
-              >
-                Continue
-              </button>
-            </div>
-          </div>
-        );
+        return <StepEnvironment handleSshCheck={handleSshCheck} checkSystem={checkSystem} checkRemoteSystem={checkRemoteSystem} />;
       case 2:
-        return (
-          <div className="step-view" data-testid="step-system-check">
-            <h2>System Check</h2>
-            <p className="step-description">
-              {targetEnvironment === "cloud"
-                ? `Checking remote server (${remoteIp})...`
-                : "We need to make sure your system is ready for OpenClaw."}
-            </p>
-            <div className="check-item">
-              <span className="check-status">{checks.node ? "✅" : "❌"}</span>
-              Node.js {checks.node ? "detected" : "not found"} {targetEnvironment === "cloud" && `(on ${remoteIp})`}
-            </div>
-            <div className="check-item">
-              <span className="check-status">{checks.openclaw ? "✅" : "⏳"}</span>
-              OpenClaw {checks.openclaw ? "Installed" : "Ready to install"} {targetEnvironment === "cloud" && `(on ${remoteIp})`}
-            </div>
-            {!checks.node && (
-              <div className="error" style={{ marginTop: "1rem", color: "var(--error)" }}>
-                <p>Node.js is required.</p>
-                {targetEnvironment === "local" && (
-                  <div style={{ display: "flex", gap: "10px", alignItems: "center", marginTop: "5px" }}>
-                    <button
-                      className="secondary small"
-                      onClick={installLocalNode}
-                      disabled={installingNode}
-                      style={{ padding: "4px 10px", fontSize: "0.8rem", cursor: "pointer" }}
-                    >
-                      {installingNode ? "Installing..." : "Install Now"}
-                    </button>
-                    {nodeInstallError && <span style={{ fontSize: "0.8rem" }}>{nodeInstallError}</span>}
-                  </div>
-                )}
-                {targetEnvironment === "cloud" && (
-                  <p>It will be installed automatically in the Setup step.</p>
-                )}
-              </div>
-            )}
-            <div className="button-group">
-              <button
-                className="primary"
-                disabled={targetEnvironment === "local" && !checks.node}
-                onClick={() => setStep(3)}
-                data-testid="btn-continue"
-              >
-                Continue
-              </button>
-              <button className="secondary" onClick={() => setStep(1)}>Back</button>
-            </div>
-          </div>
-        );
+        return <StepSystemCheck installLocalNode={installLocalNode} />;
       case 3:
-        return (
-          <div className="step-view" data-testid="step-security">
-            <h2>Security Baseline</h2>
-            <p className="step-description">Please read this carefully before proceeding.</p>
-            <div className="security-alert">
-              <p>OpenClaw is a powerful agent system that can execute code and manage files.</p>
-              <p>A malicious prompt could potentially trick the agent into performing unsafe actions. We recommend running it in a sandboxed environment if possible.</p>
-              <p>Keep your API keys secure and never share your gateway token.</p>
-            </div>
-            <p style={{ fontWeight: 600 }}>Do you understand the risks and wish to continue?</p>
-            <div className="button-group">
-              <button className="primary" onClick={() => setStep(5)} data-testid="btn-i-understand">I Understand</button>
-              <button className="secondary" onClick={() => setStep(2)}>Back</button>
-            </div>
-          </div>
-        );
+        return <StepSecurity />;
       case 5:
-        return (
-          <div className="step-view" data-testid="step-identity">
-            <h2>Your Identity</h2>
-            <p className="step-description">What should the agent call you?</p>
-            <div className="form-group">
-              <label>Your Name</label>
-              <input
-                autoFocus
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck="false"
-                autoComplete="off"
-                placeholder="e.g. David"
-                data-testid="input-user-name"
-                value={userName}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setUserName(val);
-                  if (userMd) {
-                    setUserMd(updateIdentityField(userMd, "Name", val));
-                  }
-                  if (soulMd) {
-                    setSoulMd(updateSoulMission(soulMd, val));
-                  }
-                }}
-              />
-            </div>
-            <div className="button-group">
-              <button className="primary" disabled={!userName} onClick={() => setStep(6)} data-testid="btn-next">Next</button>
-              <button className="secondary" onClick={() => setStep(3)}>Back</button>
-            </div>
-          </div>
-        );
+        return <StepIdentity />;
       case 6:
-        return (
-          <div className="step-view" data-testid="step-agent-profile">
-            <h2>Agent Profile</h2>
-            <p className="step-description">Give your agent a name and a personality.</p>
-            <div className="form-group">
-              <label>Agent Name</label>
-              <input autoFocus placeholder="e.g. Jeeves" data-testid="input-agent-name" value={agentName} onChange={(e) => {
-                const val = e.target.value;
-                setAgentName(val);
-                if (identityMd) {
-                  setIdentityMd(updateIdentityField(identityMd, "Name", val));
-                }
-              }} />
-            </div>
-            <div className="form-group">
-              <label>Agent Emoji</label>
-              <div className="emoji-grid" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                {EMOJI_OPTIONS.map(e => (
-                  <button
-                    key={e}
-                    className={`emoji-btn`}
-                    onClick={() => {
-                      setAgentEmoji(e);
-                      if (identityMd) {
-                        setIdentityMd(updateIdentityField(identityMd, "Emoji", e));
-                      }
-                    }}
-                    style={{
-                      fontSize: "1.25rem",
-                      padding: "0.4rem",
-                      borderRadius: "8px",
-                      border: agentEmoji === e ? "2px solid var(--primary)" : "1px solid var(--border)",
-                      background: agentEmoji === e ? "rgba(255, 59, 48, 0.08)" : "var(--bg-card)",
-                      cursor: "pointer",
-                      minWidth: "40px"
-                    }}
-                  >
-                    {e}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="button-group">
-              <button className="primary" disabled={!agentName} onClick={() => setStep(6.5)} data-testid="btn-next">Next</button>
-              <button className="secondary" onClick={() => setStep(skipBasicConfig ? 0 : 5)}>Back</button>
-            </div>
-          </div>
-        );
+        return <StepAgentProfile />;
       case 6.5:
-        return (
-          <div className="step-view" data-testid="step-agent-type">
-            <h2>Agent Type</h2>
-            <p className="step-description">Choose a pre-configured agent type or build your own from scratch.</p>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-              {[
-                { id: "coding-assistant" as AgentTypeId, name: "Coding Assistant", emoji: "👨‍💻", desc: "A senior software engineer that writes clean, secure code." },
-                { id: "office-assistant" as AgentTypeId, name: "Office Assistant", emoji: "🤵", desc: "A professional executive assistant for email, tasks, and comms." },
-                { id: "travel-planner" as AgentTypeId, name: "Travel Planner", emoji: "🌍", desc: "An expert travel agent that plans trips and finds deals." },
-                { id: "custom" as AgentTypeId, name: "Custom", emoji: "🔧", desc: "Configure everything manually from scratch." }
-              ].map(t => (
-                <div
-                  key={t.id}
-                  className={`mode-card ${agentType === t.id ? "active" : ""}`}
-                  onClick={() => {
-                    applyAgentTypePreset(t.id);
-                  }}
-                  style={{
-                    padding: "1.5rem",
-                    borderRadius: "12px",
-                    border: agentType === t.id ? "2px solid var(--primary)" : "1px solid var(--border)",
-                    backgroundColor: agentType === t.id ? "rgba(255, 59, 48, 0.08)" : "var(--bg-card)",
-                    cursor: "pointer",
-                    textAlign: "center"
-                  }}
-                >
-                  <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>{t.emoji}</div>
-                  <div style={{ fontWeight: 600, marginBottom: "0.25rem" }}>{t.name}</div>
-                  <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{t.desc}</div>
-                </div>
-              ))}
-            </div>
-            <div className="button-group" style={{ marginTop: "1.5rem" }}>
-              <button className="primary" data-testid="btn-next" onClick={() => {
-                if (isPresetAgent) {
-                  setStep(6.7);
-                } else {
-                  setStep(8);
-                }
-              }}>Next</button>
-              <button className="secondary" onClick={() => setStep(6)}>Back</button>
-            </div>
-          </div>
-        );
+        return <StepAgentType applyAgentTypePreset={applyAgentTypePreset} />;
       case 6.7: {
         const presetData = AGENT_TYPE_PRESETS[agentType];
         return (
@@ -2151,55 +1829,7 @@ Managed by Clawnetes.`,
         );
       }
       case 7:
-        return (
-          <div className="step-view">
-            <h2>Gateway Settings</h2>
-            <p className="step-description">Configure the network bridge for your agent.</p>
-            <div className="form-group">
-              <label>Port</label>
-              <input type="number" value={gatewayPort} onChange={(e) => setGatewayPort(parseInt(e.target.value))} />
-            </div>
-            <div className="form-group">
-              <label>Bind Address</label>
-              <Dropdown
-                value={gatewayBind}
-                onChange={setGatewayBind}
-                options={[
-                  { value: "loopback", label: "Loopback (127.0.0.1)", description: "Only accessible from this machine" },
-                  { value: "all", label: "All Interfaces (0.0.0.0)", description: "Accessible from local network" }
-                ]}
-              />
-            </div>
-            <div className="form-group" style={{ marginTop: "1.5rem" }}>
-              <label>Auth Mode</label>
-              <Dropdown
-                value={gatewayAuthMode}
-                onChange={setGatewayAuthMode}
-                options={[
-                  { value: "token", label: "Token (Secure)", description: "Requires authentication token" },
-                  { value: "none", label: "None (Insecure)", description: "No authentication required" }
-                ]}
-              />
-            </div>
-            <div className="form-group" style={{ marginTop: "1.5rem" }}>
-              <label>Tailscale</label>
-              <Dropdown
-                value={tailscaleMode}
-                onChange={setTailscaleMode}
-                options={[
-                  { value: "off", label: "Disabled", description: "Standard networking" },
-                  { value: "on", label: "Enabled", description: "Expose securely via Tailscale" }
-                ]}
-              />
-            </div>
-            <div className="button-group">
-              <button className="primary" onClick={() => {
-                setStep(10);
-              }}>Continue</button>
-              <button className="secondary" onClick={() => setStep(6)}>Back</button>
-            </div>
-          </div>
-        );
+        return <StepGateway />;
       case 8:
         return (
           <div className="step-view" data-testid="step-connect-brain">
@@ -2438,109 +2068,9 @@ Managed by Clawnetes.`,
           </div>
         );
       case 9:
-        return (
-          <div className="step-view" data-testid="step-channels">
-            <h2>Messaging Channels</h2>
-            <p className="step-description">Select a messaging channel for your agent.</p>
-
-            <div className="form-group">
-              <label>Channel</label>
-              <Dropdown
-                testId="dropdown-channel"
-                value={messagingChannel === "none" ? "telegram" : messagingChannel}
-                onChange={(v) => setMessagingChannel(v as "telegram" | "whatsapp")}
-                options={[
-                  { value: "telegram", label: "Telegram", description: "Connect via Telegram Bot" },
-                  { value: "whatsapp", label: "WhatsApp", description: "Connect via WhatsApp (QR pairing at end of setup)" },
-                ]}
-              />
-            </div>
-
-            {messagingChannel === "telegram" && (
-              <div className="form-group" style={{ marginTop: "1rem" }}>
-                <label>Telegram Bot Token</label>
-                <input type="password" data-testid="input-telegram-token" placeholder="123456:ABC-..." value={telegramToken} onChange={(e) => setTelegramToken(e.target.value)} />
-                <p className="input-hint">Get one from @BotFather on Telegram.</p>
-              </div>
-            )}
-
-            {messagingChannel === "whatsapp" && (
-              <div style={{ marginTop: "1rem" }}>
-                <div className="form-group">
-                  <label>WhatsApp DM Policy</label>
-                  <Dropdown
-                    value={whatsappDmPolicy}
-                    onChange={setWhatsappDmPolicy}
-                    options={[
-                      { value: "allowlist", label: "Allowlist (Recommended)", description: "Only your number can interact with the bot" },
-                      { value: "open", label: "Open (Dangerous)", description: "Anyone who messages the bot can interact with it" },
-                    ]}
-                  />
-                  <p className="input-hint" style={{ marginTop: "0.25rem" }}>
-                    If you use Allowlist, enter your phone number below so the bot can reply to you.
-                  </p>
-                </div>
-
-                {whatsappDmPolicy === "allowlist" && (
-                  <div className="form-group" style={{ marginTop: "1rem" }}>
-                    <label>Your Phone Number (Allowlist)</label>
-                    <input
-                      type="text"
-                      data-testid="input-whatsapp-phone"
-                      placeholder="+1234567890"
-                      value={whatsappPhoneNumber}
-                      onChange={(e) => setWhatsappPhoneNumber(e.target.value)}
-                    />
-                    <p className="input-hint">The phone number you will use to message the bot. Include country code.</p>
-                  </div>
-                )}
-
-                <p className="input-hint" style={{ marginTop: "1rem", color: "var(--text-muted)" }}>
-                  WhatsApp pairing will happen at the end of setup. You'll scan a QR code to link your account.
-                </p>
-              </div>
-            )}
-
-            <div className="button-group" style={{ marginTop: "1.5rem" }}>
-              <button className="primary" data-testid="btn-next" onClick={() => {
-                if (mode === "advanced" || skipBasicConfig) handleAdvancedTransition();
-                else setStep(16);
-              }} disabled={loading}>
-                {mode === "advanced" ? "Continue" : "Next"}
-              </button>
-              <button className="secondary" onClick={() => setStep(8)} disabled={loading}>Back</button>
-            </div>
-          </div>
-        );
+        return <StepChannels handleAdvancedTransition={handleAdvancedTransition} />;
       case 10:
-        return (
-          <div className="step-view">
-            <h2>Runtime Environment</h2>
-            <p className="step-description">Configure how the agent executes tools and skills.</p>
-            <div className="form-group">
-              <label>Node Package Manager</label>
-              <Dropdown
-                value={nodeManager}
-                onChange={setNodeManager}
-                options={[
-                  { value: "npm", label: "npm" },
-                  { value: "pnpm", label: "pnpm" },
-                  { value: "bun", label: "bun" }
-                ]}
-              />
-            </div>
-            <div className="button-group">
-              <button className="primary" onClick={() => setStep(10.5)}>Next</button>
-              <button className="secondary" onClick={() => {
-                if (skipBasicConfig) {
-                  setStep(7);
-                } else {
-                  setStep(9);
-                }
-              }}>Back</button>
-            </div>
-          </div>
-        );
+        return <StepRuntime />;
       case 11:
         return (
           <div className="step-view" data-testid="step-skills">
@@ -2679,23 +2209,7 @@ Managed by Clawnetes.`,
           </div>
         );
       case 11.1:
-        return (
-          <div className="step-view" data-testid="step-allowed-tools">
-            <h2>Tool Access</h2>
-            <p className="step-description">Configure the base tool profile and individual tool access.</p>
-
-            <ToolPolicyEditor
-              policy={toolPolicy}
-              onChange={setToolPolicy}
-              description="Profiles set the default OpenClaw allowlist. Individual toggles override that baseline."
-            />
-
-            <div className="button-group">
-              <button className="primary" data-testid="btn-next" onClick={() => setStep(15)}>Next</button>
-              <button className="secondary" onClick={() => setStep(11)}>Back</button>
-            </div>
-          </div>
-        );
+        return <StepToolAccess />;
       case 11.5:
         return (
           <div className="step-view">
@@ -2763,38 +2277,7 @@ Managed by Clawnetes.`,
           </div>
         );
       case 12:
-        return (
-          <div className="step-view">
-            <h2>Security Configuration</h2>
-            <p className="step-description">Configure security policies for your agent.</p>
-
-            <div className="form-group">
-              <label>Sandbox Mode</label>
-              <Dropdown
-                value={sandboxMode}
-                onChange={setSandboxMode}
-                options={[
-                  { value: "full", label: "Full Sandbox", description: "REQUIRES DOCKER! Select only if Docker is installed, otherwise this will break." },
-                  { value: "partial", label: "Partial Sandbox", description: "Standard isolation." },
-                  { value: "none", label: "No Sandbox", description: "Unrestricted access." }
-                ]}
-              />
-            </div>
-
-            <div className="form-group" style={{ marginTop: "1.5rem" }}>
-              <ToolPolicyEditor
-                policy={toolPolicy}
-                onChange={setToolPolicy}
-                description="Use a profile as the base, then refine individual tools."
-              />
-            </div>
-
-            <div className="button-group">
-              <button className="primary" onClick={() => setStep(13)}>Continue</button>
-              <button className="secondary" onClick={() => setStep(11.5)}>Back</button>
-            </div>
-          </div>
-        );
+        return <StepSecurityConfig />;
       case 13: {
         const referencedProviders = buildReferencedProviders({
           primaryModel: model,
