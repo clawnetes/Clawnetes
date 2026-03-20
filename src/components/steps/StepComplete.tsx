@@ -10,9 +10,10 @@ interface StepCompleteProps {
   handleAdvancedTransition: () => void;
   runDeferredOAuthQueue: () => Promise<void>;
   deferredOAuthQueue: DeferredOAuthItem[];
+  onOpenWorkspace: () => void;
 }
 
-function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransition, runDeferredOAuthQueue, deferredOAuthQueue }: StepCompleteProps) {
+function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransition, runDeferredOAuthQueue, deferredOAuthQueue, onOpenWorkspace }: StepCompleteProps) {
   const { state, dispatch } = useWizard();
   const {
     targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
@@ -274,6 +275,9 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
               <p style={{ marginBottom: "1.5rem" }}>Your agent is paired and ready.</p>
             )}
             <div className="button-group" style={{ gap: "1rem" }}>
+              <button className="primary" onClick={onOpenWorkspace}>
+                Open Clawnetes Workspace
+              </button>
               <button className="primary" data-testid="btn-open-dashboard" onClick={() => openExternal(dashboardUrl)}>
                 Open Web Dashboard
               </button>

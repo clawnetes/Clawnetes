@@ -1,18 +1,22 @@
-# Fix Telegram Pairing Panel Showing After Pairing
+# Chat-First Clawnetes Shell
 
 ## Summary
-- Make Telegram pairing visibility depend on one reliable linked-state check.
-- Stop treating the instructional pairing text as an implicit success state.
-- Make Telegram status detection resilient across newer and legacy OpenClaw config layouts.
+- Turn Clawnetes into a post-install operating surface for OpenClaw instead of a setup-only wizard.
+- Add a native chat shell that connects to the OpenClaw gateway, keeps sessions, starts new chats, and switches agents.
+- Move repair, security audit, reconfigure, upgrade, and uninstall into a dedicated Configure panel instead of the current maintenance landing screen.
 
 ## Implementation Changes
-- Update `src-tauri/src/main.rs` so Telegram link checks use a fallback chain:
-  1. `channels.telegram.accounts.default.dmPolicy`
-  2. legacy top-level Telegram `dmPolicy`
-  3. direct parsing of `~/.openclaw/openclaw.json` when CLI lookup fails
-- Keep `telegram_pairing_status_from_dm_policy` as the single policy interpreter.
-- Update `src/App.tsx` so the Telegram pairing card only renders when Telegram is actually unpaired.
-- Remove the `READY` rendering derived from `pairingCode.includes("Ready")`.
-- Add regression coverage in Rust and Vitest.
+- Add backend support to bootstrap a chat connection from Tauri:
+  - resolve local or remote gateway auth token
+  - restore the remote SSH tunnel when needed
+  - return the effective loopback WebSocket target for the frontend
+- Add a frontend gateway client that:
+  - performs the gateway `connect` handshake
+  - loads `agents.list`, `sessions.list`, and `chat.history`
+  - sends `chat.send`, `chat.abort`, `sessions.create`, and `sessions.reset`
+  - reacts to `chat`, `agent`, `health`, `tick`, and `seqGap` events
+- Introduce a top-level app shell with `setup`, `chat`, and Configure states.
+- Keep the existing wizard for first-time install and explicit reconfigure.
+- Add unit tests for installed-state routing and core chat shell behavior.
 - Validate with `npm test` and `npm run tauri dev`.
 - Commit and push after validation succeeds.

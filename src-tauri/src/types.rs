@@ -195,3 +195,14 @@ pub struct SavedLicenseBlob {
     pub nonce: String,
     pub ciphertext: String,
 }
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayChatBootstrap {
+    pub ws_url: String,
+    pub auth_token: String,
+    pub target_environment: String,
+    pub gateway_port: u16,
+    pub tunnel_active: bool,
+    pub openclaw_version: String,
+}

@@ -4,7 +4,7 @@ use tokio::time::sleep;
 
 use crate::ssh::{connect_ssh, execute_ssh, get_env_prefix};
 use crate::system::shell_command;
-use crate::types::RemoteInfo;
+use crate::types::{GatewayChatBootstrap, RemoteInfo};
 
 pub fn parse_gateway_token_cli_output(output: &str) -> Option<String> {
     let token = output.trim().trim_matches('"').to_string();
@@ -51,6 +51,40 @@ pub fn get_remote_gateway_token(remote: &RemoteInfo) -> Result<String, String> {
 
     let content = execute_ssh(&sess, "cat ~/.openclaw/openclaw.json")?;
     extract_gateway_token_from_config(&content, "remote config")
+}
+
+pub fn get_local_gateway_token() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use crate::system::{wsl_home_dir, wsl_read_file, wsl_root_command};
+
+        if let Some(token) = wsl_root_command("openclaw config get gateway.auth.token")
+            .ok()
+            .and_then(|output| parse_gateway_token_cli_output(&output))
+        {
+            return Ok(token);
+        }
+
+        let home = wsl_home_dir()?.trim().to_string();
+        let config_path = format!("{}/.openclaw/openclaw.json", home);
+        let config_str = wsl_read_file(&config_path)?;
+        return extract_gateway_token_from_config(&config_str, "config");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(token) = shell_command("openclaw config get gateway.auth.token")
+            .ok()
+            .and_then(|output| parse_gateway_token_cli_output(&output))
+        {
+            return Ok(token);
+        }
+
+        let home = dirs::home_dir().ok_or("Could not find home directory")?;
+        let config_path = home.join(".openclaw").join("openclaw.json");
+        let config_str = std::fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+        extract_gateway_token_from_config(&config_str, "config")
+    }
 }
 
 pub async fn start_gateway() -> Result<String, String> {
@@ -238,22 +272,50 @@ pub fn get_dashboard_url(
                 return Ok(url);
             }
 
-            if let Some(token) = shell_command("openclaw config get gateway.auth.token")
-                .ok()
-                .and_then(|output| parse_gateway_token_cli_output(&output))
-            {
-                token
-            } else {
-                let home = dirs::home_dir().ok_or("Could not find home directory")?;
-                let config_path = home.join(".openclaw").join("openclaw.json");
-                let config_str =
-                    std::fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-                extract_gateway_token_from_config(&config_str, "config")?
-            }
+            get_local_gateway_token()?
         }
     };
 
     Ok(format!("http://127.0.0.1:18789/#token={}", token))
+}
+
+pub async fn prepare_gateway_chat_connection(
+    gateway_port: u16,
+    remote: Option<&RemoteInfo>,
+) -> Result<GatewayChatBootstrap, String> {
+    let ws_url = format!("ws://127.0.0.1:{}", gateway_port);
+
+    if let Some(remote) = remote {
+        match crate::ssh::start_ssh_tunnel(remote) {
+            Ok(_) => {}
+            Err(err) if err.contains("already running") => {}
+            Err(err) => return Err(err),
+        }
+
+        verify_tunnel_connectivity(remote)?;
+
+        return Ok(GatewayChatBootstrap {
+            ws_url,
+            auth_token: get_remote_gateway_token(remote)?,
+            target_environment: "cloud".to_string(),
+            gateway_port,
+            tunnel_active: true,
+            openclaw_version: crate::maintenance::get_remote_openclaw_version(remote)?,
+        });
+    }
+
+    if TcpStream::connect(("127.0.0.1", gateway_port)).is_err() {
+        start_gateway().await?;
+    }
+
+    Ok(GatewayChatBootstrap {
+        ws_url,
+        auth_token: get_local_gateway_token()?,
+        target_environment: "local".to_string(),
+        gateway_port,
+        tunnel_active: false,
+        openclaw_version: crate::maintenance::get_openclaw_version(),
+    })
 }
 
 pub fn verify_tunnel_connectivity(remote: &RemoteInfo) -> Result<bool, String> {

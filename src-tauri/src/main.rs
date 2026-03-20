@@ -23,7 +23,7 @@ use std::time::Duration;
 extern crate lazy_static;
 
 use types::{
-    AgentConfig, CurrentConfig,
+    AgentConfig, CurrentConfig, GatewayChatBootstrap,
     PrereqCheck, ProviderAuthData, RemoteInfo,
 };
 use license::verify_license_with_gumroad;
@@ -148,6 +148,14 @@ async fn update_remote_openclaw(remote: RemoteInfo) -> Result<String, String> {
 #[command]
 async fn get_remote_gateway_token(remote: RemoteInfo) -> Result<String, String> {
     gateway::get_remote_gateway_token(&remote)
+}
+
+#[command]
+async fn prepare_gateway_chat_connection(
+    gateway_port: Option<u16>,
+    remote: Option<RemoteInfo>,
+) -> Result<GatewayChatBootstrap, String> {
+    gateway::prepare_gateway_chat_connection(gateway_port.unwrap_or(18789), remote.as_ref()).await
 }
 
 #[command]
@@ -393,6 +401,7 @@ fn main() {
             uninstall_remote_openclaw,
             update_remote_openclaw,
             get_remote_gateway_token,
+            prepare_gateway_chat_connection,
             verify_tunnel_connectivity,
             get_current_config,
             has_saved_license,

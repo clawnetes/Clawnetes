@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, openDialog, openExternal } from "./lib/tauri";
 import "./App.css";
 import { PERSONA_TEMPLATES } from "./presets/personaTemplates";
@@ -24,7 +24,7 @@ import {
   loadExistingConfig as loadExistingConfigController,
 } from "./utils/wizardControllers";
 import Dropdown from "./components/Dropdown";
-import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "./types";
+import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, GatewayChatBootstrap, ProviderAuthConfig, ToolPolicy } from "./types";
 import { useWizardState, fieldSetter } from "./hooks/useWizardState";
 import { WizardContext } from "./context/WizardContext";
 import StepWelcome from "./components/steps/StepWelcome";
@@ -52,10 +52,17 @@ import StepModels from "./components/steps/StepModels";
 import StepMaintenance from "./components/steps/StepMaintenance";
 import StepAgentConfigLoop from "./components/steps/StepAgentConfigLoop";
 import StepComplete from "./components/steps/StepComplete";
+import ChatShell from "./components/chat/ChatShell";
+import ConfigureDrawer from "./components/chat/ConfigureDrawer";
 
 function App() {
   const [state, dispatch] = useWizardState();
   const initialConfigRef = useRef<any>(null);
+  const [appScreen, setAppScreen] = useState<"loading" | "setup" | "chat">("loading");
+  const [showConfigure, setShowConfigure] = useState(false);
+  const [chatBootstrap, setChatBootstrap] = useState<GatewayChatBootstrap | null>(null);
+  const [chatBootstrapping, setChatBootstrapping] = useState(false);
+  const [chatBootstrapError, setChatBootstrapError] = useState("");
 
   // Destructure state for backwards-compatible access throughout the component
   const {
@@ -292,7 +299,45 @@ function App() {
     availableSkills,
   });
 
+  const buildActiveRemoteConfig = useCallback(() => {
+    if (targetEnvironment !== "cloud") {
+      return null;
+    }
+
+    return {
+      ip: remoteIp,
+      user: remoteUser,
+      password: remotePassword || null,
+      privateKeyPath: remotePrivateKeyPath || null,
+    };
+  }, [remoteIp, remotePassword, remotePrivateKeyPath, remoteUser, targetEnvironment]);
+
+  const bootstrapGatewayChat = useCallback(async () => {
+    setChatBootstrapping(true);
+    setChatBootstrapError("");
+
+    try {
+      const bootstrap = await invoke<GatewayChatBootstrap>("prepare_gateway_chat_connection", {
+        gatewayPort,
+        remote: buildActiveRemoteConfig(),
+      });
+      setChatBootstrap(bootstrap);
+      setAppScreen("chat");
+    } catch (error) {
+      setChatBootstrap(null);
+      setChatBootstrapError(String(error));
+    } finally {
+      setChatBootstrapping(false);
+    }
+  }, [buildActiveRemoteConfig, gatewayPort]);
+
   useEffect(() => { checkSystem(true); }, []);
+
+  useEffect(() => {
+    if (appScreen !== "chat") return;
+    if (chatBootstrapping || chatBootstrap) return;
+    void bootstrapGatewayChat();
+  }, [appScreen, chatBootstrap, chatBootstrapping, bootstrapGatewayChat]);
 
   useEffect(() => {
     let cancelled = false;
@@ -689,13 +734,16 @@ function App() {
     const version: string = await invoke("get_openclaw_version");
     setOpenClawVersion(version);
 
-    if (res.openclaw_installed && !skipRedirect) {
-      setStep(0);
-      return true; // Indicate that we're going to maintenance
+    if (res.openclaw_installed) {
+      setAppScreen("chat");
+      return true;
     } else if (!skipRedirect) {
-      setStep(0.5); // Go to Welcome page if not installed
+      setStep(0.5);
+      setAppScreen("setup");
+    } else {
+      setAppScreen("setup");
     }
-    return res.openclaw_installed; // Return installation status
+    return res.openclaw_installed;
   }
 
   async function checkRemoteSystem(skipRedirect = false) {
@@ -717,12 +765,11 @@ function App() {
       const version: string = await invoke("get_remote_openclaw_version", { remote });
       setOpenClawVersion(version);
 
-      // If OpenClaw is already installed remotely, go to maintenance screen (unless skipping)
-      if (res.openclaw_installed && !skipRedirect) {
-        setStep(0);
-        return true; // Indicate that we're going to maintenance
+      if (res.openclaw_installed) {
+        setAppScreen("chat");
+        return true;
       }
-      return res.openclaw_installed; // Return installation status
+      return res.openclaw_installed;
     }
     return false;
   }
@@ -1330,6 +1377,46 @@ Managed by Clawnetes.`,
     tunnelActive,
   ]);
 
+  const openChatWorkspace = useCallback(() => {
+    setChatBootstrap(null);
+    setChatBootstrapError("");
+    setShowConfigure(false);
+    setAppScreen("chat");
+  }, []);
+
+  const handleReconfigureFromDrawer = useCallback(async () => {
+    const loaded = await loadExistingConfig();
+    if (!loaded) return;
+    setShowConfigure(false);
+    setChatBootstrap(null);
+    setChatBootstrapError("");
+    setAppScreen("setup");
+    setMode("advanced");
+    setStep(6);
+  }, [loadExistingConfig, setMode, setStep]);
+
+  const handleDrawerMaintenanceAction = useCallback(async (action: "repair" | "audit" | "update" | "uninstall") => {
+    if (action === "uninstall") {
+      if (!confirm("Are you absolutely sure you want to completely remove OpenClaw and all its data?")) {
+        return;
+      }
+    }
+
+    await handleMaintenanceAction(action);
+
+    if (action === "uninstall") {
+      setShowConfigure(false);
+      setChatBootstrap(null);
+      setChatBootstrapError("");
+      setAppScreen("setup");
+      setStep(0.5);
+      return;
+    }
+
+    setChatBootstrap(null);
+    void bootstrapGatewayChat();
+  }, [bootstrapGatewayChat, handleMaintenanceAction, setStep]);
+
   const toggleSkill = (id: string) => {
     setSelectedSkills(prev =>
       prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
@@ -1347,6 +1434,9 @@ Managed by Clawnetes.`,
   const currentPayload = buildConfigPayload(configPayloadInput);
   const initialPayload = transformInitialToPayload(initialConfigRef.current);
   const hasChanges = !initialConfigRef.current || !isDeepEqual(initialPayload, currentPayload);
+  const remoteSummary = targetEnvironment === "cloud"
+    ? `${remoteUser || "remote-user"}@${remoteIp || "remote-host"}${tunnelActive ? " via SSH tunnel" : ""}`
+    : "Running against the local OpenClaw gateway on loopback.";
 
   const renderStep = () => {
     switch (step) {
@@ -1403,7 +1493,7 @@ Managed by Clawnetes.`,
       case 10.5:
         return <StepPersonality handleSaveWorkspace={handleSaveWorkspace} />;
       case 17:
-        return <StepComplete handleToggleTunnel={handleToggleTunnel} handlePairing={handlePairing} handleAdvancedTransition={handleAdvancedTransition} runDeferredOAuthQueue={runDeferredOAuthQueue} deferredOAuthQueue={deferredOAuthQueue} />;
+        return <StepComplete handleToggleTunnel={handleToggleTunnel} handlePairing={handlePairing} handleAdvancedTransition={handleAdvancedTransition} runDeferredOAuthQueue={runDeferredOAuthQueue} deferredOAuthQueue={deferredOAuthQueue} onOpenWorkspace={openChatWorkspace} />;
       default:
         return null;
     }
@@ -1412,24 +1502,64 @@ Managed by Clawnetes.`,
   return (
     <WizardContext.Provider value={{ state, dispatch }}>
     <div className="app-container">
-      <div className="top-bar">
-        <span className="top-bar-title">Clawnetes</span>
-      </div>
-      <div className="step-progress">
-        {stepsList
-          .filter(s => !s.hidden)
-          .filter(s => mode === "advanced" || !s.advanced)
-          .filter(s => !skipBasicConfig || (s.id !== 8 && s.id !== 9))
-          .map((s) => (
-            <div key={s.id} className={`step-dot ${getStepStatus(s.id)}`} />
-          ))}
-      </div>
+      {appScreen === "loading" ? (
+        <main className="main-content">
+          <div className="content-wrapper">
+            <div className="step-view">
+              <h2>Preparing Clawnetes</h2>
+              <p className="step-description">Checking your OpenClaw installation and gateway state.</p>
+            </div>
+          </div>
+        </main>
+      ) : appScreen === "chat" ? (
+        <>
+          <ChatShell
+            bootstrap={chatBootstrap}
+            bootstrapping={chatBootstrapping}
+            bootstrapError={chatBootstrapError}
+            onRetryConnection={() => {
+              setChatBootstrap(null);
+              void bootstrapGatewayChat();
+            }}
+            onOpenConfigure={() => setShowConfigure(true)}
+          />
+          <ConfigureDrawer
+            isOpen={showConfigure}
+            busy={loading}
+            maintenanceStatus={maintenanceStatus}
+            logs={logs}
+            targetEnvironment={targetEnvironment}
+            remoteSummary={remoteSummary}
+            onClose={() => setShowConfigure(false)}
+            onRepair={() => void handleDrawerMaintenanceAction("repair")}
+            onAudit={() => void handleDrawerMaintenanceAction("audit")}
+            onUpgrade={() => void handleDrawerMaintenanceAction("update")}
+            onReconfigure={() => void handleReconfigureFromDrawer()}
+            onUninstall={() => void handleDrawerMaintenanceAction("uninstall")}
+          />
+        </>
+      ) : (
+        <>
+          <div className="top-bar">
+            <span className="top-bar-title">Clawnetes</span>
+          </div>
+          <div className="step-progress">
+            {stepsList
+              .filter(s => !s.hidden)
+              .filter(s => mode === "advanced" || !s.advanced)
+              .filter(s => !skipBasicConfig || (s.id !== 8 && s.id !== 9))
+              .map((s) => (
+                <div key={s.id} className={`step-dot ${getStepStatus(s.id)}`} />
+              ))}
+          </div>
 
-      <main className="main-content">
-        <div className="content-wrapper">
-          {renderStep()}
-        </div>
-      </main>
+          <main className="main-content">
+            <div className="content-wrapper">
+              {renderStep()}
+            </div>
+          </main>
+        </>
+      )}
 
       {showLicenseModal && (
         <div className="modal-overlay" style={{
