@@ -204,5 +204,6 @@ pub struct GatewayChatBootstrap {
     pub target_environment: String,
     pub gateway_port: u16,
     pub tunnel_active: bool,
+    #[serde(rename = "openClawVersion")]
     pub openclaw_version: String,
 }

@@ -28,12 +28,37 @@ interface ChatShellProps {
   onOpenConfigure: () => void;
 }
 
+function isToolMessage(message: Record<string, unknown>): boolean {
+  // Skip tool_use and tool_result messages
+  if (message.type === "tool_use" || message.type === "tool_result") return true;
+
+  // Check content array for tool parts
+  if (Array.isArray(message.content)) {
+    const hasToolPart = (message.content as Record<string, unknown>[]).some(
+      (part) => typeof part === "object" && part !== null && (part.type === "tool_use" || part.type === "tool_result"),
+    );
+    if (hasToolPart) return true;
+  }
+
+  // Heuristic: user messages that look like raw JSON tool output
+  if (message.role === "user") {
+    const text = extractMessageText(message);
+    if (text.startsWith("{") && (text.includes('"tool":') || text.includes('"status":'))) return true;
+  }
+
+  return false;
+}
+
 function toChatMessages(rawMessages: unknown[] | undefined): ChatMessage[] {
   if (!Array.isArray(rawMessages)) return [];
   return rawMessages
     .map((item, index) => {
       if (typeof item !== "object" || item === null) return null;
       const message = item as Record<string, unknown>;
+
+      // Fix 2: filter out internal tool call/result messages
+      if (isToolMessage(message)) return null;
+
       const role = message.role === "assistant" || message.role === "system" ? message.role : "user";
       const text = extractMessageText(message);
       if (!text) return null;
@@ -271,8 +296,13 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
 
   async function handleNewChat() {
     if (!clientRef.current || !activeAgentId || connectionState !== "connected") return;
-    const created = await clientRef.current.createSession(activeAgentId || undefined);
-    await refreshSessions(activeAgentId, clientRef.current, created.key);
+    try {
+      const created = await clientRef.current.createSession(activeAgentId || undefined);
+      await refreshSessions(activeAgentId, clientRef.current, created.key);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setShellError(`Failed to create new chat: ${message}`);
+    }
   }
 
   async function handleSend() {
@@ -336,28 +366,6 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
 
         <div className="chat-sidebar-section">
           <div className="chat-sidebar-section-header">
-            <span>Agents</span>
-          </div>
-          <div className="chat-agent-list">
-            {showEmptyAgentState && (
-              <div className="chat-list-empty" data-testid="chat-no-agents">No agents available</div>
-            )}
-            {agents.map((agent) => (
-              <button
-                key={agent.id}
-                className={`chat-list-item ${activeAgentId === agent.id ? "active" : ""}`}
-                onClick={() => void handleAgentSwitch(agent.id)}
-                data-testid={`chat-agent-${agent.id}`}
-              >
-                <strong>{agent.name || agent.id}</strong>
-                <small>{agent.id}</small>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="chat-sidebar-section">
-          <div className="chat-sidebar-section-header">
             <span>Sessions</span>
             <button className="secondary" data-testid="chat-new-session" disabled={!canCreateChat} onClick={() => void handleNewChat()}>New Chat</button>
           </div>
@@ -384,9 +392,23 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
 
       <section className="chat-main-panel">
         <header className="chat-main-header">
-          <div>
+          <div className="chat-header-agent">
             <p className="chat-sidebar-kicker">Active Agent</p>
-            <h2 data-testid="chat-active-agent">{showEmptyAgentState ? "No agents available" : activeAgentName || "Connecting to gateway..."}</h2>
+            {agents.length > 1 ? (
+              <select
+                className="chat-agent-dropdown"
+                data-testid="chat-active-agent"
+                value={activeAgentId}
+                onChange={(e) => void handleAgentSwitch(e.target.value)}
+                disabled={!gatewayConnected}
+              >
+                {agents.map((agent) => (
+                  <option key={agent.id} value={agent.id}>{agent.name || agent.id}</option>
+                ))}
+              </select>
+            ) : (
+              <h2 data-testid="chat-active-agent">{showEmptyAgentState ? "No agents available" : activeAgentName || "Connecting to gateway..."}</h2>
+            )}
           </div>
           <div className="chat-main-actions">
             <button className="secondary" disabled={!chatReady || !activeSessionKey} onClick={() => void handleResetChat()}>Reset Chat</button>
@@ -436,7 +458,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                     key={message.id}
                     className={`chat-bubble ${message.role} ${message.error ? "error" : ""}`}
                   >
-                    <span className="chat-bubble-role">{message.role}</span>
+                    <span className="chat-bubble-role">{message.role === "user" ? "You" : message.role === "assistant" ? activeAgentName : "System"}</span>
                     <p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>{message.text || (message.pending ? "Thinking..." : "")}</p>
                   </article>
                 ))
@@ -445,29 +467,44 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
             </div>
 
             <div className="chat-composer">
-              <textarea
-                value={composerValue}
-                onChange={(event) => setComposerValue(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void handleSend();
-                  }
-                }}
-                placeholder={`Message ${activeAgentName || "agent"} (Enter to send)`}
-                rows={1}
-                data-testid="chat-composer"
-                disabled={!chatReady || !activeAgentId}
-              />
-              <div className="chat-composer-actions">
-                <span>{sending ? "Agent is thinking..." : ""}</span>
-                <div>
-                  <button className="secondary" disabled={!activeRunId || !chatReady} onClick={() => void handleAbort()}>Abort</button>
-                  <button className="primary" data-testid="chat-send" disabled={!canSend} onClick={() => void handleSend()}>
-                    {sending ? "Sending..." : "Send"}
+              <div className="chat-composer-input-wrap">
+                <textarea
+                  value={composerValue}
+                  onChange={(event) => setComposerValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void handleSend();
+                    }
+                  }}
+                  placeholder={`Message ${activeAgentName || "agent"} (Enter to send)`}
+                  rows={1}
+                  data-testid="chat-composer"
+                  disabled={!chatReady || !activeAgentId}
+                />
+                {sending ? (
+                  <button
+                    className="chat-composer-icon-btn stop"
+                    onClick={() => void handleAbort()}
+                    disabled={!activeRunId || !chatReady}
+                    aria-label="Stop"
+                    data-testid="chat-stop"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="1.5" /></svg>
                   </button>
-                </div>
+                ) : (
+                  <button
+                    className="chat-composer-icon-btn send"
+                    data-testid="chat-send"
+                    disabled={!canSend}
+                    onClick={() => void handleSend()}
+                    aria-label="Send"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="12" x2="8" y2="4" /><polyline points="4,7 8,3 12,7" /></svg>
+                  </button>
+                )}
               </div>
+              {sending && <span className="chat-composer-status">Agent is thinking...</span>}
             </div>
           </>
         )}
