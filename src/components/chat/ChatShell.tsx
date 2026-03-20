@@ -332,7 +332,6 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
         <div className="chat-sidebar-brand">
           <p className="chat-sidebar-kicker">Clawnetes OS</p>
           <h1>Agent Workspace</h1>
-          <p>{connectionLabel}</p>
         </div>
 
         <div className="chat-sidebar-section">
@@ -379,6 +378,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
 
         <div className="chat-sidebar-actions">
           <button className="secondary" onClick={onOpenConfigure}>Configure</button>
+          <div className="chat-sidebar-status">{connectionLabel}</div>
         </div>
       </aside>
 
@@ -437,7 +437,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                     className={`chat-bubble ${message.role} ${message.error ? "error" : ""}`}
                   >
                     <span className="chat-bubble-role">{message.role}</span>
-                    <p>{message.text || (message.pending ? "Thinking..." : "")}</p>
+                    <p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>{message.text || (message.pending ? "Thinking..." : "")}</p>
                   </article>
                 ))
               )}
@@ -448,13 +448,19 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
               <textarea
                 value={composerValue}
                 onChange={(event) => setComposerValue(event.target.value)}
-                placeholder="Ask OpenClaw to do real work..."
-                rows={4}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void handleSend();
+                  }
+                }}
+                placeholder={`Message ${activeAgentName || "agent"} (Enter to send)`}
+                rows={1}
                 data-testid="chat-composer"
                 disabled={!chatReady || !activeAgentId}
               />
               <div className="chat-composer-actions">
-                <span>{bootstrapError || connectionLabel}</span>
+                <span>{sending ? "Agent is thinking..." : ""}</span>
                 <div>
                   <button className="secondary" disabled={!activeRunId || !chatReady} onClick={() => void handleAbort()}>Abort</button>
                   <button className="primary" data-testid="chat-send" disabled={!canSend} onClick={() => void handleSend()}>
