@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock tauri APIs
-vi.mock("@tauri-apps/api/tauri", () => ({
+vi.mock("../lib/tauri", () => ({
   invoke: vi.fn().mockImplementation((cmd: string) => {
     if (cmd === "check_prerequisites") {
       return Promise.resolve({ node_installed: true, docker_running: false, openclaw_installed: false });
@@ -16,18 +16,12 @@ vi.mock("@tauri-apps/api/tauri", () => ({
     }
     return Promise.resolve(null);
   }),
-}));
-
-vi.mock("@tauri-apps/api/shell", () => ({
-  open: vi.fn(),
-}));
-
-vi.mock("@tauri-apps/api/dialog", () => ({
-  open: vi.fn(),
+  openExternal: vi.fn(),
+  openDialog: vi.fn(),
 }));
 
 import App from "../App";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "../lib/tauri";
 
 async function navigateToConnectBrain() {
   const user = userEvent.setup();

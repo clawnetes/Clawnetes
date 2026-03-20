@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock tauri APIs using hoisted pattern
-vi.mock("@tauri-apps/api/tauri", () => ({
+vi.mock("../lib/tauri", () => ({
   invoke: vi.fn().mockImplementation((cmd: string) => {
     if (cmd === "check_prerequisites") {
       return Promise.resolve({ node_installed: true, docker_running: false, openclaw_installed: false });
@@ -11,9 +11,9 @@ vi.mock("@tauri-apps/api/tauri", () => ({
     if (cmd === "get_ollama_models") return Promise.resolve(["llama3.2", "mistral", "phi3"]);
     return Promise.resolve(null);
   }),
+  openExternal: vi.fn(),
+  openDialog: vi.fn(),
 }));
-vi.mock("@tauri-apps/api/shell", () => ({ open: vi.fn() }));
-vi.mock("@tauri-apps/api/dialog", () => ({ open: vi.fn() }));
 
 import App from "../App";
 
@@ -26,14 +26,14 @@ describe("OllamaModelDetection", () => {
   });
 
   it("get_ollama_models returns a list of model names", async () => {
-    const { invoke } = await import("@tauri-apps/api/tauri");
+    const { invoke } = await import("../lib/tauri");
     const models = await invoke("get_ollama_models", { remote: null });
     expect(Array.isArray(models)).toBe(true);
     expect((models as string[])).toContain("llama3.2");
   });
 
   it("falls back gracefully when get_ollama_models returns empty list", async () => {
-    const { invoke } = await import("@tauri-apps/api/tauri");
+    const { invoke } = await import("../lib/tauri");
     vi.mocked(invoke).mockResolvedValueOnce([]);
     const models = await invoke("get_ollama_models", { remote: null });
     expect(Array.isArray(models)).toBe(true);
@@ -41,7 +41,7 @@ describe("OllamaModelDetection", () => {
   });
 
   it("model names from ollama don't have provider prefix (raw model names)", async () => {
-    const { invoke } = await import("@tauri-apps/api/tauri");
+    const { invoke } = await import("../lib/tauri");
     const models = await invoke("get_ollama_models", {}) as string[];
     // Raw model names from Ollama API should not have 'ollama/' prefix
     models.forEach((m: string) => {

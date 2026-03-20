@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { MODELS_BY_PROVIDER, DEFAULT_MODELS, PROVIDER_LOGOS } from "../presets/modelsByProvider";
 
-vi.mock("@tauri-apps/api/tauri", () => ({
+vi.mock("../lib/tauri", () => ({
   invoke: vi.fn().mockImplementation((cmd: string) => {
     if (cmd === "check_prerequisites") {
       return Promise.resolve({ node_installed: true, docker_running: false, openclaw_installed: false });
@@ -11,9 +11,9 @@ vi.mock("@tauri-apps/api/tauri", () => ({
     if (cmd === "get_lmstudio_models") return Promise.resolve(["llama-3.2-3b-instruct", "mistral-7b"]);
     return Promise.resolve(null);
   }),
+  openExternal: vi.fn(),
+  openDialog: vi.fn(),
 }));
-vi.mock("@tauri-apps/api/shell", () => ({ open: vi.fn() }));
-vi.mock("@tauri-apps/api/dialog", () => ({ open: vi.fn() }));
 
 import App from "../App";
 
@@ -41,7 +41,7 @@ describe("LMStudioProvider", () => {
   });
 
   it("get_lmstudio_models mock returns model list", async () => {
-    const { invoke } = await import("@tauri-apps/api/tauri");
+    const { invoke } = await import("../lib/tauri");
     const result = await invoke("get_lmstudio_models", { baseUrl: "http://localhost:1234", remote: null });
     expect(Array.isArray(result)).toBe(true);
     expect((result as string[])).toContain("llama-3.2-3b-instruct");
