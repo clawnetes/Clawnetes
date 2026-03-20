@@ -12,7 +12,16 @@ class MockWebSocket {
   private listeners = new Map<string, Array<(event?: any) => void>>();
 
   constructor(_url: string) {
-    queueMicrotask(() => this.emit("open"));
+    queueMicrotask(() => {
+      this.emit("open");
+      this.emit("message", {
+        data: JSON.stringify({
+          type: "event",
+          event: "connect.challenge",
+          payload: { nonce: "nonce-123" },
+        }),
+      });
+    });
   }
 
   addEventListener(type: string, handler: (event?: any) => void) {
@@ -29,7 +38,12 @@ class MockWebSocket {
 
     switch (parsed.method) {
       case "connect":
-        respond({ type: "res", id: parsed.id, ok: true, payload: { ok: true } });
+        respond({
+          type: "res",
+          id: parsed.id,
+          ok: true,
+          payload: { protocol: 3, auth: { role: "operator", scopes: ["operator.admin"], deviceToken: "device-token" } },
+        });
         break;
       case "agents.list":
         respond({
@@ -108,6 +122,11 @@ describe("Installed-state chat shell", () => {
     invokeMock.mockReset();
     vi.stubGlobal("WebSocket", MockWebSocket);
     vi.stubGlobal("crypto", { randomUUID: () => "uuid-1" });
+    vi.stubGlobal("navigator", {
+      platform: "test-platform",
+      userAgent: "vitest",
+      language: "en-GB",
+    });
     Object.defineProperty(Element.prototype, "scrollIntoView", {
       configurable: true,
       value: vi.fn(),

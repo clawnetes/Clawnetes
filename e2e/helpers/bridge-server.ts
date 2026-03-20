@@ -54,6 +54,48 @@ function shellSafe(cmd: string, timeoutMs = 60_000): string | null {
   }
 }
 
+function normalizeGatewayToken(raw: string | null): string | null {
+  if (!raw) {
+    return null;
+  }
+  const token = raw.trim().replace(/^"|"$/g, "");
+  if (!token || token === "null" || token === "undefined" || token === "__OPENCLAW_REDACTED__") {
+    return null;
+  }
+  return token;
+}
+
+function ensureLocalGatewayStarted(gatewayPort = 18789): void {
+  if (shellSafe(`curl -sf http://127.0.0.1:${gatewayPort} > /dev/null`, 5_000) !== null) {
+    return;
+  }
+
+  shellSafe("openclaw gateway stop");
+  shellSafe("sleep 2");
+
+  const plistPath = join(homedir(), "Library", "LaunchAgents", "ai.openclaw.gateway.plist");
+  if (existsSync(plistPath)) {
+    shellSafe(`launchctl bootstrap gui/$(id -u) "${plistPath}"`, 15_000);
+  }
+
+  shellSafe("openclaw doctor --fix --yes || true", 120_000);
+  const startOutput = shellSafe("openclaw gateway start", 120_000);
+  if (startOutput && /(error|failed)/i.test(startOutput)) {
+    throw new Error(`Gateway start may have failed: ${startOutput}`);
+  }
+
+  const maxWait = Date.now() + 30_000;
+  while (Date.now() < maxWait) {
+    if (shellSafe(`curl -sf http://127.0.0.1:${gatewayPort} > /dev/null`, 5_000) !== null) {
+      return;
+    }
+    shellSafe("sleep 2");
+  }
+
+  const status = shellSafe("openclaw gateway status", 15_000) || "Unable to get gateway status";
+  throw new Error(`Gateway did not become reachable on port ${gatewayPort}. ${status}`);
+}
+
 /**
  * Replicate the Rust `configure_agent` logic in Node.js.
  * Reference: src-tauri/src/main.rs lines 3009-3827
@@ -502,30 +544,12 @@ function handleCommand(
     }
 
     case "start_gateway": {
-      shellSafe("openclaw gateway stop");
-      // Small delay for cleanup
-      shellSafe("sleep 2");
-      shellSafe("openclaw doctor --fix --yes || true");
+      ensureLocalGatewayStarted(18789);
 
-      // Re-apply auth-profiles.json after doctor --fix may have overwritten it
       if (lastAuthProfilesPath && lastAuthProfilesContent) {
         mkdirSync(join(lastAuthProfilesPath, ".."), { recursive: true });
         writeFileSync(lastAuthProfilesPath, lastAuthProfilesContent);
         console.log(`[bridge] re-applied auth-profiles.json after doctor --fix`);
-      }
-
-      shell("openclaw gateway start", 120_000);
-
-      // Poll for gateway to be ready
-      const maxWait = 60_000;
-      const start = Date.now();
-      while (Date.now() - start < maxWait) {
-        try {
-          shell("curl -sf http://127.0.0.1:18789 > /dev/null");
-          break;
-        } catch {
-          shellSafe("sleep 2");
-        }
       }
       return "Gateway started.";
     }
@@ -612,6 +636,59 @@ function handleCommand(
         } catch { /* ignore */ }
       }
       return "http://127.0.0.1:18789";
+    }
+
+    case "prepare_gateway_chat_connection": {
+      const gatewayPort = Number((args.gatewayPort as number) || (args.gateway_port as number) || 18789);
+      const isRemote = Boolean(extractRemoteConfig(args));
+      const rc = extractRemoteConfig(args);
+
+      if (isRemote && rc) {
+        if (!tunnelProcess) {
+          startSshTunnel(rc);
+        }
+
+        const remoteToken =
+          sshExecSafe(
+            rc,
+            "cat ~/.openclaw/openclaw.json | node -e \"const d=require('fs').readFileSync('/dev/stdin','utf8');const c=JSON.parse(d);console.log(c.gateway.auth.token)\"",
+          ) || sshExecSafe(rc, "openclaw config get gateway.auth.token");
+        const normalizedRemoteToken = normalizeGatewayToken(remoteToken);
+
+        if (!normalizedRemoteToken) {
+          throw new Error("Unable to resolve remote gateway token");
+        }
+
+        return {
+          wsUrl: `ws://127.0.0.1:${gatewayPort}`,
+          authToken: normalizedRemoteToken,
+          targetEnvironment: "cloud",
+          gatewayPort,
+          tunnelActive: true,
+          openClawVersion: sshExecSafe(rc, "openclaw --version") || "0.0.0",
+        };
+      }
+
+      ensureLocalGatewayStarted(gatewayPort);
+
+      const tokenOutput = normalizeGatewayToken(shellSafe("openclaw config get gateway.auth.token"))
+        || normalizeGatewayToken(
+          shellSafe(
+            `cat ${join(homedir(), ".openclaw", "openclaw.json")} | node -e "const d=require('fs').readFileSync('/dev/stdin','utf8');const c=JSON.parse(d);console.log(c.gateway.auth.token)"`,
+          ),
+        );
+      if (!tokenOutput) {
+        throw new Error("Unable to resolve local gateway token");
+      }
+
+      return {
+        wsUrl: `ws://127.0.0.1:${gatewayPort}`,
+        authToken: tokenOutput,
+        targetEnvironment: "local",
+        gatewayPort,
+        tunnelActive: false,
+        openClawVersion: shellSafe("openclaw --version") || "0.0.0",
+      };
     }
 
     case "validate_openclaw_config": {

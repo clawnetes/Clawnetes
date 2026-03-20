@@ -8,7 +8,11 @@ use crate::types::{GatewayChatBootstrap, RemoteInfo};
 
 pub fn parse_gateway_token_cli_output(output: &str) -> Option<String> {
     let token = output.trim().trim_matches('"').to_string();
-    if token.is_empty() || token == "null" || token == "undefined" {
+    if token.is_empty()
+        || token == "null"
+        || token == "undefined"
+        || token == "__OPENCLAW_REDACTED__"
+    {
         None
     } else {
         Some(token)
