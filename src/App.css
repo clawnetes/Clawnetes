@@ -1164,8 +1164,9 @@ button:disabled {
 .tool-policy-section {
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: rgba(255,255,255,0.92);
+  background: var(--surface-2);
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
 
 .tool-policy-section-title {
@@ -1188,7 +1189,8 @@ button:disabled {
   align-items: center;
   gap: 1rem;
   padding: 0.8rem 0.9rem;
-  border-bottom: 1px solid rgba(229, 231, 235, 0.8);
+  border-bottom: 1px solid var(--border);
+  background: transparent;
 }
 
 .tool-policy-row:last-child {
@@ -1201,7 +1203,7 @@ button:disabled {
   justify-content: space-between;
   gap: 1rem;
   padding: 0.8rem 0.9rem;
-  background: rgba(29, 29, 31, 0.03);
+  background: var(--surface-3);
 }
 
 .tool-row-title {
@@ -1275,11 +1277,12 @@ button:disabled {
 }
 
 .tool-policy-tag {
-  background: rgba(29, 29, 31, 0.05);
+  background: var(--surface-3);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0.25rem 0.55rem;
   font-size: 0.72rem;
+  color: var(--text-main);
 }
 
 .logs-container {
