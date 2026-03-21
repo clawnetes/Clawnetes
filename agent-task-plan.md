@@ -1,18 +1,17 @@
-# Fix Chat Message Markdown Rendering
+# Fix Windows WhatsApp Local Paths
 
 ## Summary
-- Render assistant replies as formatted markdown instead of showing raw markdown syntax in chat bubbles.
-- Support common assistant output patterns such as emphasis, lists, inline code, fenced code blocks, and links.
-- Keep the existing transcript-noise filtering intact while improving the visible presentation layer.
+- Fix local WhatsApp handling on Windows so it resolves OpenClaw files from WSL home instead of native Windows home.
+- Cover the remaining local WhatsApp paths: link-status checks, gateway auth token reads, and session wipe.
+- Add Rust-side regression coverage for the path helpers so the WSL/local split stays correct.
 
 ## Implementation Changes
-- Update `src/components/chat/ChatShell.tsx` with a lightweight markdown renderer for chat message content.
-- Render assistant and system replies with structured markup while keeping user messages as plain text.
-- Add markdown-specific bubble styles in `src/App.css` for paragraphs, lists, links, inline code, and fenced code blocks.
-- Extend `src/__tests__/chatShellMessages.test.tsx` with regressions that verify structured markdown rendering.
+- Update `src-tauri/src/whatsapp.rs` to resolve the local OpenClaw home via WSL on Windows and reuse that for config/session paths.
+- Update `src-tauri/src/pairing.rs` to check local WhatsApp link state against the same WSL-aware session path.
+- Add targeted unit tests for the WhatsApp path helper output.
 
 ## Validation
-- Run targeted chat message tests.
+- Run Rust unit tests for the Tauri backend.
 - Run `npm test`.
 - Run `npm run tauri dev`.
 - Commit and push if validation succeeds.

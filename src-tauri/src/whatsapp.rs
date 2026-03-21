@@ -111,9 +111,35 @@ fn build_ws_request(url: &str, origin: &str) -> Result<Request<()>, String> {
         .map_err(|e| format!("WebSocket request build failed: {}", e))?;
     request.headers_mut().insert(
         http::header::ORIGIN,
-        HeaderValue::from_str(origin).map_err(|e| format!("Invalid WebSocket origin header: {}", e))?,
+        HeaderValue::from_str(origin)
+            .map_err(|e| format!("Invalid WebSocket origin header: {}", e))?,
     );
     Ok(request)
+}
+
+fn local_openclaw_home_dir() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        crate::system::wsl_home_dir().map(|path| path.trim().to_string())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        dirs::home_dir()
+            .map(|path| path.to_string_lossy().to_string())
+            .ok_or("Could not determine local home directory.".to_string())
+    }
+}
+
+fn openclaw_config_path(home_dir: &str) -> String {
+    format!("{}/.openclaw/openclaw.json", home_dir.trim_end_matches('/'))
+}
+
+fn whatsapp_session_dir(home_dir: &str) -> String {
+    format!(
+        "{}/.openclaw/credentials/whatsapp/default",
+        home_dir.trim_end_matches('/')
+    )
 }
 
 fn read_gateway_auth_token(remote: Option<&RemoteInfo>) -> Result<Option<String>, String> {
@@ -136,11 +162,14 @@ fn read_gateway_auth_token(remote: Option<&RemoteInfo>) -> Result<Option<String>
                     .map(|token| token.to_string())
             }))
     } else {
-        let home_dir = dirs::home_dir()
-            .map(|path| path.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let json_str = std::fs::read_to_string(format!("{}/.openclaw/openclaw.json", home_dir))
-            .unwrap_or_default();
+        let home_dir = local_openclaw_home_dir()?;
+        #[cfg(target_os = "windows")]
+        let json_str =
+            crate::system::wsl_read_file(&openclaw_config_path(&home_dir)).unwrap_or_default();
+
+        #[cfg(not(target_os = "windows"))]
+        let json_str = std::fs::read_to_string(openclaw_config_path(&home_dir)).unwrap_or_default();
+
         Ok(serde_json::from_str::<serde_json::Value>(&json_str)
             .ok()
             .and_then(|config| {
@@ -345,14 +374,23 @@ pub async fn wait_whatsapp_login(
 }
 
 pub fn wipe_whatsapp_session() -> Result<(), String> {
-    let home_dir = dirs::home_dir()
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let session_dir = format!("{}/.openclaw/credentials/whatsapp/default", home_dir);
-    if Path::new(&session_dir).exists() {
-        std::fs::remove_dir_all(&session_dir)
+    let home_dir = local_openclaw_home_dir()?;
+    let session_dir = whatsapp_session_dir(&home_dir);
+
+    #[cfg(target_os = "windows")]
+    {
+        crate::system::wsl_remove_dir(&session_dir)
             .map_err(|e| format!("Failed to delete whatsapp session: {}", e))?;
     }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if Path::new(&session_dir).exists() {
+            std::fs::remove_dir_all(&session_dir)
+                .map_err(|e| format!("Failed to delete whatsapp session: {}", e))?;
+        }
+    }
+
     Ok(())
 }
 
@@ -418,10 +456,35 @@ pub async fn check_whatsapp_linked(gateway_port: u16) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_connect_message, build_ws_request, parse_connected, parse_qr_data_url,
-        GATEWAY_ALLOWED_ORIGIN_CANDIDATES, GATEWAY_CLIENT_ID, GATEWAY_CLIENT_MODE,
-        GATEWAY_CLIENT_VERSION, GATEWAY_ROLE, GATEWAY_SCOPES,
+        build_connect_message, build_ws_request, openclaw_config_path, parse_connected,
+        parse_qr_data_url, whatsapp_session_dir, GATEWAY_ALLOWED_ORIGIN_CANDIDATES,
+        GATEWAY_CLIENT_ID, GATEWAY_CLIENT_MODE, GATEWAY_CLIENT_VERSION, GATEWAY_ROLE,
+        GATEWAY_SCOPES,
     };
+
+    #[test]
+    fn test_openclaw_config_path_uses_unix_style_openclaw_location() {
+        assert_eq!(
+            openclaw_config_path("/home/testuser"),
+            "/home/testuser/.openclaw/openclaw.json"
+        );
+    }
+
+    #[test]
+    fn test_whatsapp_session_dir_uses_unix_style_credentials_location() {
+        assert_eq!(
+            whatsapp_session_dir("/home/testuser"),
+            "/home/testuser/.openclaw/credentials/whatsapp/default"
+        );
+    }
+
+    #[test]
+    fn test_whatsapp_session_dir_trims_trailing_slash() {
+        assert_eq!(
+            whatsapp_session_dir("/home/testuser/"),
+            "/home/testuser/.openclaw/credentials/whatsapp/default"
+        );
+    }
 
     #[test]
     fn build_connect_message_includes_operator_scopes_and_auth_token() {
@@ -487,8 +550,8 @@ mod tests {
 
     #[test]
     fn build_ws_request_sets_origin_header() {
-        let request = build_ws_request("ws://127.0.0.1:18789", GATEWAY_ALLOWED_ORIGIN_CANDIDATES[0])
-            .unwrap();
+        let request =
+            build_ws_request("ws://127.0.0.1:18789", GATEWAY_ALLOWED_ORIGIN_CANDIDATES[0]).unwrap();
 
         assert_eq!(
             request.headers()["origin"],
