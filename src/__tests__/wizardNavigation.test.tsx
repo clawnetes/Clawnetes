@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 // Mock tauri APIs
 vi.mock("../lib/tauri", () => ({
@@ -75,6 +75,7 @@ describe("Wizard Step List", () => {
     await waitFor(() => {
       expect(screen.getByText("Welcome to Clawnetes")).toBeInTheDocument();
     });
+    expect(screen.getByTestId("window-titlebar")).toBeInTheDocument();
   });
 
   it("navigates from Welcome to Environment on Start Setup", async () => {
@@ -91,6 +92,20 @@ describe("Wizard Step List", () => {
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("has_saved_license");
+    });
+  });
+
+  it("applies the saved theme to the app shell", async () => {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: window.localStorage,
+    });
+    localStorage.setItem("clawnetes.chat.theme.v1", "dark");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(document.documentElement.dataset.theme).toBe("dark");
     });
   });
 });

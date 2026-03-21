@@ -16,6 +16,7 @@
     "windows": [
       {
         "label": "main",
+        "decorations": false,
         "fullscreen": false,
         "height": 850,
         "resizable": true,

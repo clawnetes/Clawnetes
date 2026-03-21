@@ -233,6 +233,8 @@ describe("Installed-state chat shell", () => {
       expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
     });
 
+    expect(screen.getByTestId("window-titlebar")).toBeInTheDocument();
+
     await waitFor(() => {
       expect(screen.getAllByText("Main Agent").length).toBeGreaterThan(0);
     });

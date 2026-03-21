@@ -54,6 +54,8 @@ import StepAgentConfigLoop from "./components/steps/StepAgentConfigLoop";
 import StepComplete from "./components/steps/StepComplete";
 import ChatShell from "./components/chat/ChatShell";
 import ConfigureDrawer from "./components/chat/ConfigureDrawer";
+import WindowTitleBar from "./components/WindowTitleBar";
+import { loadThemePreference, resolveThemePreference } from "./lib/chatShellStorage";
 
 function App() {
   const [state, dispatch] = useWizardState();
@@ -63,6 +65,27 @@ function App() {
   const [chatBootstrap, setChatBootstrap] = useState<GatewayChatBootstrap | null>(null);
   const [chatBootstrapping, setChatBootstrapping] = useState(false);
   const [chatBootstrapError, setChatBootstrapError] = useState("");
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    const themePreference = loadThemePreference();
+    const mediaQuery =
+      typeof window !== "undefined" && typeof window.matchMedia === "function"
+        ? window.matchMedia("(prefers-color-scheme: dark)")
+        : null;
+
+    const applyTheme = () => {
+      document.documentElement.dataset.theme = resolveThemePreference(themePreference, mediaQuery?.matches ?? false);
+    };
+
+    applyTheme();
+    if (!mediaQuery) return;
+
+    const listener = () => applyTheme();
+    mediaQuery.addEventListener?.("change", listener);
+    return () => mediaQuery.removeEventListener?.("change", listener);
+  }, []);
 
   // Destructure state for backwards-compatible access throughout the component
   const {
@@ -1501,145 +1524,145 @@ Managed by Clawnetes.`,
 
   return (
     <WizardContext.Provider value={{ state, dispatch }}>
-    <div className="app-container">
-      {appScreen === "loading" ? (
-        <main className="main-content">
-          <div className="content-wrapper">
-            <div className="step-view">
-              <h2>Preparing Clawnetes</h2>
-              <p className="step-description">Checking your OpenClaw installation and gateway state.</p>
-            </div>
-          </div>
-        </main>
-      ) : appScreen === "chat" ? (
-        <>
-          <ChatShell
-            bootstrap={chatBootstrap}
-            bootstrapping={chatBootstrapping}
-            bootstrapError={chatBootstrapError}
-            onRetryConnection={() => {
-              setChatBootstrap(null);
-              void bootstrapGatewayChat();
-            }}
-            onOpenConfigure={() => setShowConfigure(true)}
-          />
-          <ConfigureDrawer
-            isOpen={showConfigure}
-            busy={loading}
-            maintenanceStatus={maintenanceStatus}
-            logs={logs}
-            targetEnvironment={targetEnvironment}
-            remoteSummary={remoteSummary}
-            onClose={() => setShowConfigure(false)}
-            onRepair={() => void handleDrawerMaintenanceAction("repair")}
-            onAudit={() => void handleDrawerMaintenanceAction("audit")}
-            onUpgrade={() => void handleDrawerMaintenanceAction("update")}
-            onReconfigure={() => void handleReconfigureFromDrawer()}
-            onUninstall={() => void handleDrawerMaintenanceAction("uninstall")}
-          />
-        </>
-      ) : (
-        <>
-          <div className="top-bar">
-            <span className="top-bar-title">Clawnetes</span>
-          </div>
-          <div className="step-progress">
-            {stepsList
-              .filter(s => !s.hidden)
-              .filter(s => mode === "advanced" || !s.advanced)
-              .filter(s => !skipBasicConfig || (s.id !== 8 && s.id !== 9))
-              .map((s) => (
-                <div key={s.id} className={`step-dot ${getStepStatus(s.id)}`} />
-              ))}
-          </div>
-
-          <main className="main-content">
-            <div className="content-wrapper">
-              {renderStep()}
-            </div>
-          </main>
-        </>
-      )}
-
-      {showLicenseModal && (
-        <div className="modal-overlay" style={{
-          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: "rgba(0,0,0,0.7)", zIndex: 1000,
-          display: "flex", justifyContent: "center", alignItems: "center"
-        }}>
-          <div className="modal-content" style={{
-            backgroundColor: "var(--bg-card)", padding: "2rem", borderRadius: "12px",
-            width: "400px", maxWidth: "90%", border: "1px solid var(--border)"
-          }}>
-            <h3 style={{ marginTop: 0 }}>Advanced Setup License</h3>
-            <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>
-              Advanced features require a license key. You can purchase one from Gumroad.
-            </p>
-
-            <div className="form-group" style={{ marginTop: "1.5rem" }}>
-              <label>License Key</label>
-              <input
-                value={licenseKey}
-                onChange={(e) => setLicenseKey(e.target.value)}
-                placeholder="XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX"
-                autoFocus
-              />
-            </div>
-
-            <div style={{ marginTop: "1rem", fontSize: "0.85rem" }}>
-              <a
-                href="#"
-                onClick={(e) => { e.preventDefault(); openExternal("https://aimodelscompass.gumroad.com/l/clawnetes-license"); }}
-                style={{ color: "var(--primary)" }}
-              >
-                Get a license key &rarr;
-              </a>
-            </div>
-
-            {licenseError && (
-              <div className="error" style={{ marginTop: "1rem", fontSize: "0.85rem", color: "var(--error)" }}>
-                {licenseError}
+      <div className="app-container">
+        <WindowTitleBar />
+        <div className="app-shell">
+          {appScreen === "loading" ? (
+            <main className="main-content">
+              <div className="content-wrapper">
+                <div className="step-view">
+                  <h2>Preparing Clawnetes</h2>
+                  <p className="step-description">Checking your OpenClaw installation and gateway state.</p>
+                </div>
               </div>
-            )}
+            </main>
+          ) : appScreen === "chat" ? (
+            <>
+              <ChatShell
+                bootstrap={chatBootstrap}
+                bootstrapping={chatBootstrapping}
+                bootstrapError={chatBootstrapError}
+                onRetryConnection={() => {
+                  setChatBootstrap(null);
+                  void bootstrapGatewayChat();
+                }}
+                onOpenConfigure={() => setShowConfigure(true)}
+              />
+              <ConfigureDrawer
+                isOpen={showConfigure}
+                busy={loading}
+                maintenanceStatus={maintenanceStatus}
+                logs={logs}
+                targetEnvironment={targetEnvironment}
+                remoteSummary={remoteSummary}
+                onClose={() => setShowConfigure(false)}
+                onRepair={() => void handleDrawerMaintenanceAction("repair")}
+                onAudit={() => void handleDrawerMaintenanceAction("audit")}
+                onUpgrade={() => void handleDrawerMaintenanceAction("update")}
+                onReconfigure={() => void handleReconfigureFromDrawer()}
+                onUninstall={() => void handleDrawerMaintenanceAction("uninstall")}
+              />
+            </>
+          ) : (
+            <>
+              <div className="step-progress">
+                {stepsList
+                  .filter(s => !s.hidden)
+                  .filter(s => mode === "advanced" || !s.advanced)
+                  .filter(s => !skipBasicConfig || (s.id !== 8 && s.id !== 9))
+                  .map((s) => (
+                    <div key={s.id} className={`step-dot ${getStepStatus(s.id)}`} />
+                  ))}
+              </div>
 
-            <div className="button-group" style={{ marginTop: "2rem" }}>
-              <button
-                className="primary"
-                disabled={!licenseKey.trim() || verifyingLicense}
-                onClick={async () => {
-                  setVerifyingLicense(true);
-                  setLicenseError("");
-                  try {
-                    await invoke("verify_and_store_license", { key: licenseKey.trim() });
-                    setLicenseUnlocked(true);
-                    setLicenseStatusError("");
-                    setShowLicenseModal(false);
-                    setVerifyingLicense(false);
-                    await continueToAdvancedSettings();
-                  } catch (e) {
-                    setVerifyingLicense(false);
-                    setLicenseError(String(e));
-                  }
-                }}
-              >
-                {verifyingLicense ? "Verifying..." : "Verify & Continue"}
-              </button>
-              <button
-                className="secondary"
-                onClick={() => {
-                  setShowLicenseModal(false);
-                  setLicenseError("");
-                }}
-                disabled={verifyingLicense}
-              >
-                Cancel
-              </button>
+              <main className="main-content">
+                <div className="content-wrapper">
+                  {renderStep()}
+                </div>
+              </main>
+            </>
+          )}
+
+          {showLicenseModal && (
+            <div className="modal-overlay" style={{
+              position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+              backgroundColor: "rgba(0,0,0,0.7)", zIndex: 1000,
+              display: "flex", justifyContent: "center", alignItems: "center"
+            }}>
+              <div className="modal-content" style={{
+                backgroundColor: "var(--bg-card)", padding: "2rem", borderRadius: "12px",
+                width: "400px", maxWidth: "90%", border: "1px solid var(--border)"
+              }}>
+                <h3 style={{ marginTop: 0 }}>Advanced Setup License</h3>
+                <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>
+                  Advanced features require a license key. You can purchase one from Gumroad.
+                </p>
+
+                <div className="form-group" style={{ marginTop: "1.5rem" }}>
+                  <label>License Key</label>
+                  <input
+                    value={licenseKey}
+                    onChange={(e) => setLicenseKey(e.target.value)}
+                    placeholder="XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX"
+                    autoFocus
+                  />
+                </div>
+
+                <div style={{ marginTop: "1rem", fontSize: "0.85rem" }}>
+                  <a
+                    href="#"
+                    onClick={(e) => { e.preventDefault(); openExternal("https://aimodelscompass.gumroad.com/l/clawnetes-license"); }}
+                    style={{ color: "var(--primary)" }}
+                  >
+                    Get a license key &rarr;
+                  </a>
+                </div>
+
+                {licenseError && (
+                  <div className="error" style={{ marginTop: "1rem", fontSize: "0.85rem", color: "var(--error)" }}>
+                    {licenseError}
+                  </div>
+                )}
+
+                <div className="button-group" style={{ marginTop: "2rem" }}>
+                  <button
+                    className="primary"
+                    disabled={!licenseKey.trim() || verifyingLicense}
+                    onClick={async () => {
+                      setVerifyingLicense(true);
+                      setLicenseError("");
+                      try {
+                        await invoke("verify_and_store_license", { key: licenseKey.trim() });
+                        setLicenseUnlocked(true);
+                        setLicenseStatusError("");
+                        setShowLicenseModal(false);
+                        setVerifyingLicense(false);
+                        await continueToAdvancedSettings();
+                      } catch (e) {
+                        setVerifyingLicense(false);
+                        setLicenseError(String(e));
+                      }
+                    }}
+                  >
+                    {verifyingLicense ? "Verifying..." : "Verify & Continue"}
+                  </button>
+                  <button
+                    className="secondary"
+                    onClick={() => {
+                      setShowLicenseModal(false);
+                      setLicenseError("");
+                    }}
+                    disabled={verifyingLicense}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-    </div>
+        </div>
+      </div>
     </WizardContext.Provider>
   );
 }
