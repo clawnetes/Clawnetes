@@ -1717,7 +1717,7 @@ button:disabled {
 /* Accordion Sections */
 .accordion-section {
   border-radius: 12px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .accordion-header {
