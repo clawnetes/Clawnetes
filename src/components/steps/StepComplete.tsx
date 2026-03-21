@@ -42,6 +42,21 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
     };
   }
 
+  async function waitForWhatsAppLinkedStatus(remote: RemoteConfig | null, timeoutMs = 120000) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const linked = await invoke<boolean>("check_messaging_link_status", {
+        channel: "whatsapp",
+        remote,
+      });
+      if (linked) {
+        return true;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    }
+    return false;
+  }
+
   async function runWhatsAppPairing(force = true) {
     const remoteArg = buildRemoteArg();
     const bootstrap = await invoke<GatewayChatBootstrap>("prepare_gateway_chat_connection", {
@@ -63,10 +78,12 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
 
       setField("whatsappQrDataUrl", qrDataUrl);
 
-      const waitPayload = await client.rpc<{ connected?: boolean }>("web.login.wait", {
+      await client.rpc("web.login.wait", {
         timeoutMs: 120000,
       });
-      if (!waitPayload?.connected) {
+
+      const linked = await waitForWhatsAppLinkedStatus(remoteArg, 120000);
+      if (!linked) {
         throw new Error("WhatsApp login did not complete before timeout");
       }
 
