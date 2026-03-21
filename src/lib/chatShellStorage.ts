@@ -57,6 +57,19 @@ function writeJson(key: string, value: unknown) {
   }
 }
 
+function removeKey(key: string) {
+  const storage = getSafeLocalStorage();
+  if (!storage) {
+    return;
+  }
+
+  try {
+    storage.removeItem(key);
+  } catch {
+    // Ignore storage failures in the chat shell.
+  }
+}
+
 function clampThreads(threads: StoredChatThread[]) {
   return threads
     .map((thread) => ({
@@ -113,4 +126,10 @@ export function resolveThemePreference(theme: ChatThemePreference, prefersDark: 
     return prefersDark ? "dark" : "light";
   }
   return theme;
+}
+
+export function clearAllChatShellStorage() {
+  removeKey(THREADS_KEY);
+  removeKey(SELECTION_KEY);
+  removeKey(THEME_KEY);
 }

@@ -201,6 +201,23 @@ function isNearBottom(element: HTMLDivElement, threshold = 96) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
 
+function mergeAssistantStreamText(current: string, incoming: string) {
+  if (!current) return incoming;
+  if (!incoming) return current;
+  if (incoming === current) return current;
+  if (incoming.startsWith(current)) return incoming;
+  if (current.startsWith(incoming)) return current;
+
+  const maxOverlap = Math.min(current.length, incoming.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    if (current.slice(-overlap) === incoming.slice(0, overlap)) {
+      return `${current}${incoming.slice(overlap)}`;
+    }
+  }
+
+  return `${current}${incoming}`;
+}
+
 function ChatIcon({ name }: { name: string }) {
   switch (name) {
     case "plus":
@@ -743,7 +760,9 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
       const existingIndex = current.findIndex((message) => message.runId === event.runId);
       if (existingIndex >= 0) {
         return current.map((message, index) =>
-          index === existingIndex ? { ...message, text: `${message.text}${delta}`, pending: true } : message,
+          index === existingIndex
+            ? { ...message, text: mergeAssistantStreamText(message.text, delta), pending: true }
+            : message,
         );
       }
       pendingScrollBehaviorRef.current = "smooth";
@@ -831,7 +850,17 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
 
   async function handleSend() {
     const text = composerValue.trim();
-    if (!text || !clientRef.current || !activeSessionKey || sending || connectionState !== "connected" || activeThreadIsArchived) {
+    if (!text || !clientRef.current || !activeSessionKey || connectionState !== "connected" || activeThreadIsArchived) {
+      return;
+    }
+
+    if (text === "/stop") {
+      setComposerValue("");
+      await handleAbort();
+      return;
+    }
+
+    if (sending) {
       return;
     }
 
@@ -863,12 +892,19 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
 
   async function handleAbort() {
     if (!clientRef.current || !activeRunId || !activeSessionKey || connectionState !== "connected") return;
-    await clientRef.current.abortChat(activeSessionKey, activeRunId);
+    const runId = activeRunId;
+
     setSending(false);
     setActiveRunId("");
     setMessages((current) =>
-      current.map((message) => (message.runId === activeRunId ? { ...message, pending: false } : message)),
+      current.map((message) => (message.runId === runId ? { ...message, pending: false } : message)),
     );
+
+    try {
+      await clientRef.current.abortChat(activeSessionKey, runId);
+    } catch (error) {
+      setShellError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function handleResetChat() {
@@ -942,6 +978,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                   className={`chat-list-item ${activeThreadId === thread.id ? "active" : ""}`}
                   onClick={() => void handleThreadSwitch(thread.id)}
                   data-testid={`chat-thread-${thread.id}`}
+                  type="button"
                 >
                   <span className="chat-list-item-icon"><ChatIcon name="chat" /></span>
                   <strong title={thread.title}>{thread.title}</strong>
@@ -964,6 +1001,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                   key={thread.id}
                   className={`chat-list-item archived ${activeThreadId === thread.id ? "active" : ""}`}
                   onClick={() => void handleThreadSwitch(thread.id)}
+                  type="button"
                 >
                   <span className="chat-list-item-icon"><ChatIcon name="note" /></span>
                   <strong title={thread.title}>{thread.title}</strong>

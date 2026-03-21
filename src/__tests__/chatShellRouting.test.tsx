@@ -261,7 +261,7 @@ describe("Installed-state chat shell", () => {
     });
   });
 
-  it("opens the Configure drawer from the chat shell", async () => {
+  it("opens the Command Center as a separate screen and returns to chat", async () => {
     const user = userEvent.setup();
     render(<App />);
 
@@ -272,8 +272,13 @@ describe("Installed-state chat shell", () => {
     await user.click(screen.getByRole("button", { name: "Configure" }));
 
     await waitFor(() => {
-      const drawer = screen.getByText("Command Center").closest("aside");
-      expect(drawer).toHaveAttribute("aria-hidden", "false");
+      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "← Back to app" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
     });
   });
 });

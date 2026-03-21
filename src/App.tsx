@@ -27,6 +27,7 @@ import Dropdown from "./components/Dropdown";
 import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, GatewayChatBootstrap, ProviderAuthConfig, ToolPolicy } from "./types";
 import { useWizardState, fieldSetter } from "./hooks/useWizardState";
 import { WizardContext } from "./context/WizardContext";
+import { clearAllChatShellStorage } from "./lib/chatShellStorage";
 import StepWelcome from "./components/steps/StepWelcome";
 import StepSecurity from "./components/steps/StepSecurity";
 import StepIdentity from "./components/steps/StepIdentity";
@@ -58,8 +59,7 @@ import ConfigureDrawer from "./components/chat/ConfigureDrawer";
 function App() {
   const [state, dispatch] = useWizardState();
   const initialConfigRef = useRef<any>(null);
-  const [appScreen, setAppScreen] = useState<"loading" | "setup" | "chat">("loading");
-  const [showConfigure, setShowConfigure] = useState(false);
+  const [appScreen, setAppScreen] = useState<"loading" | "setup" | "chat" | "command-center">("loading");
   const [chatBootstrap, setChatBootstrap] = useState<GatewayChatBootstrap | null>(null);
   const [chatBootstrapping, setChatBootstrapping] = useState(false);
   const [chatBootstrapError, setChatBootstrapError] = useState("");
@@ -1380,14 +1380,24 @@ Managed by Clawnetes.`,
   const openChatWorkspace = useCallback(() => {
     setChatBootstrap(null);
     setChatBootstrapError("");
-    setShowConfigure(false);
+    setLogs("");
+    setMaintenanceStatus("");
+    setMaintCompleted(false);
     setAppScreen("chat");
-  }, []);
+  }, [setLogs, setMaintCompleted, setMaintenanceStatus]);
+
+  const openCommandCenter = useCallback(() => {
+    if (!loading) {
+      setLogs("");
+      setMaintenanceStatus("");
+      setMaintCompleted(false);
+    }
+    setAppScreen("command-center");
+  }, [loading, setLogs, setMaintCompleted, setMaintenanceStatus]);
 
   const handleReconfigureFromDrawer = useCallback(async () => {
     const loaded = await loadExistingConfig();
     if (!loaded) return;
-    setShowConfigure(false);
     setChatBootstrap(null);
     setChatBootstrapError("");
     setAppScreen("setup");
@@ -1396,26 +1406,33 @@ Managed by Clawnetes.`,
   }, [loadExistingConfig, setMode, setStep]);
 
   const handleDrawerMaintenanceAction = useCallback(async (action: "repair" | "audit" | "update" | "uninstall") => {
-    if (action === "uninstall") {
-      if (!confirm("Are you absolutely sure you want to completely remove OpenClaw and all its data?")) {
-        return;
-      }
+    const confirmationMessageByAction: Partial<Record<typeof action, string>> = {
+      repair: "Run OpenClaw system repair now?",
+      audit: "Run OpenClaw security audit and apply fixes now?",
+      uninstall: "Are you absolutely sure you want to completely remove OpenClaw and all its data?",
+    };
+
+    const confirmationMessage = confirmationMessageByAction[action];
+    if (confirmationMessage && !confirm(confirmationMessage)) {
+      return;
     }
 
     await handleMaintenanceAction(action);
 
     if (action === "uninstall") {
-      setShowConfigure(false);
+      clearAllChatShellStorage();
       setChatBootstrap(null);
       setChatBootstrapError("");
+      setLogs("");
+      setMaintenanceStatus("");
+      setMaintCompleted(false);
       setAppScreen("setup");
       setStep(0.5);
       return;
     }
 
     setChatBootstrap(null);
-    void bootstrapGatewayChat();
-  }, [bootstrapGatewayChat, handleMaintenanceAction, setStep]);
+  }, [handleMaintenanceAction, setLogs, setMaintCompleted, setMaintenanceStatus, setStep]);
 
   const toggleSkill = (id: string) => {
     setSelectedSkills(prev =>
@@ -1521,23 +1538,23 @@ Managed by Clawnetes.`,
               setChatBootstrap(null);
               void bootstrapGatewayChat();
             }}
-            onOpenConfigure={() => setShowConfigure(true)}
+            onOpenConfigure={openCommandCenter}
           />
-          <ConfigureDrawer
-            isOpen={showConfigure}
+        </>
+      ) : appScreen === "command-center" ? (
+        <ConfigureDrawer
             busy={loading}
             maintenanceStatus={maintenanceStatus}
             logs={logs}
             targetEnvironment={targetEnvironment}
             remoteSummary={remoteSummary}
-            onClose={() => setShowConfigure(false)}
+            onClose={openChatWorkspace}
             onRepair={() => void handleDrawerMaintenanceAction("repair")}
             onAudit={() => void handleDrawerMaintenanceAction("audit")}
             onUpgrade={() => void handleDrawerMaintenanceAction("update")}
             onReconfigure={() => void handleReconfigureFromDrawer()}
             onUninstall={() => void handleDrawerMaintenanceAction("uninstall")}
           />
-        </>
       ) : (
         <>
           <div className="top-bar">

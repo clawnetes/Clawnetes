@@ -18,6 +18,9 @@ function createMockWebSocket(options?: {
   historyMessages?: unknown[];
   sessions?: MockSessionState[];
   sendErrorMessage?: string;
+  streamTexts?: string[];
+  hangAfterSend?: boolean;
+  abortErrorMessage?: string;
 }) {
   const sentMethods: string[] = [];
   const sessions = new Map<string, MockSessionState>();
@@ -41,6 +44,7 @@ function createMockWebSocket(options?: {
   }
 
   let runCounter = 0;
+  let activeRunId: string | null = null;
 
   class MockWebSocket {
     static OPEN = 1;
@@ -149,6 +153,7 @@ function createMockWebSocket(options?: {
 
           runCounter += 1;
           const runId = `run-${runCounter}`;
+          activeRunId = runId;
           const main = sessions.get(parsed.params.sessionKey) || {
             sessionId: "sess-live-1",
             displayName: "Main Session",
@@ -195,29 +200,67 @@ function createMockWebSocket(options?: {
               });
             });
           } else {
+            const finalText = options?.streamTexts?.length
+              ? options.streamTexts[options.streamTexts.length - 1]
+              : "Done.";
             main.messages = [
               ...main.messages,
               { role: "user", text: parsed.params.message, timestamp: Date.now() },
-              { role: "assistant", content: [{ type: "text", text: "Done." }], timestamp: Date.now() + 1 },
+              { role: "assistant", content: [{ type: "text", text: finalText }], timestamp: Date.now() + 1 },
             ];
             sessions.set("main", main);
-            queueMicrotask(() => {
-              this.emit("message", {
-                data: JSON.stringify({
-                  type: "event",
-                  event: "agent",
-                  payload: { runId, stream: "assistant", data: { text: "Done." } },
-                }),
+            if (!options?.hangAfterSend) {
+              const streamTexts = options?.streamTexts?.length ? options.streamTexts : ["Done."];
+              queueMicrotask(() => {
+                for (const text of streamTexts) {
+                  this.emit("message", {
+                    data: JSON.stringify({
+                      type: "event",
+                      event: "agent",
+                      payload: { runId, stream: "assistant", data: { text } },
+                    }),
+                  });
+                }
+                this.emit("message", {
+                  data: JSON.stringify({
+                    type: "event",
+                    event: "chat",
+                    payload: { sessionKey: "main", runId, state: "final" },
+                  }),
+                });
               });
-              this.emit("message", {
-                data: JSON.stringify({
-                  type: "event",
-                  event: "chat",
-                  payload: { sessionKey: "main", runId, state: "final" },
-                }),
-              });
-            });
+            }
           }
+          break;
+        }
+        case "chat.abort": {
+          if (options?.abortErrorMessage) {
+            respond({
+              type: "res",
+              id: parsed.id,
+              ok: false,
+              error: { code: "CHAT_ABORT_FAILED", message: options.abortErrorMessage },
+            });
+            break;
+          }
+
+          respond({
+            type: "res",
+            id: parsed.id,
+            ok: true,
+            payload: { runId: parsed.params.runId, status: "aborted" },
+          });
+
+          queueMicrotask(() => {
+            this.emit("message", {
+              data: JSON.stringify({
+                type: "event",
+                event: "chat",
+                payload: { sessionKey: parsed.params.sessionKey, runId: parsed.params.runId, state: "aborted" },
+              }),
+            });
+          });
+          activeRunId = null;
           break;
         }
         default:
@@ -266,6 +309,7 @@ function setupInvokeMock() {
       });
     }
     if (cmd === "run_doctor_repair") return Promise.resolve("repair-ok");
+    if (cmd === "uninstall_openclaw") return Promise.resolve("uninstall-ok");
     return Promise.resolve(null);
   });
 }
@@ -423,6 +467,33 @@ describe("ChatShell message display", () => {
 
     expect(screen.getByText("System")).toBeInTheDocument();
   });
+
+  it("merges cumulative assistant stream updates without duplicated text", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      streamTexts: [
+        "Quite a lot",
+        "Quite a lot, honestly.",
+        "Quite a lot, honestly. I can help you think, write, plan, research.",
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "what can you do");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Quite a lot, honestly. I can help you think, write, plan, research.")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/Quite a lotQuite a lot/i)).not.toBeInTheDocument();
+  });
 });
 
 describe("ChatShell fresh chat flow", () => {
@@ -548,5 +619,67 @@ describe("ChatShell fresh chat flow", () => {
     expect(screen.getByTestId("chat-configure").querySelector("svg")).not.toBeNull();
     expect(screen.getByTestId("chat-reset").querySelector("svg")).not.toBeNull();
     expect(screen.getByTestId("chat-reconnect").querySelector("svg")).not.toBeNull();
+  });
+
+  it("routes /stop to abort instead of sending it as a chat message", async () => {
+    const user = userEvent.setup();
+    const { WebSocket, sentMethods } = createMockWebSocket({ hangAfterSend: true });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "Hello");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-stop")).toBeInTheDocument();
+    });
+
+    await user.clear(screen.getByTestId("chat-composer"));
+    await user.type(screen.getByTestId("chat-composer"), "/stop");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("chat-stop")).not.toBeInTheDocument();
+    });
+
+    expect(sentMethods.filter((method) => method === "chat.send")).toHaveLength(1);
+    expect(sentMethods).toContain("chat.abort");
+  });
+
+  it("clears local chat cache after uninstall from the command center", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { WebSocket } = createMockWebSocket();
+    vi.stubGlobal("WebSocket", WebSocket);
+    localStorage.setItem("clawnetes.chat.threads.v1", JSON.stringify({ test: [] }));
+    localStorage.setItem("clawnetes.chat.selection.v1", JSON.stringify({ test: "a" }));
+    localStorage.setItem("clawnetes.chat.theme.v1", "dark");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Configure" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /Uninstall/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Welcome to Clawnetes")).toBeInTheDocument();
+    });
+
+    expect(localStorage.getItem("clawnetes.chat.threads.v1")).toBeNull();
+    expect(localStorage.getItem("clawnetes.chat.selection.v1")).toBeNull();
+    expect(localStorage.getItem("clawnetes.chat.theme.v1")).toBeNull();
+    confirmSpy.mockRestore();
   });
 });
