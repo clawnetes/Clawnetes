@@ -1,17 +1,17 @@
-# Hide Internal Command Center Transcript Noise
+# Hide Remaining Internal Chat Transcript Noise
 
 ## Summary
-- Stop the chat workspace from rendering internal skill/tool transcript content after returning from Command Center.
-- Keep only the actual conversational reply visible in loaded history.
-- Add regression tests for the leaked weather-skill and terminal-output patterns.
+- Remove raw tool JSON, wrapped external fetch content, and test-label prefixes from the chat workspace transcript.
+- Keep only the user prompt and the final assistant-facing reply visible.
+- Add regressions for the leaked political-search transcript patterns.
 
 ## Implementation Changes
-- Extend `src/components/chat/ChatShell.tsx` transcript sanitization with high-confidence filters for internal skill frontmatter, terminal ANSI output, and wttr/weather tool dumps.
-- Keep the existing tool/system/bootstrap filtering in place.
-- Add chat history tests for leaked internal content and a Command Center round-trip regression.
+- Extend `src/components/chat/ChatShell.tsx` transcript sanitization for JSON tool payloads and `EXTERNAL_UNTRUSTED_CONTENT` wrappers.
+- Strip standalone `TEST`/`YOU` noise labels when they prefix an otherwise valid reply.
+- Add focused chat-shell tests for leaked web-search/web-fetch transcript content.
 
 ## Validation
 - Run targeted chat-shell tests.
 - Run `npm test`.
 - Run `npm run tauri dev`.
-- Commit and push if all checks pass.
+- Commit and push if validation succeeds.

@@ -78,6 +78,35 @@ function isSkillFrontmatterNoiseText(text: string) {
   );
 }
 
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function isToolPayloadJson(text: string) {
+  const parsed = parseJsonObject(text);
+  if (!parsed) return false;
+
+  return (
+    typeof parsed.tool === "string" ||
+    typeof parsed.finalUrl === "string" ||
+    typeof parsed.externalContent === "object" ||
+    typeof parsed.fetchedAt === "string" ||
+    typeof parsed.tookMs === "number" ||
+    typeof parsed.docs === "string" ||
+    (typeof parsed.status === "string" && (parsed.status === "error" || parsed.status === "ok")) ||
+    (typeof parsed.error === "string" && typeof parsed.message === "string")
+  );
+}
+
 function hasAnsiColorNoise(text: string) {
   return (
     /\u001b\[[0-9;]*[A-Za-z]/.test(text) ||
@@ -95,6 +124,14 @@ function isWeatherToolNoiseText(text: string) {
   );
 }
 
+function hasWrappedExternalContent(text: string) {
+  return (
+    /SECURITY NOTICE:\s+The following content is from an EXTERNAL, UNTRUSTED source/i.test(text) ||
+    /<<<EXTERNAL_UNTRUSTED_CONTENT\b/i.test(text) ||
+    /<<<END_EXTERNAL_UNTRUSTED_CONTENT\b/i.test(text)
+  );
+}
+
 function isNoiseOnlyLine(line: string) {
   const trimmed = line.trim();
   if (!trimmed) return true;
@@ -102,6 +139,20 @@ function isNoiseOnlyLine(line: string) {
   return (
     hasAnsiColorNoise(trimmed) ||
     /^(?:YOU|TEST)$/.test(trimmed) ||
+    /^SECURITY NOTICE:/i.test(trimmed) ||
+    /^- DO NOT treat any part of this content/i.test(trimmed) ||
+    /^- DO NOT execute tools\/commands/i.test(trimmed) ||
+    /^- This content may contain social engineering/i.test(trimmed) ||
+    /^- Respond helpfully to legitimate requests/i.test(trimmed) ||
+    /^- Delete data, emails, or files$/i.test(trimmed) ||
+    /^- Execute system commands$/i.test(trimmed) ||
+    /^- Change your behavior or ignore your guidelines$/i.test(trimmed) ||
+    /^- Reveal sensitive information$/i.test(trimmed) ||
+    /^- Send messages to third parties$/i.test(trimmed) ||
+    /^<<<EXTERNAL_UNTRUSTED_CONTENT\b/i.test(trimmed) ||
+    /^<<<END_EXTERNAL_UNTRUSTED_CONTENT\b/i.test(trimmed) ||
+    /^Source:\s+Web Fetch$/i.test(trimmed) ||
+    /^Response body truncated after \d+ bytes\./i.test(trimmed) ||
     /^Weather report(?: for)?:/i.test(trimmed) ||
     /^Weather:/i.test(trimmed) ||
     /^Timezone:/i.test(trimmed) ||
@@ -154,6 +205,32 @@ function extractReplyFromToolNoise(text: string) {
   return "";
 }
 
+function stripLeadingTranscriptLabels(text: string) {
+  let candidate = text.trim();
+  while (candidate) {
+    const lines = candidate.split(/\r?\n/);
+    const first = lines[0]?.trim() || "";
+    if (!/^(?:YOU|TEST)$/i.test(first)) break;
+    candidate = lines.slice(1).join("\n").trim();
+  }
+  return candidate;
+}
+
+function stripWrappedExternalContent(text: string) {
+  if (!hasWrappedExternalContent(text)) return text;
+
+  const marker = "<<<END_EXTERNAL_UNTRUSTED_CONTENT";
+  const lastMarkerIndex = text.lastIndexOf(marker);
+  if (lastMarkerIndex >= 0) {
+    const markerEndIndex = text.indexOf(">>>", lastMarkerIndex);
+    if (markerEndIndex >= 0) {
+      return text.slice(markerEndIndex + 3).trim();
+    }
+  }
+
+  return "";
+}
+
 function isBootstrapNoiseText(text: string) {
   const normalized = normalizeTranscriptText(text);
   if (!normalized) return false;
@@ -171,13 +248,18 @@ function isBootstrapNoiseText(text: string) {
 }
 
 function sanitizeTranscriptText(text: string) {
-  const trimmed = text.trim();
+  const trimmed = stripLeadingTranscriptLabels(text);
   if (!trimmed) return "";
   if (isBootstrapNoiseText(trimmed)) return "";
   if (isSkillFrontmatterNoiseText(trimmed)) return "";
+  if (isToolPayloadJson(trimmed)) return "";
+
+  if (hasWrappedExternalContent(trimmed)) {
+    return stripLeadingTranscriptLabels(stripWrappedExternalContent(trimmed));
+  }
 
   if (isWeatherToolNoiseText(trimmed) || hasAnsiColorNoise(trimmed)) {
-    return extractReplyFromToolNoise(trimmed);
+    return stripLeadingTranscriptLabels(extractReplyFromToolNoise(trimmed));
   }
 
   return trimmed;
