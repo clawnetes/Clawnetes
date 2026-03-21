@@ -8,4 +8,4 @@
 - [x] Run targeted Rust tests.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
-- [ ] Commit and push changes if validation succeeds.
+- [x] Commit and push changes if validation succeeds.
