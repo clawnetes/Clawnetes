@@ -875,6 +875,7 @@ describe("ChatShell fresh chat flow", () => {
     });
 
     expect(invokeMock.mock.calls.some(([cmd]) => cmd === "uninstall_openclaw")).toBe(true);
+    expect(screen.queryByTestId("command-center-screen")).not.toBeInTheDocument();
     expect(localStorage.getItem("clawnetes.chat.threads.v1")).toBeNull();
     expect(localStorage.getItem("clawnetes.chat.selection.v1")).toBeNull();
     expect(localStorage.getItem("clawnetes.chat.theme.v1")).toBeNull();
@@ -908,6 +909,64 @@ describe("ChatShell fresh chat flow", () => {
     });
 
     expect(invokeMock.mock.calls.some(([cmd]) => cmd === "uninstall_openclaw")).toBe(false);
+  });
+
+  it("keeps the command center visible when uninstall fails after confirmation", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket();
+    vi.stubGlobal("WebSocket", WebSocket);
+    localStorage.setItem("clawnetes.chat.threads.v1", JSON.stringify({ test: [] }));
+    localStorage.setItem("clawnetes.chat.selection.v1", JSON.stringify({ test: "a" }));
+
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "check_prerequisites") {
+        return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: true });
+      }
+      if (cmd === "get_openclaw_version") return Promise.resolve("2.0.0");
+      if (cmd === "has_saved_license") return Promise.resolve(false);
+      if (cmd === "prepare_gateway_chat_connection") {
+        return Promise.resolve({
+          wsUrl: "ws://127.0.0.1:18789",
+          authToken: "token-123",
+          targetEnvironment: "local",
+          gatewayPort: 18789,
+          tunnelActive: false,
+          openClawVersion: "2.0.0",
+        });
+      }
+      if (cmd === "uninstall_openclaw") return Promise.reject("permission denied");
+      if (cmd === "run_doctor_repair") return Promise.resolve("repair-ok");
+      if (cmd === "run_security_audit_fix") return Promise.resolve("audit-ok");
+      if (cmd === "install_openclaw") return Promise.resolve("update-ok");
+      return Promise.resolve(null);
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Configure" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /Uninstall/ }));
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Yes" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("Welcome to Clawnetes")).not.toBeInTheDocument();
+    expect(screen.getByText("❌ uninstall failed.")).toBeInTheDocument();
+    expect(localStorage.getItem("clawnetes.chat.threads.v1")).not.toBeNull();
+    expect(localStorage.getItem("clawnetes.chat.selection.v1")).not.toBeNull();
   });
 
   it.each([

@@ -1202,7 +1202,7 @@ Managed by Clawnetes.`,
   }
 
   const handleMaintenanceAction = useCallback(async (action: string) => {
-    await handleMaintenanceActionController({
+    return await handleMaintenanceActionController({
       state: {
         targetEnvironment,
         sshStatus,
@@ -1431,14 +1431,16 @@ Managed by Clawnetes.`,
 
     const action = pendingMaintenanceConfirm;
     setPendingMaintenanceConfirm(null);
-    await handleMaintenanceAction(action);
+    const succeeded = await handleMaintenanceAction(action);
 
-    if (action === "uninstall") {
+    if (action === "uninstall" && succeeded) {
       completeUninstallFlow();
       return;
     }
 
-    setChatBootstrap(null);
+    if (succeeded) {
+      setChatBootstrap(null);
+    }
   }, [completeUninstallFlow, handleMaintenanceAction, pendingMaintenanceConfirm]);
 
   const handleDrawerMaintenanceAction = useCallback(async (action: "repair" | "audit" | "update" | "uninstall") => {

@@ -1,17 +1,17 @@
-# Fix Windows WhatsApp Local Paths
+# Fix Uninstall Success Gating
 
 ## Summary
-- Fix local WhatsApp handling on Windows so it resolves OpenClaw files from WSL home instead of native Windows home.
-- Cover the remaining local WhatsApp paths: link-status checks, gateway auth token reads, and session wipe.
-- Add Rust-side regression coverage for the path helpers so the WSL/local split stays correct.
+- Fix the maintenance confirmation flow so uninstall only resets the app after the backend uninstall actually succeeds.
+- Preserve visible error state when uninstall fails instead of falsely returning to setup as if removal completed.
+- Add a regression for the failed uninstall confirmation path.
 
 ## Implementation Changes
-- Update `src-tauri/src/whatsapp.rs` to resolve the local OpenClaw home via WSL on Windows and reuse that for config/session paths.
-- Update `src-tauri/src/pairing.rs` to check local WhatsApp link state against the same WSL-aware session path.
-- Add targeted unit tests for the WhatsApp path helper output.
+- Update `src/utils/wizardControllers.ts` so `handleMaintenanceAction(...)` returns an explicit success flag.
+- Update `src/App.tsx` so `confirmMaintenanceAction()` only calls the uninstall completion/reset path on success.
+- Extend `src/__tests__/chatShellMessages.test.tsx` with a failing-uninstall regression.
 
 ## Validation
-- Run Rust unit tests for the Tauri backend.
+- Run targeted uninstall/maintenance tests.
 - Run `npm test`.
 - Run `npm run tauri dev`.
 - Commit and push if validation succeeds.

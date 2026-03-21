@@ -422,12 +422,14 @@ export async function handleMaintenanceAction(
 
     controller.setLogs((prev) => `${prev}${response || ""}`);
     controller.setMaintCompleted(true);
+    controller.setLoading(false);
+    return true;
   } catch (error) {
     controller.setLogs((prev) => `${prev}\nError: ${error}`);
     controller.setMaintenanceStatus(`❌ ${action} failed.`);
+    controller.setLoading(false);
+    return false;
   }
-
-  controller.setLoading(false);
 }
 
 export interface ConfigLoaderController {
