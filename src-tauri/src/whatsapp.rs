@@ -12,6 +12,91 @@ use crate::types::RemoteInfo;
 
 type GatewaySocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+const GATEWAY_CLIENT_ID: &str = "openclaw-control-ui";
+const GATEWAY_CLIENT_VERSION: &str = "clawnetes";
+const GATEWAY_CLIENT_MODE: &str = "webchat";
+const GATEWAY_ROLE: &str = "operator";
+const GATEWAY_SCOPES: [&str; 3] = ["operator.admin", "operator.approvals", "operator.pairing"];
+
+fn build_connect_message(connect_req_id: &str, auth_token: Option<&str>) -> serde_json::Value {
+    let mut connect_msg = serde_json::json!({
+        "type": "req",
+        "id": connect_req_id,
+        "method": "connect",
+        "params": {
+            "client": {
+                "id": GATEWAY_CLIENT_ID,
+                "version": GATEWAY_CLIENT_VERSION,
+                "platform": std::env::consts::OS,
+                "mode": GATEWAY_CLIENT_MODE
+            },
+            "minProtocol": 3,
+            "maxProtocol": 3,
+            "role": GATEWAY_ROLE,
+            "scopes": GATEWAY_SCOPES
+        }
+    });
+
+    if let Some(token) = auth_token {
+        if let Some(params) = connect_msg
+            .get_mut("params")
+            .and_then(|params| params.as_object_mut())
+        {
+            params.insert("auth".to_string(), serde_json::json!({ "token": token }));
+        }
+    }
+
+    connect_msg
+}
+
+fn read_gateway_error_text(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("error")
+        .and_then(|error| serde_json::to_string(error).ok())
+}
+
+fn parse_qr_data_url(value: &serde_json::Value) -> Result<Option<String>, String> {
+    if value
+        .get("ok")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+    {
+        return Ok(value
+            .get("payload")
+            .and_then(|payload| payload.get("qrDataUrl"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string()));
+    }
+
+    if let Some(error_text) = read_gateway_error_text(value) {
+        return Err(format!("Gateway error: {}", error_text));
+    }
+
+    Ok(None)
+}
+
+fn parse_connected(value: &serde_json::Value) -> Result<Option<bool>, String> {
+    if value
+        .get("ok")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+    {
+        return Ok(Some(
+            value
+                .get("payload")
+                .and_then(|payload| payload.get("connected"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false),
+        ));
+    }
+
+    if let Some(error_text) = read_gateway_error_text(value) {
+        return Err(format!("Gateway error: {}", error_text));
+    }
+
+    Ok(None)
+}
+
 fn read_gateway_auth_token(remote: Option<&RemoteInfo>) -> Result<Option<String>, String> {
     if let Some(remote) = remote {
         let sess = connect_ssh(remote)?;
@@ -67,31 +152,7 @@ async fn connect_gateway(
             .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
         let connect_req_id = uuid::Uuid::new_v4().to_string();
-        let mut connect_msg = serde_json::json!({
-            "type": "req",
-            "id": connect_req_id,
-            "method": "connect",
-            "params": {
-                "client": {
-                    "id": "gateway-client",
-                    "version": "1.0",
-                    "platform": std::env::consts::OS,
-                    "mode": "backend"
-                },
-                "minProtocol": 3,
-                "maxProtocol": 3,
-                "role": "operator",
-                "scopes": ["operator.admin"]
-            }
-        });
-        if let Some(token) = auth_token {
-            if let Some(params) = connect_msg
-                .get_mut("params")
-                .and_then(|params| params.as_object_mut())
-            {
-                params.insert("auth".to_string(), serde_json::json!({ "token": token }));
-            }
-        }
+        let connect_msg = build_connect_message(&connect_req_id, auth_token);
 
         ws_stream
             .send(Message::Text(connect_msg.to_string()))
@@ -123,9 +184,7 @@ async fn connect_gateway(
                             .and_then(|code| code.as_str())
                             .unwrap_or("");
 
-                        if error_code == "NOT_PAIRED"
-                            || detail_code == "DEVICE_IDENTITY_REQUIRED"
-                        {
+                        if error_code == "NOT_PAIRED" || detail_code == "DEVICE_IDENTITY_REQUIRED" {
                             needs_reconnect = true;
                             break;
                         }
@@ -177,18 +236,18 @@ pub async fn start_whatsapp_login(
                 let val: serde_json::Value =
                     serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
                 if val.get("id").and_then(|value| value.as_str()) == Some(&request_id) {
-                    if val.get("ok").and_then(|value| value.as_bool()).unwrap_or(false) {
-                        if let Some(qr) = val
-                            .get("payload")
-                            .and_then(|payload| payload.get("qrDataUrl"))
-                            .and_then(|value| value.as_str())
-                        {
-                            return Ok(qr.to_string());
+                    match parse_qr_data_url(&val)? {
+                        Some(qr) => return Ok(qr),
+                        None => {
+                            if val
+                                .get("ok")
+                                .and_then(|value| value.as_bool())
+                                .unwrap_or(false)
+                            {
+                                return Err("Gateway returned ok but no QR code (already linked?)"
+                                    .to_string());
+                            }
                         }
-                        return Err("Gateway returned ok but no QR code (already linked?)".to_string());
-                    }
-                    if let Some(err) = val.get("error") {
-                        return Err(format!("Gateway error: {}", err));
                     }
                 }
             }
@@ -228,15 +287,8 @@ pub async fn wait_whatsapp_login(
                     let val: serde_json::Value =
                         serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
                     if val.get("id").and_then(|value| value.as_str()) == Some(&request_id) {
-                        if val.get("ok").and_then(|value| value.as_bool()).unwrap_or(false) {
-                            return Ok(val
-                                .get("payload")
-                                .and_then(|payload| payload.get("connected"))
-                                .and_then(|value| value.as_bool())
-                                .unwrap_or(false));
-                        }
-                        if let Some(err) = val.get("error") {
-                            return Err(format!("Gateway error: {}", err));
+                        if let Some(connected) = parse_connected(&val)? {
+                            return Ok(connected);
                         }
                     }
                 }
@@ -296,13 +348,17 @@ pub async fn check_whatsapp_linked(gateway_port: u16) -> Result<bool, String> {
                     let val: serde_json::Value =
                         serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
                     if val.get("id").and_then(|value| value.as_str()) == Some(&request_id) {
-                        if val.get("ok").and_then(|value| value.as_bool()).unwrap_or(false) {
-                            let has_qr = val
-                                .get("payload")
-                                .and_then(|payload| payload.get("qrDataUrl"))
-                                .and_then(|value| value.as_str())
-                                .is_some();
-                            return Ok(!has_qr);
+                        match parse_qr_data_url(&val)? {
+                            Some(_) => return Ok(false),
+                            None => {
+                                if val
+                                    .get("ok")
+                                    .and_then(|value| value.as_bool())
+                                    .unwrap_or(false)
+                                {
+                                    return Ok(true);
+                                }
+                            }
                         }
                         return Ok(false);
                     }
@@ -318,5 +374,75 @@ pub async fn check_whatsapp_linked(gateway_port: u16) -> Result<bool, String> {
     {
         Ok(result) => result,
         Err(_) => Ok(false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_connect_message, parse_connected, parse_qr_data_url, GATEWAY_CLIENT_ID,
+        GATEWAY_CLIENT_MODE, GATEWAY_CLIENT_VERSION, GATEWAY_ROLE, GATEWAY_SCOPES,
+    };
+
+    #[test]
+    fn build_connect_message_includes_operator_scopes_and_auth_token() {
+        let message = build_connect_message("req-1", Some("test-token"));
+        let params = &message["params"];
+
+        assert_eq!(message["type"], "req");
+        assert_eq!(message["id"], "req-1");
+        assert_eq!(message["method"], "connect");
+        assert_eq!(params["client"]["id"], GATEWAY_CLIENT_ID);
+        assert_eq!(params["client"]["version"], GATEWAY_CLIENT_VERSION);
+        assert_eq!(params["client"]["mode"], GATEWAY_CLIENT_MODE);
+        assert_eq!(params["role"], GATEWAY_ROLE);
+        assert_eq!(params["scopes"], serde_json::json!(GATEWAY_SCOPES));
+        assert_eq!(params["auth"]["token"], "test-token");
+    }
+
+    #[test]
+    fn parse_qr_data_url_returns_gateway_error_text() {
+        let response = serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": "INVALID_REQUEST",
+                "message": "missing scope: operator.admin"
+            }
+        });
+
+        let error = parse_qr_data_url(&response).unwrap_err();
+
+        assert_eq!(
+            error,
+            "Gateway error: {\"code\":\"INVALID_REQUEST\",\"message\":\"missing scope: operator.admin\"}"
+        );
+    }
+
+    #[test]
+    fn parse_qr_data_url_returns_qr_when_present() {
+        let response = serde_json::json!({
+            "ok": true,
+            "payload": {
+                "qrDataUrl": "data:image/png;base64,abc123"
+            }
+        });
+
+        let qr = parse_qr_data_url(&response).unwrap();
+
+        assert_eq!(qr.as_deref(), Some("data:image/png;base64,abc123"));
+    }
+
+    #[test]
+    fn parse_connected_returns_connected_state() {
+        let response = serde_json::json!({
+            "ok": true,
+            "payload": {
+                "connected": true
+            }
+        });
+
+        let connected = parse_connected(&response).unwrap();
+
+        assert_eq!(connected, Some(true));
     }
 }
