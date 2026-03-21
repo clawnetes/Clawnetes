@@ -978,10 +978,12 @@ button {
 
 button.primary {
   background: var(--surface-3);
+  color: var(--text-main);
 }
 
 button.primary:hover {
-  background: var(--primary-hover);
+  background: var(--surface-hover);
+  color: var(--text-strong);
   transform: translateY(-1px);
 }
 

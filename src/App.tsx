@@ -1698,13 +1698,7 @@ Managed by Clawnetes.`,
             </p>
             <div className="button-group" style={{ marginTop: "1.5rem" }}>
               <button className="primary" onClick={() => void confirmMaintenanceAction()} disabled={loading} type="button">
-                {pendingMaintenanceConfirm === "repair"
-                  ? "Repair System"
-                  : pendingMaintenanceConfirm === "audit"
-                    ? "Run Security Audit"
-                    : pendingMaintenanceConfirm === "update"
-                      ? "Upgrade OpenClaw"
-                      : "Uninstall OpenClaw"}
+                Yes
               </button>
               <button className="secondary" onClick={closeMaintenanceConfirmation} disabled={loading} type="button">
                 Cancel

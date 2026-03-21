@@ -680,7 +680,10 @@ describe("ChatShell fresh chat flow", () => {
       expect(screen.getByRole("dialog")).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("button", { name: "Uninstall OpenClaw" }));
+    expect(screen.getByRole("button", { name: "Yes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Yes" }));
 
     await waitFor(() => {
       expect(screen.getByText("Welcome to Clawnetes")).toBeInTheDocument();
@@ -725,20 +728,17 @@ describe("ChatShell fresh chat flow", () => {
   it.each([
     {
       buttonName: "Repair System",
-      confirmName: "Repair System",
       invokeName: "run_doctor_repair",
     },
     {
       buttonName: "Security Audit",
-      confirmName: "Run Security Audit",
       invokeName: "run_security_audit_fix",
     },
     {
       buttonName: "Upgrade OpenClaw",
-      confirmName: "Upgrade OpenClaw",
       invokeName: "install_openclaw",
     },
-  ])("does not execute $buttonName until the dialog is confirmed", async ({ buttonName, confirmName, invokeName }) => {
+  ])("does not execute $buttonName until the dialog is confirmed", async ({ buttonName, invokeName }) => {
     const user = userEvent.setup();
     const { WebSocket } = createMockWebSocket();
     vi.stubGlobal("WebSocket", WebSocket);
@@ -762,7 +762,10 @@ describe("ChatShell fresh chat flow", () => {
       expect(screen.getByRole("dialog")).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("button", { name: confirmName }));
+    expect(screen.getByRole("button", { name: "Yes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Yes" }));
 
     await waitFor(() => {
       expect(invokeMock.mock.calls.some(([cmd]) => cmd === invokeName)).toBe(true);
