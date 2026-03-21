@@ -1,14 +1,17 @@
-# WhatsApp Pairing Scope Regression
+# Hide Internal Command Center Transcript Noise
 
 ## Summary
-- Trace the WhatsApp pairing failure to the backend gateway handshake and compare it against git history.
-- Align the WhatsApp WebSocket connect payload with the current operator scope set used by the gateway chat client.
-- Add backend regression tests for the connect payload and WhatsApp login response parsing.
+- Stop the chat workspace from rendering internal skill/tool transcript content after returning from Command Center.
+- Keep only the actual conversational reply visible in loaded history.
+- Add regression tests for the leaked weather-skill and terminal-output patterns.
 
 ## Implementation Changes
-- Update `src-tauri/src/whatsapp.rs` to centralize the gateway connect payload and request parsing helpers.
-- Expand the WhatsApp connect scope set to `operator.admin`, `operator.approvals`, and `operator.pairing`.
-- Preserve the existing WhatsApp RPC flow for `web.login.start`, `web.login.wait`, and link-status probing.
-- Add Rust unit tests covering the connect payload, gateway scope error surfacing, QR parsing, and wait response parsing.
-- Validate with targeted Rust tests, `npm test`, and `npm run tauri dev`.
-- If validation succeeds, commit and push the fix.
+- Extend `src/components/chat/ChatShell.tsx` transcript sanitization with high-confidence filters for internal skill frontmatter, terminal ANSI output, and wttr/weather tool dumps.
+- Keep the existing tool/system/bootstrap filtering in place.
+- Add chat history tests for leaked internal content and a Command Center round-trip regression.
+
+## Validation
+- Run targeted chat-shell tests.
+- Run `npm test`.
+- Run `npm run tauri dev`.
+- Commit and push if all checks pass.

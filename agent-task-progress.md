@@ -1,11 +1,10 @@
 # Progress
 
-- [x] Inspect the current WhatsApp pairing flow and trace the regression through git history.
-- [x] Update the on-disk implementation plan and progress tracker for the WhatsApp pairing fix.
-- [x] Align the WhatsApp gateway connect payload with the current operator scope set.
-- [x] Centralize WhatsApp gateway connect payload and response parsing helpers.
-- [x] Add Rust regression coverage for handshake scopes and gateway error parsing.
-- [x] Run targeted Rust tests.
+- [x] Inspect the current chat history loading and transcript filtering path.
+- [x] Write the on-disk task plan and progress tracker.
+- [x] Implement transcript filtering for internal skill/tool text dumps.
+- [x] Add regression coverage for hidden internal transcript content.
+- [x] Run targeted chat-shell tests.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
 - [x] Commit and push changes if validation succeeds.

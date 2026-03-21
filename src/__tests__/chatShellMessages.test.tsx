@@ -449,6 +449,100 @@ describe("ChatShell message display", () => {
     expect(screen.queryByText(/ENOENT: no such file or directory/i)).not.toBeInTheDocument();
   });
 
+  it("filters internal skill frontmatter from loaded history", async () => {
+    const { WebSocket } = createMockWebSocket({
+      historyMessages: [
+        {
+          role: "user",
+          content: [{
+            type: "input_text",
+            text: `---
+name: weather
+description: "Get current weather and forecasts via wttr.in."
+homepage: https://wttr.in/:help
+metadata: { "openclaw": { "emoji": "☔" } }
+---
+
+# Weather Skill
+
+## When to Use
+
+- What's the weather?`,
+          }],
+          timestamp: 1,
+        },
+        { role: "assistant", content: [{ type: "text", text: "Tomorrow looks dry and mild." }], timestamp: 2 },
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Tomorrow looks dry and mild.").length).toBeGreaterThan(0);
+    });
+
+    expect(screen.queryByText(/Weather Skill/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/homepage:\s+https:\/\/wttr\.in/i)).not.toBeInTheDocument();
+  });
+
+  it("strips weather terminal dumps and preserves the trailing reply", async () => {
+    const { WebSocket } = createMockWebSocket({
+      historyMessages: [
+        {
+          role: "assistant",
+          content: [{
+            type: "text",
+            text: `Weather report: london
+[38;5;226m    \\   /    [0m Clear
+Follow @igor_chubin for wttr.in updates
+TEST
+Tomorrow in London is looking nice:
+
+- Sunny to partly cloudy
+- Around 13C in the afternoon`,
+          }],
+          timestamp: 1,
+        },
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/Tomorrow in London is looking nice:/).length).toBeGreaterThan(0);
+    });
+
+    expect(screen.queryByText(/Weather report: london/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/igor_chubin/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^\s*TEST\s*$/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps normal markdown assistant replies visible", async () => {
+    const { WebSocket } = createMockWebSocket({
+      historyMessages: [
+        {
+          role: "assistant",
+          content: [{
+            type: "text",
+            text: "Here is the command:\n\n```bash\nnpm test\n```",
+          }],
+          timestamp: 1,
+        },
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/Here is the command:/).length).toBeGreaterThan(0);
+    });
+
+    expect(screen.getAllByText(/npm test/).length).toBeGreaterThan(0);
+  });
+
   it("shows send failures as visible system errors", async () => {
     const { WebSocket } = createMockWebSocket({ sendErrorMessage: "Request failed." });
     vi.stubGlobal("WebSocket", WebSocket);

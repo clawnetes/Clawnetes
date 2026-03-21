@@ -65,6 +65,95 @@ function normalizeTranscriptText(text: string) {
   return text.replace(/\s+/g, " ").trim();
 }
 
+function isSkillFrontmatterNoiseText(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("---")) return false;
+
+  return (
+    /(?:^|\n)name:\s*[^\n]+/i.test(trimmed) &&
+    /(?:^|\n)description:\s*[^\n]+/i.test(trimmed) &&
+    /(?:^|\n)homepage:\s*[^\n]+/i.test(trimmed) &&
+    /(?:^|\n)metadata:\s*[^\n]+/i.test(trimmed) &&
+    /(?:^|\n)#\s+[^\n]+?\s+Skill\b/i.test(trimmed)
+  );
+}
+
+function hasAnsiColorNoise(text: string) {
+  return (
+    /\u001b\[[0-9;]*[A-Za-z]/.test(text) ||
+    /\[(?:\d{1,3};){1,4}\d{1,3}m/.test(text) ||
+    /\[(?:0|1|2|30|31|32|33|34|35|36|37|38|39|46)m/.test(text)
+  );
+}
+
+function isWeatherToolNoiseText(text: string) {
+  return (
+    /weather report(?: for)?:/i.test(text) ||
+    /wttr\.in/i.test(text) ||
+    /follow\s+.*igor_chubin/i.test(text) ||
+    /\btimezone:\s+[A-Za-z_]+\/[A-Za-z_]+/i.test(text)
+  );
+}
+
+function isNoiseOnlyLine(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed) return true;
+
+  return (
+    hasAnsiColorNoise(trimmed) ||
+    /^(?:YOU|TEST)$/.test(trimmed) ||
+    /^Weather report(?: for)?:/i.test(trimmed) ||
+    /^Weather:/i.test(trimmed) ||
+    /^Timezone:/i.test(trimmed) ||
+    /^Location:/i.test(trimmed) ||
+    /^Follow\s+.*igor_chubin/i.test(trimmed) ||
+    /^[\s\p{So}\p{Sk}│┌┐└┘├┤┬┴┼─━╷╂]+$/u.test(trimmed)
+  );
+}
+
+function extractReplyFromToolNoise(text: string) {
+  const lines = text.split(/\r?\n/);
+  let firstVisibleLineIndex = 0;
+  while (firstVisibleLineIndex < lines.length && isNoiseOnlyLine(lines[firstVisibleLineIndex])) {
+    firstVisibleLineIndex += 1;
+  }
+
+  const trailingCandidate = lines.slice(firstVisibleLineIndex).join("\n").trim();
+  if (
+    trailingCandidate &&
+    /[A-Za-z]/.test(trailingCandidate) &&
+    !hasAnsiColorNoise(trailingCandidate) &&
+    !isWeatherToolNoiseText(trailingCandidate)
+  ) {
+    return trailingCandidate;
+  }
+
+  for (let start = lines.length - 1; start >= 0; start -= 1) {
+    const suffixLines = lines.slice(start);
+    let candidate = suffixLines.join("\n").trim();
+    if (!candidate) continue;
+    if (hasAnsiColorNoise(candidate)) continue;
+    if (/^Weather report(?: for)?:/i.test(candidate)) continue;
+    if (/^Weather:/i.test(candidate)) continue;
+    if (/^Timezone:/i.test(candidate)) continue;
+    if (/^Location:/i.test(candidate)) continue;
+    if (/^Follow\s+.*igor_chubin/i.test(candidate)) continue;
+    if (!/[A-Za-z]/.test(candidate)) continue;
+
+    while (candidate) {
+      const [firstLine, ...rest] = candidate.split(/\r?\n/);
+      if (!isNoiseOnlyLine(firstLine)) break;
+      candidate = rest.join("\n").trim();
+    }
+
+    if (!candidate) continue;
+    if (candidate.split(/\r?\n/).every((line) => isNoiseOnlyLine(line))) continue;
+    return candidate;
+  }
+
+  return "";
+}
+
 function isBootstrapNoiseText(text: string) {
   const normalized = normalizeTranscriptText(text);
   if (!normalized) return false;
@@ -81,16 +170,17 @@ function isBootstrapNoiseText(text: string) {
   );
 }
 
-function shouldHideTranscriptMessage(message: Record<string, unknown>) {
-  if (isToolMessage(message)) return true;
+function sanitizeTranscriptText(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  if (isBootstrapNoiseText(trimmed)) return "";
+  if (isSkillFrontmatterNoiseText(trimmed)) return "";
 
-  const role = message.role === "assistant" || message.role === "system" ? message.role : "user";
-  const text = extractMessageText(message);
+  if (isWeatherToolNoiseText(trimmed) || hasAnsiColorNoise(trimmed)) {
+    return extractReplyFromToolNoise(trimmed);
+  }
 
-  if (!text || role === "system") return true;
-  if (isBootstrapNoiseText(text)) return true;
-
-  return false;
+  return trimmed;
 }
 
 function toChatMessages(rawMessages: unknown[] | undefined): ChatMessage[] {
@@ -100,10 +190,13 @@ function toChatMessages(rawMessages: unknown[] | undefined): ChatMessage[] {
     if (typeof item !== "object" || item === null) return;
     const message = item as Record<string, unknown>;
 
-    if (shouldHideTranscriptMessage(message)) return;
-
     const role = message.role === "assistant" || message.role === "system" ? message.role : "user";
-    const text = extractMessageText(message);
+    if (isToolMessage(message)) return;
+    if (role === "system") return;
+
+    const text = sanitizeTranscriptText(extractMessageText(message));
+    if (!text) return;
+
     messages.push({
       id: `${String(message.timestamp || index)}-${role}`,
       role,

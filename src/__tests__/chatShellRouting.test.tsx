@@ -6,9 +6,9 @@ const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
 }));
 
-function createReconnectMockWebSocket() {
+function createReconnectMockWebSocket(initialTranscript?: Array<Record<string, unknown>>) {
   let sessionId = "sess-1";
-  let transcript = [
+  let transcript = initialTranscript || [
     {
       role: "assistant",
       content: [{ type: "text", text: "Welcome back." }],
@@ -280,5 +280,47 @@ describe("Installed-state chat shell", () => {
     await waitFor(() => {
       expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
     });
+  });
+
+  it("keeps internal weather transcript noise hidden after returning from Command Center", async () => {
+    const noisyTranscript = [
+      {
+        role: "assistant",
+        content: [{
+          type: "text",
+          text: `Weather report for: london
+[38;5;226m     .-.     [0m +10 C
+Timezone: Europe/London
+TEST
+Tomorrow looks clear and cool.`,
+        }],
+        timestamp: Date.now(),
+      },
+    ];
+    vi.stubGlobal("WebSocket", createReconnectMockWebSocket(noisyTranscript));
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Tomorrow looks clear and cool.").length).toBeGreaterThan(0);
+    });
+
+    expect(screen.queryByText(/Weather report for:/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Configure" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "← Back to app" }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Tomorrow looks clear and cool.").length).toBeGreaterThan(0);
+    });
+
+    expect(screen.queryByText(/Weather report for:/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Timezone: Europe\/London/i)).not.toBeInTheDocument();
   });
 });
