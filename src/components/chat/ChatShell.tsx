@@ -307,6 +307,173 @@ function clipLabel(value: string, max = 42) {
   return normalized.length > max ? `${normalized.slice(0, max - 1)}…` : normalized;
 }
 
+function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
+  const pattern = /(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|`([^`\n]+)`|\*\*([^*]+)\*\*|\*([^*\n]+)\*)/g;
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+
+    const [fullMatch, , linkLabel, href, inlineCode, boldText, italicText] = match;
+
+    if (href && linkLabel) {
+      nodes.push(
+        <a
+          key={`${keyPrefix}-link-${match.index}`}
+          href={href}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          {linkLabel}
+        </a>,
+      );
+    } else if (inlineCode) {
+      nodes.push(
+        <code key={`${keyPrefix}-code-${match.index}`}>
+          {inlineCode}
+        </code>,
+      );
+    } else if (boldText) {
+      nodes.push(
+        <strong key={`${keyPrefix}-strong-${match.index}`}>
+          {boldText}
+        </strong>,
+      );
+    } else if (italicText) {
+      nodes.push(
+        <em key={`${keyPrefix}-em-${match.index}`}>
+          {italicText}
+        </em>,
+      );
+    } else {
+      nodes.push(fullMatch);
+    }
+
+    lastIndex = match.index + fullMatch.length;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes;
+}
+
+function renderMarkdownParagraph(text: string, keyPrefix: string) {
+  const lines = text.split("\n");
+  return lines.flatMap((line, index) => {
+    const lineNodes = renderInlineMarkdown(line, `${keyPrefix}-line-${index}`);
+    if (index === lines.length - 1) return lineNodes;
+    return [...lineNodes, <br key={`${keyPrefix}-br-${index}`} />];
+  });
+}
+
+function renderChatMarkdown(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  let index = 0;
+
+  const isUnorderedListItem = (line: string) => /^\s*[-*]\s+/.test(line);
+  const isOrderedListItem = (line: string) => /^\s*\d+\.\s+/.test(line);
+  const isCodeFence = (line: string) => /^```/.test(line.trim());
+
+  while (index < lines.length) {
+    const line = lines[index];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      index += 1;
+      continue;
+    }
+
+    if (isCodeFence(line)) {
+      const language = trimmed.slice(3).trim();
+      const codeLines: string[] = [];
+      index += 1;
+      while (index < lines.length && !isCodeFence(lines[index])) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length && isCodeFence(lines[index])) {
+        index += 1;
+      }
+      nodes.push(
+        <pre key={`code-block-${nodes.length}`} className="chat-markdown-code-block">
+          <code data-language={language || undefined}>{codeLines.join("\n")}</code>
+        </pre>,
+      );
+      continue;
+    }
+
+    if (isUnorderedListItem(line)) {
+      const items: string[] = [];
+      while (index < lines.length && isUnorderedListItem(lines[index])) {
+        items.push(lines[index].replace(/^\s*[-*]\s+/, ""));
+        index += 1;
+      }
+      nodes.push(
+        <ul key={`unordered-list-${nodes.length}`} className="chat-message-list">
+          {items.map((item, itemIndex) => (
+            <li key={`unordered-item-${itemIndex}`}>{renderMarkdownParagraph(item, `ul-${nodes.length}-${itemIndex}`)}</li>
+          ))}
+        </ul>,
+      );
+      continue;
+    }
+
+    if (isOrderedListItem(line)) {
+      const items: string[] = [];
+      while (index < lines.length && isOrderedListItem(lines[index])) {
+        items.push(lines[index].replace(/^\s*\d+\.\s+/, ""));
+        index += 1;
+      }
+      nodes.push(
+        <ol key={`ordered-list-${nodes.length}`} className="chat-message-list">
+          {items.map((item, itemIndex) => (
+            <li key={`ordered-item-${itemIndex}`}>{renderMarkdownParagraph(item, `ol-${nodes.length}-${itemIndex}`)}</li>
+          ))}
+        </ol>,
+      );
+      continue;
+    }
+
+    const paragraphLines = [line];
+    index += 1;
+    while (
+      index < lines.length &&
+      lines[index].trim() &&
+      !isCodeFence(lines[index]) &&
+      !isUnorderedListItem(lines[index]) &&
+      !isOrderedListItem(lines[index])
+    ) {
+      paragraphLines.push(lines[index]);
+      index += 1;
+    }
+
+    nodes.push(
+      <p key={`paragraph-${nodes.length}`} className="chat-message-paragraph">
+        {renderMarkdownParagraph(paragraphLines.join("\n"), `paragraph-${nodes.length}`)}
+      </p>,
+    );
+  }
+
+  return nodes;
+}
+
+function ChatMessageBody({ message }: { message: ChatMessage }) {
+  const text = message.text || (message.pending ? "Thinking..." : "");
+
+  if (message.role === "assistant" || message.role === "system") {
+    return <div className="chat-message-markdown">{renderChatMarkdown(text)}</div>;
+  }
+
+  return <p className="chat-message-plain">{text}</p>;
+}
+
 function formatSessionTitle(session: GatewayChatSession) {
   return session.displayName || session.derivedTitle || session.lastMessagePreview || session.key;
 }
@@ -1364,9 +1531,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                     <span className="chat-bubble-role">
                       {message.role === "user" ? "You" : message.role === "assistant" ? activeAgentName : "System"}
                     </span>
-                    <p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>
-                      {message.text || (message.pending ? "Thinking..." : "")}
-                    </p>
+                    <ChatMessageBody message={message} />
                   </article>
                 ))
               )}

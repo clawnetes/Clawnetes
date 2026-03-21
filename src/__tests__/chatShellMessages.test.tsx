@@ -526,7 +526,7 @@ Tomorrow in London is looking nice:
           role: "assistant",
           content: [{
             type: "text",
-            text: "Here is the command:\n\n```bash\nnpm test\n```",
+            text: "Right now, the useful signal is mostly around **AI agents** rather than broad `AI`.\n- **Big theme:** memory and coordination\n- **Enterprise angle:** security and governance\n1. Give a **clean summary**\n2. Pull the **best posts**\n\n```bash\nnpm test\n```\n\n[OpenClaw](https://openclaw.ai)",
           }],
           timestamp: 1,
         },
@@ -537,10 +537,17 @@ Tomorrow in London is looking nice:
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getAllByText(/Here is the command:/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/Right now, the useful signal is mostly around/i).length).toBeGreaterThan(0);
     });
 
-    expect(screen.getAllByText(/npm test/).length).toBeGreaterThan(0);
+    expect(screen.getByText("AI agents", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByText("AI", { selector: "code" })).toBeInTheDocument();
+    expect(screen.getAllByRole("list").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Big theme:/)).toBeInTheDocument();
+    expect(screen.getByText(/clean summary/i, { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByText("npm test", { selector: "code" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "OpenClaw" })).toHaveAttribute("href", "https://openclaw.ai");
+    expect(screen.queryByText(/\*\*AI agents\*\*/)).not.toBeInTheDocument();
   });
 
   it("filters raw tool payload json from loaded history", async () => {

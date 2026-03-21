@@ -499,7 +499,6 @@ button:disabled {
   line-height: 1.62;
   font-size: 0.95rem;
   border: 1px solid transparent;
-  white-space: pre-wrap;
   word-break: break-word;
 }
 
@@ -536,6 +535,72 @@ button:disabled {
   letter-spacing: 0.03em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+.chat-message-plain {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-message-markdown {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.chat-message-markdown > :first-child {
+  margin-top: 0;
+}
+
+.chat-message-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-message-paragraph {
+  margin: 0;
+  white-space: normal;
+}
+
+.chat-message-list {
+  margin: 0;
+  padding-left: 1.35rem;
+}
+
+.chat-message-list li + li {
+  margin-top: 0.35rem;
+}
+
+.chat-message-markdown a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+}
+
+.chat-message-markdown code {
+  font-family: "SFMono-Regular", "SF Mono", Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.chat-message-markdown :not(pre) > code {
+  padding: 0.08rem 0.35rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.92em;
+}
+
+.chat-markdown-code-block {
+  margin: 0;
+  padding: 0.8rem 0.9rem;
+  border-radius: 14px;
+  overflow-x: auto;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chat-markdown-code-block code {
+  display: block;
+  white-space: pre;
+  font-size: 0.9em;
+  line-height: 1.55;
 }
 
 .chat-empty-stage,
