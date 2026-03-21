@@ -4,12 +4,12 @@ import { useWizard } from "../../context/WizardContext";
 
 interface StepMaintenanceProps {
   handleMaintenanceAction: (action: string) => void;
-  onRequestUninstall: () => void;
+  onRequestConfirmation: (action: "repair" | "audit" | "update" | "uninstall") => void;
   loadExistingConfig: () => Promise<boolean>;
   formatSshError: (error: string) => string;
 }
 
-function StepMaintenance({ handleMaintenanceAction, onRequestUninstall, loadExistingConfig, formatSshError }: StepMaintenanceProps) {
+function StepMaintenance({ handleMaintenanceAction, onRequestConfirmation, loadExistingConfig, formatSshError }: StepMaintenanceProps) {
   const { state, dispatch } = useWizard();
   const {
     targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
@@ -172,8 +172,8 @@ function StepMaintenance({ handleMaintenanceAction, onRequestUninstall, loadExis
                   setField("mode", "advanced");
                   setField("step", 6);
                 }
-              } else if (selectedMaint === "uninstall") {
-                onRequestUninstall();
+              } else if (selectedMaint === "repair" || selectedMaint === "audit" || selectedMaint === "update" || selectedMaint === "uninstall") {
+                onRequestConfirmation(selectedMaint);
               } else if (selectedMaint) {
                 handleMaintenanceAction(selectedMaint);
               }

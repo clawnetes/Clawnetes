@@ -3,6 +3,7 @@
 ## Scope
 - Clear Clawnetes-local chat cache after uninstall.
 - Make uninstall impossible before explicit in-app confirmation.
+- Make repair, security audit, and upgrade impossible before explicit in-app confirmation.
 - Replace the chat overlay Command Center with a full-window screen.
 - Fix rounded button consistency, thread alignment, and light-mode styling.
 - Fix `/stop`, abort handling, and unstable streamed assistant text rendering.
@@ -13,6 +14,7 @@
 - [x] Implement chat storage reset on uninstall.
 - [x] Replace the configure drawer with a full-window Command Center flow.
 - [x] Route uninstall through an app-controlled confirmation modal before any destructive action.
+- [x] Route repair, security audit, and upgrade through the same app-controlled confirmation modal.
 - [x] Fix chat shell abort and streamed-text behavior.
 - [x] Update styling for rounding, alignment, and light-mode contrast.
 - [x] Add and update tests.

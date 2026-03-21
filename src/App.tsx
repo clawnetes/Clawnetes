@@ -60,7 +60,7 @@ function App() {
   const [state, dispatch] = useWizardState();
   const initialConfigRef = useRef<any>(null);
   const [appScreen, setAppScreen] = useState<"loading" | "setup" | "chat" | "command-center">("loading");
-  const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
+  const [pendingMaintenanceConfirm, setPendingMaintenanceConfirm] = useState<"repair" | "audit" | "update" | "uninstall" | null>(null);
   const [chatBootstrap, setChatBootstrap] = useState<GatewayChatBootstrap | null>(null);
   const [chatBootstrapping, setChatBootstrapping] = useState(false);
   const [chatBootstrapError, setChatBootstrapError] = useState("");
@@ -1406,14 +1406,14 @@ Managed by Clawnetes.`,
     setStep(6);
   }, [loadExistingConfig, setMode, setStep]);
 
-  const requestUninstallConfirmation = useCallback(() => {
+  const requestMaintenanceConfirmation = useCallback((action: "repair" | "audit" | "update" | "uninstall") => {
     if (loading) return;
-    setShowUninstallConfirm(true);
+    setPendingMaintenanceConfirm(action);
   }, [loading]);
 
-  const closeUninstallConfirmation = useCallback(() => {
+  const closeMaintenanceConfirmation = useCallback(() => {
     if (loading) return;
-    setShowUninstallConfirm(false);
+    setPendingMaintenanceConfirm(null);
   }, [loading]);
 
   const completeUninstallFlow = useCallback(() => {
@@ -1427,32 +1427,24 @@ Managed by Clawnetes.`,
     setStep(0.5);
   }, [setLogs, setMaintCompleted, setMaintenanceStatus, setStep]);
 
-  const confirmUninstall = useCallback(async () => {
-    setShowUninstallConfirm(false);
-    await handleMaintenanceAction("uninstall");
-    completeUninstallFlow();
-  }, [completeUninstallFlow, handleMaintenanceAction]);
+  const confirmMaintenanceAction = useCallback(async () => {
+    if (!pendingMaintenanceConfirm) return;
 
-  const handleDrawerMaintenanceAction = useCallback(async (action: "repair" | "audit" | "update" | "uninstall") => {
-    if (action === "uninstall") {
-      requestUninstallConfirmation();
-      return;
-    }
-
-    const confirmationMessageByAction: Partial<Record<typeof action, string>> = {
-      repair: "Run OpenClaw system repair now?",
-      audit: "Run OpenClaw security audit and apply fixes now?",
-    };
-
-    const confirmationMessage = confirmationMessageByAction[action];
-    if (confirmationMessage && !confirm(confirmationMessage)) {
-      return;
-    }
-
+    const action = pendingMaintenanceConfirm;
+    setPendingMaintenanceConfirm(null);
     await handleMaintenanceAction(action);
 
+    if (action === "uninstall") {
+      completeUninstallFlow();
+      return;
+    }
+
     setChatBootstrap(null);
-  }, [handleMaintenanceAction, requestUninstallConfirmation]);
+  }, [completeUninstallFlow, handleMaintenanceAction, pendingMaintenanceConfirm]);
+
+  const handleDrawerMaintenanceAction = useCallback(async (action: "repair" | "audit" | "update" | "uninstall") => {
+    requestMaintenanceConfirmation(action);
+  }, [requestMaintenanceConfirmation]);
 
   const toggleSkill = (id: string) => {
     setSelectedSkills(prev =>
@@ -1481,7 +1473,7 @@ Managed by Clawnetes.`,
         return (
           <StepMaintenance
             handleMaintenanceAction={handleMaintenanceAction}
-            onRequestUninstall={requestUninstallConfirmation}
+            onRequestConfirmation={requestMaintenanceConfirmation}
             loadExistingConfig={loadExistingConfig}
             formatSshError={formatSshError}
           />
@@ -1683,18 +1675,38 @@ Managed by Clawnetes.`,
         </div>
       )}
 
-      {showUninstallConfirm && (
+      {pendingMaintenanceConfirm && (
         <div className="modal-overlay">
-          <div className="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="uninstall-confirm-title">
-            <h3 id="uninstall-confirm-title" style={{ marginTop: 0 }}>Uninstall OpenClaw</h3>
+          <div className="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="maintenance-confirm-title">
+            <h3 id="maintenance-confirm-title" style={{ marginTop: 0 }}>
+              {pendingMaintenanceConfirm === "repair"
+                ? "Repair System"
+                : pendingMaintenanceConfirm === "audit"
+                  ? "Security Audit"
+                  : pendingMaintenanceConfirm === "update"
+                    ? "Upgrade OpenClaw"
+                    : "Uninstall OpenClaw"}
+            </h3>
             <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>
-              Are you absolutely sure you want to completely remove OpenClaw and all its data?
+              {pendingMaintenanceConfirm === "repair"
+                ? "Run OpenClaw system repair now?"
+                : pendingMaintenanceConfirm === "audit"
+                  ? "Run OpenClaw security audit and apply fixes now?"
+                  : pendingMaintenanceConfirm === "update"
+                    ? "Upgrade OpenClaw now?"
+                    : "Are you absolutely sure you want to completely remove OpenClaw and all its data?"}
             </p>
             <div className="button-group" style={{ marginTop: "1.5rem" }}>
-              <button className="primary" onClick={() => void confirmUninstall()} disabled={loading} type="button">
-                Uninstall OpenClaw
+              <button className="primary" onClick={() => void confirmMaintenanceAction()} disabled={loading} type="button">
+                {pendingMaintenanceConfirm === "repair"
+                  ? "Repair System"
+                  : pendingMaintenanceConfirm === "audit"
+                    ? "Run Security Audit"
+                    : pendingMaintenanceConfirm === "update"
+                      ? "Upgrade OpenClaw"
+                      : "Uninstall OpenClaw"}
               </button>
-              <button className="secondary" onClick={closeUninstallConfirmation} disabled={loading} type="button">
+              <button className="secondary" onClick={closeMaintenanceConfirmation} disabled={loading} type="button">
                 Cancel
               </button>
             </div>

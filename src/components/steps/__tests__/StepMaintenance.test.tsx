@@ -7,17 +7,19 @@ import { WizardContext } from "../../../context/WizardContext";
 import { INITIAL_WIZARD_STATE } from "../../../hooks/useWizardState";
 
 describe("StepMaintenance", () => {
-  it("requests uninstall confirmation instead of uninstalling immediately", async () => {
+  it.each(["repair", "audit", "update", "uninstall"] as const)(
+    "requests %s confirmation instead of running immediately",
+    async (selectedMaint) => {
     const user = userEvent.setup();
     const handleMaintenanceAction = vi.fn();
-    const onRequestUninstall = vi.fn();
+    const onRequestConfirmation = vi.fn();
 
     render(
       <WizardContext.Provider
         value={{
           state: {
             ...INITIAL_WIZARD_STATE,
-            selectedMaint: "uninstall",
+            selectedMaint,
             loading: false,
           },
           dispatch: vi.fn(),
@@ -25,7 +27,7 @@ describe("StepMaintenance", () => {
       >
         <StepMaintenance
           handleMaintenanceAction={handleMaintenanceAction}
-          onRequestUninstall={onRequestUninstall}
+          onRequestConfirmation={onRequestConfirmation}
           loadExistingConfig={vi.fn().mockResolvedValue(false)}
           formatSshError={(error) => error}
         />
@@ -34,7 +36,9 @@ describe("StepMaintenance", () => {
 
     await user.click(screen.getByRole("button", { name: "Confirm Action" }));
 
-    expect(onRequestUninstall).toHaveBeenCalledTimes(1);
-    expect(handleMaintenanceAction).not.toHaveBeenCalledWith("uninstall");
-  });
+      expect(onRequestConfirmation).toHaveBeenCalledTimes(1);
+      expect(onRequestConfirmation).toHaveBeenCalledWith(selectedMaint);
+      expect(handleMaintenanceAction).not.toHaveBeenCalledWith(selectedMaint);
+    },
+  );
 });

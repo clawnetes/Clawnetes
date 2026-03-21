@@ -309,6 +309,8 @@ function setupInvokeMock() {
       });
     }
     if (cmd === "run_doctor_repair") return Promise.resolve("repair-ok");
+    if (cmd === "run_security_audit_fix") return Promise.resolve("audit-ok");
+    if (cmd === "install_openclaw") return Promise.resolve("update-ok");
     if (cmd === "uninstall_openclaw") return Promise.resolve("uninstall-ok");
     return Promise.resolve(null);
   });
@@ -718,5 +720,86 @@ describe("ChatShell fresh chat flow", () => {
     });
 
     expect(invokeMock.mock.calls.some(([cmd]) => cmd === "uninstall_openclaw")).toBe(false);
+  });
+
+  it.each([
+    {
+      buttonName: "Repair System",
+      confirmName: "Repair System",
+      invokeName: "run_doctor_repair",
+    },
+    {
+      buttonName: "Security Audit",
+      confirmName: "Run Security Audit",
+      invokeName: "run_security_audit_fix",
+    },
+    {
+      buttonName: "Upgrade OpenClaw",
+      confirmName: "Upgrade OpenClaw",
+      invokeName: "install_openclaw",
+    },
+  ])("does not execute $buttonName until the dialog is confirmed", async ({ buttonName, confirmName, invokeName }) => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket();
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Configure" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: new RegExp(buttonName) }));
+
+    expect(invokeMock.mock.calls.some(([cmd]) => cmd === invokeName)).toBe(false);
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: confirmName }));
+
+    await waitFor(() => {
+      expect(invokeMock.mock.calls.some(([cmd]) => cmd === invokeName)).toBe(true);
+    });
+  });
+
+  it.each([
+    { buttonName: "Repair System", invokeName: "run_doctor_repair" },
+    { buttonName: "Security Audit", invokeName: "run_security_audit_fix" },
+    { buttonName: "Upgrade OpenClaw", invokeName: "install_openclaw" },
+  ])("does not execute $buttonName when the dialog is canceled", async ({ buttonName, invokeName }) => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket();
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Configure" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: new RegExp(buttonName) }));
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    expect(invokeMock.mock.calls.some(([cmd]) => cmd === invokeName)).toBe(false);
   });
 });
