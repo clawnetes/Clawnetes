@@ -4,6 +4,8 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::{self, HeaderValue, Request};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
@@ -17,6 +19,12 @@ const GATEWAY_CLIENT_VERSION: &str = "clawnetes";
 const GATEWAY_CLIENT_MODE: &str = "webchat";
 const GATEWAY_ROLE: &str = "operator";
 const GATEWAY_SCOPES: [&str; 3] = ["operator.admin", "operator.approvals", "operator.pairing"];
+const GATEWAY_ALLOWED_ORIGIN_CANDIDATES: [&str; 4] = [
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+    "http://tauri.localhost",
+    "tauri://localhost",
+];
 
 fn build_connect_message(connect_req_id: &str, auth_token: Option<&str>) -> serde_json::Value {
     let mut connect_msg = serde_json::json!({
@@ -97,6 +105,17 @@ fn parse_connected(value: &serde_json::Value) -> Result<Option<bool>, String> {
     Ok(None)
 }
 
+fn build_ws_request(url: &str, origin: &str) -> Result<Request<()>, String> {
+    let mut request = url
+        .into_client_request()
+        .map_err(|e| format!("WebSocket request build failed: {}", e))?;
+    request.headers_mut().insert(
+        http::header::ORIGIN,
+        HeaderValue::from_str(origin).map_err(|e| format!("Invalid WebSocket origin header: {}", e))?,
+    );
+    Ok(request)
+}
+
 fn read_gateway_auth_token(remote: Option<&RemoteInfo>) -> Result<Option<String>, String> {
     if let Some(remote) = remote {
         let sess = connect_ssh(remote)?;
@@ -147,64 +166,83 @@ async fn connect_gateway(
             tokio::time::sleep(Duration::from_secs(10)).await;
         }
 
-        let (mut ws_stream, _) = connect_async(&url)
-            .await
-            .map_err(|e| format!("WebSocket connect failed: {}", e))?;
+        let mut last_origin_error: Option<String> = None;
+        for origin in GATEWAY_ALLOWED_ORIGIN_CANDIDATES {
+            let request = build_ws_request(&url, origin)?;
+            let (mut ws_stream, _) = connect_async(request)
+                .await
+                .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
-        let connect_req_id = uuid::Uuid::new_v4().to_string();
-        let connect_msg = build_connect_message(&connect_req_id, auth_token);
+            let connect_req_id = uuid::Uuid::new_v4().to_string();
+            let connect_msg = build_connect_message(&connect_req_id, auth_token);
 
-        ws_stream
-            .send(Message::Text(connect_msg.to_string()))
-            .await
-            .map_err(|e| format!("WebSocket send connect failed: {}", e))?;
+            ws_stream
+                .send(Message::Text(connect_msg.to_string()))
+                .await
+                .map_err(|e| format!("WebSocket send connect failed: {}", e))?;
 
-        let mut handshake_ok = false;
-        let mut needs_reconnect = false;
-        while let Some(msg) = ws_stream.next().await {
-            match msg {
-                Ok(Message::Text(text)) => {
-                    let val: serde_json::Value =
-                        serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
-                    if val.get("id").and_then(|value| value.as_str()) == Some(&connect_req_id) {
-                        if val.get("ok").and_then(|value| value.as_bool()) == Some(true) {
-                            handshake_ok = true;
-                            break;
+            let mut handshake_ok = false;
+            let mut needs_reconnect = false;
+            while let Some(msg) = ws_stream.next().await {
+                match msg {
+                    Ok(Message::Text(text)) => {
+                        let val: serde_json::Value =
+                            serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
+                        if val.get("id").and_then(|value| value.as_str()) == Some(&connect_req_id) {
+                            if val.get("ok").and_then(|value| value.as_bool()) == Some(true) {
+                                handshake_ok = true;
+                                break;
+                            }
+
+                            let error_code = val
+                                .get("error")
+                                .and_then(|error| error.get("code"))
+                                .and_then(|code| code.as_str())
+                                .unwrap_or("");
+                            let detail_code = val
+                                .get("error")
+                                .and_then(|error| error.get("details"))
+                                .and_then(|details| details.get("code"))
+                                .and_then(|code| code.as_str())
+                                .unwrap_or("");
+
+                            if error_code == "NOT_PAIRED"
+                                || detail_code == "DEVICE_IDENTITY_REQUIRED"
+                            {
+                                needs_reconnect = true;
+                                break;
+                            }
+
+                            if detail_code == "CONTROL_UI_ORIGIN_NOT_ALLOWED" {
+                                last_origin_error =
+                                    Some(format!("Gateway connect handshake failed: {}", text));
+                                break;
+                            }
+
+                            return Err(format!("Gateway connect handshake failed: {}", text));
                         }
-
-                        let error_code = val
-                            .get("error")
-                            .and_then(|error| error.get("code"))
-                            .and_then(|code| code.as_str())
-                            .unwrap_or("");
-                        let detail_code = val
-                            .get("error")
-                            .and_then(|error| error.get("details"))
-                            .and_then(|details| details.get("code"))
-                            .and_then(|code| code.as_str())
-                            .unwrap_or("");
-
-                        if error_code == "NOT_PAIRED" || detail_code == "DEVICE_IDENTITY_REQUIRED" {
-                            needs_reconnect = true;
-                            break;
-                        }
-
-                        return Err(format!("Gateway connect handshake failed: {}", text));
                     }
+                    Ok(Message::Close(_)) => break,
+                    Err(e) => return Err(format!("WebSocket error during handshake: {}", e)),
+                    _ => {}
                 }
-                Ok(Message::Close(_)) => break,
-                Err(e) => return Err(format!("WebSocket error during handshake: {}", e)),
-                _ => {}
             }
+
+            if needs_reconnect {
+                break;
+            }
+            if handshake_ok {
+                return Ok(ws_stream);
+            }
+            if last_origin_error.is_some() {
+                continue;
+            }
+            return Err("Gateway connect handshake timed out".to_string());
         }
 
-        if needs_reconnect {
-            continue;
+        if let Some(error) = last_origin_error {
+            return Err(error);
         }
-        if handshake_ok {
-            return Ok(ws_stream);
-        }
-        return Err("Gateway connect handshake timed out".to_string());
     }
 
     Err("Gateway connect handshake failed after retries".to_string())
@@ -380,8 +418,9 @@ pub async fn check_whatsapp_linked(gateway_port: u16) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_connect_message, parse_connected, parse_qr_data_url, GATEWAY_CLIENT_ID,
-        GATEWAY_CLIENT_MODE, GATEWAY_CLIENT_VERSION, GATEWAY_ROLE, GATEWAY_SCOPES,
+        build_connect_message, build_ws_request, parse_connected, parse_qr_data_url,
+        GATEWAY_ALLOWED_ORIGIN_CANDIDATES, GATEWAY_CLIENT_ID, GATEWAY_CLIENT_MODE,
+        GATEWAY_CLIENT_VERSION, GATEWAY_ROLE, GATEWAY_SCOPES,
     };
 
     #[test]
@@ -444,5 +483,16 @@ mod tests {
         let connected = parse_connected(&response).unwrap();
 
         assert_eq!(connected, Some(true));
+    }
+
+    #[test]
+    fn build_ws_request_sets_origin_header() {
+        let request = build_ws_request("ws://127.0.0.1:18789", GATEWAY_ALLOWED_ORIGIN_CANDIDATES[0])
+            .unwrap();
+
+        assert_eq!(
+            request.headers()["origin"],
+            GATEWAY_ALLOWED_ORIGIN_CANDIDATES[0]
+        );
     }
 }
