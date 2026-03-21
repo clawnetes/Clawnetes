@@ -653,7 +653,6 @@ describe("ChatShell fresh chat flow", () => {
 
   it("clears local chat cache after uninstall from the command center", async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const { WebSocket } = createMockWebSocket();
     vi.stubGlobal("WebSocket", WebSocket);
     localStorage.setItem("clawnetes.chat.threads.v1", JSON.stringify({ test: [] }));
@@ -673,13 +672,51 @@ describe("ChatShell fresh chat flow", () => {
 
     await user.click(screen.getByRole("button", { name: /Uninstall/ }));
 
+    expect(invokeMock.mock.calls.some(([cmd]) => cmd === "uninstall_openclaw")).toBe(false);
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Uninstall OpenClaw" }));
+
     await waitFor(() => {
       expect(screen.getByText("Welcome to Clawnetes")).toBeInTheDocument();
     });
 
+    expect(invokeMock.mock.calls.some(([cmd]) => cmd === "uninstall_openclaw")).toBe(true);
     expect(localStorage.getItem("clawnetes.chat.threads.v1")).toBeNull();
     expect(localStorage.getItem("clawnetes.chat.selection.v1")).toBeNull();
     expect(localStorage.getItem("clawnetes.chat.theme.v1")).toBeNull();
-    confirmSpy.mockRestore();
+  });
+
+  it("does not uninstall when the command center uninstall dialog is canceled", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket();
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Configure" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /Uninstall/ }));
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    expect(invokeMock.mock.calls.some(([cmd]) => cmd === "uninstall_openclaw")).toBe(false);
   });
 });

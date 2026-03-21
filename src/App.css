@@ -1671,6 +1671,26 @@ button:disabled {
   margin-left: 8px;
 }
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 1000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 1rem;
+}
+
+.confirmation-modal {
+  width: min(420px, 100%);
+  padding: 1.6rem;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-lg);
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;

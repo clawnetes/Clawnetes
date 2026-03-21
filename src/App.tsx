@@ -60,6 +60,7 @@ function App() {
   const [state, dispatch] = useWizardState();
   const initialConfigRef = useRef<any>(null);
   const [appScreen, setAppScreen] = useState<"loading" | "setup" | "chat" | "command-center">("loading");
+  const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
   const [chatBootstrap, setChatBootstrap] = useState<GatewayChatBootstrap | null>(null);
   const [chatBootstrapping, setChatBootstrapping] = useState(false);
   const [chatBootstrapError, setChatBootstrapError] = useState("");
@@ -1405,11 +1406,42 @@ Managed by Clawnetes.`,
     setStep(6);
   }, [loadExistingConfig, setMode, setStep]);
 
+  const requestUninstallConfirmation = useCallback(() => {
+    if (loading) return;
+    setShowUninstallConfirm(true);
+  }, [loading]);
+
+  const closeUninstallConfirmation = useCallback(() => {
+    if (loading) return;
+    setShowUninstallConfirm(false);
+  }, [loading]);
+
+  const completeUninstallFlow = useCallback(() => {
+    clearAllChatShellStorage();
+    setChatBootstrap(null);
+    setChatBootstrapError("");
+    setLogs("");
+    setMaintenanceStatus("");
+    setMaintCompleted(false);
+    setAppScreen("setup");
+    setStep(0.5);
+  }, [setLogs, setMaintCompleted, setMaintenanceStatus, setStep]);
+
+  const confirmUninstall = useCallback(async () => {
+    setShowUninstallConfirm(false);
+    await handleMaintenanceAction("uninstall");
+    completeUninstallFlow();
+  }, [completeUninstallFlow, handleMaintenanceAction]);
+
   const handleDrawerMaintenanceAction = useCallback(async (action: "repair" | "audit" | "update" | "uninstall") => {
+    if (action === "uninstall") {
+      requestUninstallConfirmation();
+      return;
+    }
+
     const confirmationMessageByAction: Partial<Record<typeof action, string>> = {
       repair: "Run OpenClaw system repair now?",
       audit: "Run OpenClaw security audit and apply fixes now?",
-      uninstall: "Are you absolutely sure you want to completely remove OpenClaw and all its data?",
     };
 
     const confirmationMessage = confirmationMessageByAction[action];
@@ -1419,20 +1451,8 @@ Managed by Clawnetes.`,
 
     await handleMaintenanceAction(action);
 
-    if (action === "uninstall") {
-      clearAllChatShellStorage();
-      setChatBootstrap(null);
-      setChatBootstrapError("");
-      setLogs("");
-      setMaintenanceStatus("");
-      setMaintCompleted(false);
-      setAppScreen("setup");
-      setStep(0.5);
-      return;
-    }
-
     setChatBootstrap(null);
-  }, [handleMaintenanceAction, setLogs, setMaintCompleted, setMaintenanceStatus, setStep]);
+  }, [handleMaintenanceAction, requestUninstallConfirmation]);
 
   const toggleSkill = (id: string) => {
     setSelectedSkills(prev =>
@@ -1458,7 +1478,14 @@ Managed by Clawnetes.`,
   const renderStep = () => {
     switch (step) {
       case 0:
-        return <StepMaintenance handleMaintenanceAction={handleMaintenanceAction} loadExistingConfig={loadExistingConfig} formatSshError={formatSshError} />;
+        return (
+          <StepMaintenance
+            handleMaintenanceAction={handleMaintenanceAction}
+            onRequestUninstall={requestUninstallConfirmation}
+            loadExistingConfig={loadExistingConfig}
+            formatSshError={formatSshError}
+          />
+        );
       case 0.5:
         return <StepWelcome />;
       case 1:
@@ -1649,6 +1676,25 @@ Managed by Clawnetes.`,
                 }}
                 disabled={verifyingLicense}
               >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showUninstallConfirm && (
+        <div className="modal-overlay">
+          <div className="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="uninstall-confirm-title">
+            <h3 id="uninstall-confirm-title" style={{ marginTop: 0 }}>Uninstall OpenClaw</h3>
+            <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>
+              Are you absolutely sure you want to completely remove OpenClaw and all its data?
+            </p>
+            <div className="button-group" style={{ marginTop: "1.5rem" }}>
+              <button className="primary" onClick={() => void confirmUninstall()} disabled={loading} type="button">
+                Uninstall OpenClaw
+              </button>
+              <button className="secondary" onClick={closeUninstallConfirmation} disabled={loading} type="button">
                 Cancel
               </button>
             </div>

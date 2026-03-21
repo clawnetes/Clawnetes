@@ -4,11 +4,12 @@ import { useWizard } from "../../context/WizardContext";
 
 interface StepMaintenanceProps {
   handleMaintenanceAction: (action: string) => void;
+  onRequestUninstall: () => void;
   loadExistingConfig: () => Promise<boolean>;
   formatSshError: (error: string) => string;
 }
 
-function StepMaintenance({ handleMaintenanceAction, loadExistingConfig, formatSshError }: StepMaintenanceProps) {
+function StepMaintenance({ handleMaintenanceAction, onRequestUninstall, loadExistingConfig, formatSshError }: StepMaintenanceProps) {
   const { state, dispatch } = useWizard();
   const {
     targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
@@ -172,9 +173,7 @@ function StepMaintenance({ handleMaintenanceAction, loadExistingConfig, formatSs
                   setField("step", 6);
                 }
               } else if (selectedMaint === "uninstall") {
-                if (confirm("Are you absolutely sure you want to completely remove OpenClaw and all its data?")) {
-                  handleMaintenanceAction("uninstall");
-                }
+                onRequestUninstall();
               } else if (selectedMaint) {
                 handleMaintenanceAction(selectedMaint);
               }
