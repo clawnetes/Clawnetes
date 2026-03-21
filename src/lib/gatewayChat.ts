@@ -34,6 +34,15 @@ export interface GatewayChatEventPayload {
   errorMessage?: string | null;
 }
 
+export interface GatewaySessionsChangedPayload {
+  sessionKey?: string | null;
+  sessionId?: string | null;
+  updatedAt?: number | null;
+  displayName?: string | null;
+  label?: string | null;
+  reason?: string | null;
+}
+
 export interface GatewayAgentEventPayload {
   runId: string;
   seq?: number;
@@ -253,6 +262,7 @@ export class GatewayChatClient {
   onHealth?: (ok: boolean) => void;
   onChatEvent?: (payload: GatewayChatEventPayload) => void;
   onAgentEvent?: (payload: GatewayAgentEventPayload) => void;
+  onSessionsChanged?: (payload: GatewaySessionsChangedPayload) => void;
   onSeqGap?: () => void;
   onReady?: (hello: GatewayHelloOk) => void;
 
@@ -307,12 +317,6 @@ export class GatewayChatClient {
     return {
       sessions: Array.isArray(payload?.sessions) ? payload.sessions : [],
     };
-  }
-
-  async createSession(agentId?: string): Promise<{ key: string }> {
-    return await this.request("sessions.create", {
-      ...(agentId ? { agentId } : {}),
-    });
   }
 
   async loadHistory(sessionKey: string): Promise<GatewayChatHistoryPayload> {
@@ -687,6 +691,11 @@ export class GatewayChatClient {
 
     if (parsed.event === "agent" && isObject(parsed.payload)) {
       this.onAgentEvent?.(parsed.payload as GatewayAgentEventPayload);
+      return;
+    }
+
+    if (parsed.event === "sessions.changed" && isObject(parsed.payload)) {
+      this.onSessionsChanged?.(parsed.payload as GatewaySessionsChangedPayload);
     }
   }
 

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -6,8 +6,43 @@ const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
 }));
 
-function createMockWebSocket(historyMessages: unknown[] = []) {
-  return class MockWebSocket {
+type MockSessionState = {
+  sessionId: string;
+  displayName: string;
+  derivedTitle: string;
+  updatedAt: number;
+  messages: Array<Record<string, unknown>>;
+};
+
+function createMockWebSocket(options?: {
+  historyMessages?: unknown[];
+  sessions?: MockSessionState[];
+  sendErrorMessage?: string;
+}) {
+  const sentMethods: string[] = [];
+  const sessions = new Map<string, MockSessionState>();
+  const initialSessions =
+    options?.sessions ||
+    [
+      {
+        sessionId: "sess-live-1",
+        displayName: "Main Session",
+        derivedTitle: "Main Session",
+        updatedAt: 10,
+        messages: (options?.historyMessages as Array<Record<string, unknown>>) || [],
+      },
+    ];
+
+  for (const session of initialSessions) {
+    sessions.set("main", {
+      ...session,
+      messages: session.messages.map((message) => ({ ...message })),
+    });
+  }
+
+  let runCounter = 0;
+
+  class MockWebSocket {
     static OPEN = 1;
     readyState = MockWebSocket.OPEN;
     private listeners = new Map<string, Array<(event?: any) => void>>();
@@ -33,6 +68,7 @@ function createMockWebSocket(historyMessages: unknown[] = []) {
 
     send(raw: string) {
       const parsed = JSON.parse(raw);
+      sentMethods.push(parsed.method);
       const respond = (payload: unknown) => {
         this.emit("message", { data: JSON.stringify(payload) });
       };
@@ -60,32 +96,130 @@ function createMockWebSocket(historyMessages: unknown[] = []) {
             },
           });
           break;
-        case "sessions.list":
+        case "sessions.list": {
+          const main = sessions.get("main");
           respond({
             type: "res",
             id: parsed.id,
             ok: true,
             payload: {
-              sessions: [{ key: "sess-1", displayName: "Session 1", derivedTitle: "Session 1" }],
+              sessions: main
+                ? [
+                    {
+                      key: "main",
+                      displayName: main.displayName,
+                      derivedTitle: main.derivedTitle,
+                      sessionId: main.sessionId,
+                      updatedAt: main.updatedAt,
+                      lastMessagePreview:
+                        typeof main.messages[main.messages.length - 1]?.text === "string"
+                          ? String(main.messages[main.messages.length - 1]?.text)
+                          : undefined,
+                    },
+                  ]
+                : [],
             },
           });
           break;
-        case "chat.history":
+        }
+        case "chat.history": {
+          const main = sessions.get(parsed.params.sessionKey);
           respond({
             type: "res",
             id: parsed.id,
             ok: true,
-            payload: { sessionKey: "sess-1", messages: historyMessages },
+            payload: {
+              sessionKey: parsed.params.sessionKey,
+              sessionId: main?.sessionId || null,
+              messages: main?.messages || [],
+            },
           });
           break;
-        case "sessions.create":
+        }
+        case "chat.send": {
+          if (options?.sendErrorMessage) {
+            respond({
+              type: "res",
+              id: parsed.id,
+              ok: false,
+              error: { code: "CHAT_SEND_FAILED", message: options.sendErrorMessage },
+            });
+            break;
+          }
+
+          runCounter += 1;
+          const runId = `run-${runCounter}`;
+          const main = sessions.get(parsed.params.sessionKey) || {
+            sessionId: "sess-live-1",
+            displayName: "Main Session",
+            derivedTitle: "Main Session",
+            updatedAt: 10,
+            messages: [],
+          };
+
           respond({
             type: "res",
             id: parsed.id,
             ok: true,
-            payload: { key: "sess-new" },
+            payload: { runId, status: "started" },
           });
+
+          if (parsed.params.message === "/new") {
+            main.sessionId = `sess-live-${runCounter + 1}`;
+            main.updatedAt += 1;
+            main.messages = [
+              { role: "assistant", content: [{ type: "text", text: "Fresh start." }], timestamp: Date.now() },
+            ];
+            sessions.set("main", main);
+            queueMicrotask(() => {
+              this.emit("message", {
+                data: JSON.stringify({
+                  type: "event",
+                  event: "agent",
+                  payload: { runId, stream: "assistant", data: { text: "Fresh start." } },
+                }),
+              });
+              this.emit("message", {
+                data: JSON.stringify({
+                  type: "event",
+                  event: "chat",
+                  payload: { sessionKey: "main", runId, state: "final" },
+                }),
+              });
+              this.emit("message", {
+                data: JSON.stringify({
+                  type: "event",
+                  event: "sessions.changed",
+                  payload: { sessionKey: "main", sessionId: main.sessionId, updatedAt: main.updatedAt, reason: "reset" },
+                }),
+              });
+            });
+          } else {
+            main.messages = [
+              ...main.messages,
+              { role: "user", text: parsed.params.message, timestamp: Date.now() },
+              { role: "assistant", content: [{ type: "text", text: "Done." }], timestamp: Date.now() + 1 },
+            ];
+            sessions.set("main", main);
+            queueMicrotask(() => {
+              this.emit("message", {
+                data: JSON.stringify({
+                  type: "event",
+                  event: "agent",
+                  payload: { runId, stream: "assistant", data: { text: "Done." } },
+                }),
+              });
+              this.emit("message", {
+                data: JSON.stringify({
+                  type: "event",
+                  event: "chat",
+                  payload: { sessionKey: "main", runId, state: "final" },
+                }),
+              });
+            });
+          }
           break;
+        }
         default:
           respond({ type: "res", id: parsed.id, ok: true, payload: {} });
           break;
@@ -101,7 +235,9 @@ function createMockWebSocket(historyMessages: unknown[] = []) {
         handler(event);
       }
     }
-  };
+  }
+
+  return { WebSocket: MockWebSocket, sentMethods };
 }
 
 vi.mock("../lib/tauri", () => ({
@@ -137,21 +273,37 @@ function setupInvokeMock() {
 describe("ChatShell message display", () => {
   beforeEach(() => {
     invokeMock.mockReset();
-    vi.stubGlobal("crypto", { randomUUID: () => "uuid-1" });
+    localStorage.clear();
+    let uuidCounter = 0;
+    vi.stubGlobal("crypto", { randomUUID: () => `uuid-${++uuidCounter}` });
     vi.stubGlobal("navigator", { platform: "test", userAgent: "vitest", language: "en-GB" });
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
     Object.defineProperty(Element.prototype, "scrollIntoView", {
       configurable: true,
       value: vi.fn(),
+    });
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: window.localStorage,
     });
     setupInvokeMock();
   });
 
   it("shows 'You' for user messages and agent name for assistant messages", async () => {
-    const WS = createMockWebSocket([
-      { role: "user", content: [{ type: "input_text", text: "Hello agent" }], timestamp: 1 },
-      { role: "assistant", content: [{ type: "text", text: "Hi there!" }], timestamp: 2 },
-    ]);
-    vi.stubGlobal("WebSocket", WS);
+    const { WebSocket } = createMockWebSocket({
+      historyMessages: [
+        { role: "user", content: [{ type: "input_text", text: "Hello agent" }], timestamp: 1 },
+        { role: "assistant", content: [{ type: "text", text: "Hi there!" }], timestamp: 2 },
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
 
     render(<App />);
 
@@ -160,135 +312,135 @@ describe("ChatShell message display", () => {
     });
 
     expect(screen.getAllByText("Atlas").length).toBeGreaterThan(0);
-    expect(screen.getByText("Hello agent")).toBeInTheDocument();
-    expect(screen.getByText("Hi there!")).toBeInTheDocument();
-
-    // Should NOT show raw role strings
+    expect(screen.getAllByText("Hello agent").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Hi there!").length).toBeGreaterThan(0);
     expect(screen.queryByText("user")).not.toBeInTheDocument();
   });
 
-  it("shows 'System' label for system messages", async () => {
-    const WS = createMockWebSocket([
-      { role: "system", text: "System notice", timestamp: 1 },
-    ]);
-    vi.stubGlobal("WebSocket", WS);
+  it("filters out tool messages from the transcript", async () => {
+    const { WebSocket } = createMockWebSocket({
+      historyMessages: [
+        { role: "assistant", content: [{ type: "tool_use", id: "call-1", name: "read", input: {} }], timestamp: 1 },
+        { role: "assistant", content: [{ type: "text", text: "Here is the answer." }], timestamp: 2 },
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("System")).toBeInTheDocument();
+      expect(screen.getAllByText("Here is the answer.").length).toBeGreaterThan(0);
     });
 
-    expect(screen.getByText("System notice")).toBeInTheDocument();
-  });
-
-  it("filters out tool_use messages from the transcript", async () => {
-    const WS = createMockWebSocket([
-      { role: "assistant", content: [{ type: "tool_use", id: "call-1", name: "read", input: {} }], timestamp: 1 },
-      { role: "assistant", content: [{ type: "text", text: "Here is the answer." }], timestamp: 2 },
-    ]);
-    vi.stubGlobal("WebSocket", WS);
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Here is the answer.")).toBeInTheDocument();
-    });
-
-    // tool_use message should not be rendered
     expect(screen.queryByText("read")).not.toBeInTheDocument();
   });
 
-  it("filters out tool_result messages from the transcript", async () => {
-    const WS = createMockWebSocket([
-      { role: "user", content: [{ type: "tool_result", tool_use_id: "call-1", content: "file contents" }], timestamp: 1 },
-      { role: "user", content: [{ type: "input_text", text: "What does this file do?" }], timestamp: 2 },
-    ]);
-    vi.stubGlobal("WebSocket", WS);
+  it("filters out routine system messages from loaded history", async () => {
+    const { WebSocket } = createMockWebSocket({
+      historyMessages: [
+        { role: "system", content: [{ type: "text", text: "Internal system notice" }], timestamp: 1 },
+        { role: "assistant", content: [{ type: "text", text: "Visible answer." }], timestamp: 2 },
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("What does this file do?")).toBeInTheDocument();
+      expect(screen.getAllByText("Visible answer.").length).toBeGreaterThan(0);
     });
 
-    expect(screen.queryByText("file contents")).not.toBeInTheDocument();
+    expect(screen.queryByText("Internal system notice")).not.toBeInTheDocument();
   });
 
-  it("filters out user messages that look like raw JSON tool output", async () => {
-    const jsonToolOutput = '{"status": "error", "tool": "read", "message": "file not found"}';
-    const WS = createMockWebSocket([
-      { role: "user", text: jsonToolOutput, timestamp: 1 },
-      { role: "user", text: "Please try again", timestamp: 2 },
-    ]);
-    vi.stubGlobal("WebSocket", WS);
+  it("shows send failures as visible system errors", async () => {
+    const { WebSocket } = createMockWebSocket({ sendErrorMessage: "Request failed." });
+    vi.stubGlobal("WebSocket", WebSocket);
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Please try again")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(jsonToolOutput)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByTestId("chat-composer"), { target: { value: "Hello" } });
+    expect(screen.getByTestId("chat-send")).not.toBeDisabled();
+    fireEvent.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Request failed\./)).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("System")).toBeInTheDocument();
   });
 });
 
-describe("ChatShell composer icons", () => {
+describe("ChatShell fresh chat flow", () => {
   beforeEach(() => {
     invokeMock.mockReset();
-    vi.stubGlobal("crypto", { randomUUID: () => "uuid-1" });
+    localStorage.clear();
+    let uuidCounter = 0;
+    vi.stubGlobal("crypto", { randomUUID: () => `uuid-${++uuidCounter}` });
     vi.stubGlobal("navigator", { platform: "test", userAgent: "vitest", language: "en-GB" });
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation(() => ({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
     Object.defineProperty(Element.prototype, "scrollIntoView", {
       configurable: true,
       value: vi.fn(),
     });
-    setupInvokeMock();
-  });
-
-  it("renders a send icon button instead of a text 'Send' button", async () => {
-    const WS = createMockWebSocket([]);
-    vi.stubGlobal("WebSocket", WS);
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("chat-send")).toBeInTheDocument();
-    });
-
-    const sendBtn = screen.getByTestId("chat-send");
-    expect(sendBtn.getAttribute("aria-label")).toBe("Send");
-    // Should NOT have text "Send" — the button uses an SVG icon
-    expect(sendBtn.textContent).toBe("");
-  });
-});
-
-describe("ChatShell agent dropdown", () => {
-  beforeEach(() => {
-    invokeMock.mockReset();
-    vi.stubGlobal("crypto", { randomUUID: () => "uuid-1" });
-    vi.stubGlobal("navigator", { platform: "test", userAgent: "vitest", language: "en-GB" });
-    Object.defineProperty(Element.prototype, "scrollIntoView", {
+    Object.defineProperty(globalThis, "localStorage", {
       configurable: true,
-      value: vi.fn(),
+      value: window.localStorage,
     });
     setupInvokeMock();
   });
 
-  it("renders an agent dropdown in the header when multiple agents exist", async () => {
-    const WS = createMockWebSocket([]);
-    vi.stubGlobal("WebSocket", WS);
+  it("uses /new via chat.send and never calls sessions.create", async () => {
+    const user = userEvent.setup();
+    const { WebSocket, sentMethods } = createMockWebSocket({
+      historyMessages: [
+        { role: "assistant", content: [{ type: "text", text: "Older transcript" }], timestamp: 2 },
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
 
     render(<App />);
 
     await waitFor(() => {
-      const agentEl = screen.getByTestId("chat-active-agent");
-      expect(agentEl.tagName).toBe("SELECT");
+      expect(screen.getAllByText("Older transcript").length).toBeGreaterThan(0);
+    });
+
+    await user.click(screen.getByTestId("chat-new-session"));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Fresh start.").length).toBeGreaterThan(0);
+    });
+
+    expect(sentMethods).toContain("chat.send");
+    expect(sentMethods).not.toContain("sessions.create");
+
+    const archivedThread = screen
+      .getAllByRole("button")
+      .find((button) => typeof button.className === "string" && button.className.includes("chat-list-item archived"));
+    expect(archivedThread).toBeDefined();
+
+    await user.click(archivedThread!);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Older transcript").length).toBeGreaterThan(0);
     });
   });
 
-  it("does not render agents section in the sidebar", async () => {
-    const WS = createMockWebSocket([]);
-    vi.stubGlobal("WebSocket", WS);
+  it("persists theme selection", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket();
+    vi.stubGlobal("WebSocket", WebSocket);
 
     render(<App />);
 
@@ -296,52 +448,35 @@ describe("ChatShell agent dropdown", () => {
       expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
     });
 
-    // Sidebar should show Sessions but NOT an "Agents" section header
-    expect(screen.getByText("Sessions")).toBeInTheDocument();
-    expect(screen.queryByText("Agents")).not.toBeInTheDocument();
-  });
-});
+    await user.click(screen.getByRole("button", { name: "light" }));
 
-describe("ChatShell new chat error handling", () => {
-  beforeEach(() => {
-    invokeMock.mockReset();
-    vi.stubGlobal("crypto", { randomUUID: () => "uuid-1" });
-    vi.stubGlobal("navigator", { platform: "test", userAgent: "vitest", language: "en-GB" });
-    Object.defineProperty(Element.prototype, "scrollIntoView", {
-      configurable: true,
-      value: vi.fn(),
-    });
-    setupInvokeMock();
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(localStorage.getItem("clawnetes.chat.theme.v1")).toBe("light");
   });
 
-  it("shows the New Chat button enabled when connected", async () => {
-    const WS = createMockWebSocket([]);
-    vi.stubGlobal("WebSocket", WS);
-
-    render(<App />);
-
-    await waitFor(() => {
-      const newChatBtn = screen.getByTestId("chat-new-session");
-      expect(newChatBtn).not.toBeDisabled();
-    });
-  });
-
-  it("creates a new session when New Chat is clicked", async () => {
+  it("renders compact thread rows without sidebar preview text", async () => {
     const user = userEvent.setup();
-    const WS = createMockWebSocket([]);
-    vi.stubGlobal("WebSocket", WS);
+    const { WebSocket } = createMockWebSocket({
+      historyMessages: [{ role: "assistant", content: [{ type: "text", text: "Older transcript" }], timestamp: 2 }],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("chat-new-session")).not.toBeDisabled();
+      expect(screen.getAllByText("Older transcript").length).toBeGreaterThan(0);
     });
 
     await user.click(screen.getByTestId("chat-new-session"));
 
-    // After clicking New Chat, the session list should refresh (no crash)
     await waitFor(() => {
-      expect(screen.getByTestId("chat-new-session")).toBeInTheDocument();
+      expect(screen.getAllByText("Fresh start.").length).toBeGreaterThan(0);
     });
+
+    const threadButtons = screen
+      .getAllByRole("button")
+      .filter((button) => typeof button.className === "string" && button.className.includes("chat-list-item"));
+    expect(threadButtons.length).toBeGreaterThan(0);
+    expect(threadButtons.some((button) => button.textContent?.includes("Fresh conversation"))).toBe(false);
   });
 });

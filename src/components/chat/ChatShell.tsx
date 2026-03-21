@@ -9,6 +9,21 @@ import {
   type GatewayChatEventPayload,
   type GatewayChatSession,
 } from "../../lib/gatewayChat";
+import { generateUUID } from "../../lib/gatewayUuid";
+import {
+  buildChatScopeKey,
+  loadStoredSelection,
+  loadStoredThreads,
+  loadThemePreference,
+  resolveThemePreference,
+  saveStoredSelection,
+  saveStoredThreads,
+  saveThemePreference,
+  type ChatResolvedTheme,
+  type ChatThemePreference,
+  type StoredChatMessage,
+  type StoredChatThread,
+} from "../../lib/chatShellStorage";
 
 type ChatMessage = {
   id: string;
@@ -29,10 +44,8 @@ interface ChatShellProps {
 }
 
 function isToolMessage(message: Record<string, unknown>): boolean {
-  // Skip tool_use and tool_result messages
   if (message.type === "tool_use" || message.type === "tool_result") return true;
 
-  // Check content array for tool parts
   if (Array.isArray(message.content)) {
     const hasToolPart = (message.content as Record<string, unknown>[]).some(
       (part) => typeof part === "object" && part !== null && (part.type === "tool_use" || part.type === "tool_result"),
@@ -40,7 +53,6 @@ function isToolMessage(message: Record<string, unknown>): boolean {
     if (hasToolPart) return true;
   }
 
-  // Heuristic: user messages that look like raw JSON tool output
   if (message.role === "user") {
     const text = extractMessageText(message);
     if (text.startsWith("{") && (text.includes('"tool":') || text.includes('"status":'))) return true;
@@ -56,12 +68,11 @@ function toChatMessages(rawMessages: unknown[] | undefined): ChatMessage[] {
       if (typeof item !== "object" || item === null) return null;
       const message = item as Record<string, unknown>;
 
-      // Fix 2: filter out internal tool call/result messages
       if (isToolMessage(message)) return null;
 
       const role = message.role === "assistant" || message.role === "system" ? message.role : "user";
       const text = extractMessageText(message);
-      if (!text) return null;
+      if (!text || role === "system") return null;
       return {
         id: `${String(message.timestamp || index)}-${role}`,
         role,
@@ -72,8 +83,87 @@ function toChatMessages(rawMessages: unknown[] | undefined): ChatMessage[] {
     .filter((item): item is ChatMessage => item !== null);
 }
 
+function toStoredMessages(messages: ChatMessage[]): StoredChatMessage[] {
+  return messages
+    .filter((message) => !message.pending)
+    .map((message) => ({
+      id: message.id,
+      role: message.role,
+      text: message.text,
+      timestamp: message.timestamp,
+      error: message.error,
+    }));
+}
+
+function clipLabel(value: string, max = 42) {
+  const normalized = value.trim();
+  if (!normalized) return "";
+  return normalized.length > max ? `${normalized.slice(0, max - 1)}…` : normalized;
+}
+
 function formatSessionTitle(session: GatewayChatSession) {
   return session.displayName || session.derivedTitle || session.lastMessagePreview || session.key;
+}
+
+function deriveThreadTitle(params: {
+  session?: GatewayChatSession;
+  messages?: StoredChatMessage[];
+  fallback?: string;
+}) {
+  const userPrompt = params.messages?.find((message) => message.role === "user" && message.text.trim());
+  if (userPrompt) {
+    return clipLabel(userPrompt.text.replace(/\s+/g, " "));
+  }
+  if (params.session) {
+    return clipLabel(formatSessionTitle(params.session));
+  }
+  return clipLabel(params.fallback || "New chat") || "New chat";
+}
+
+function deriveThreadPreview(params: {
+  session?: GatewayChatSession;
+  messages?: StoredChatMessage[];
+  fallback?: string;
+}) {
+  const lastMessage = [...(params.messages || [])].reverse().find((message) => message.text.trim());
+  if (lastMessage) {
+    return clipLabel(lastMessage.text.replace(/\s+/g, " "), 80);
+  }
+  if (params.session?.lastMessagePreview) {
+    return clipLabel(params.session.lastMessagePreview.replace(/\s+/g, " "), 80);
+  }
+  return clipLabel(params.fallback || "Fresh conversation", 80) || "Fresh conversation";
+}
+
+function createThread(params: {
+  agentId: string;
+  sessionKey: string;
+  sessionId?: string;
+  status: StoredChatThread["status"];
+  session?: GatewayChatSession;
+  title?: string;
+  preview?: string;
+  messages?: StoredChatMessage[];
+}) {
+  const messages = params.messages || [];
+  return {
+    id: generateUUID(),
+    agentId: params.agentId,
+    sessionKey: params.sessionKey,
+    sessionId: params.sessionId,
+    title: deriveThreadTitle({ session: params.session, messages, fallback: params.title }),
+    preview: deriveThreadPreview({ session: params.session, messages, fallback: params.preview }),
+    updatedAt: Date.now(),
+    status: params.status,
+    messages,
+  } satisfies StoredChatThread;
+}
+
+function readPrefersDark() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
 function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection, onOpenConfigure }: ChatShellProps) {
@@ -81,19 +171,31 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const activeAgentIdRef = useRef("");
   const activeSessionKeyRef = useRef("");
+  const activeThreadIdRef = useRef("");
+  const threadsRef = useRef<StoredChatThread[]>([]);
 
   const [connectionLabel, setConnectionLabel] = useState("Connecting to gateway...");
   const [connectionState, setConnectionState] = useState<GatewayConnectState["status"]>("connecting");
   const [agents, setAgents] = useState<GatewayChatAgent[]>([]);
-  const [sessions, setSessions] = useState<GatewayChatSession[]>([]);
+  const [liveSessions, setLiveSessions] = useState<GatewayChatSession[]>([]);
+  const [threads, setThreads] = useState<StoredChatThread[]>([]);
   const [activeAgentId, setActiveAgentId] = useState("");
   const [activeSessionKey, setActiveSessionKey] = useState("");
+  const [activeThreadId, setActiveThreadId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [composerValue, setComposerValue] = useState("");
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [sending, setSending] = useState(false);
   const [activeRunId, setActiveRunId] = useState("");
   const [shellError, setShellError] = useState("");
+  const [themePreference, setThemePreference] = useState<ChatThemePreference>(() => loadThemePreference());
+  const [resolvedTheme, setResolvedTheme] = useState<ChatResolvedTheme>(() =>
+    resolveThemePreference(loadThemePreference(), readPrefersDark()),
+  );
+
+  const scopeKey = bootstrap ? buildChatScopeKey(bootstrap) : "";
+  const activeThread = threads.find((thread) => thread.id === activeThreadId) || null;
+  const activeThreadIsArchived = activeThread?.status === "archived";
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -106,6 +208,127 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   useEffect(() => {
     activeSessionKeyRef.current = activeSessionKey;
   }, [activeSessionKey]);
+
+  useEffect(() => {
+    activeThreadIdRef.current = activeThreadId;
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    threadsRef.current = threads;
+  }, [threads]);
+
+  useEffect(() => {
+    if (!scopeKey) {
+      setThreads([]);
+      setActiveThreadId("");
+      return;
+    }
+    setThreads(loadStoredThreads(scopeKey));
+  }, [scopeKey]);
+
+  useEffect(() => {
+    if (!scopeKey) return;
+    saveStoredThreads(scopeKey, threads);
+  }, [scopeKey, threads]);
+
+  useEffect(() => {
+    if (!scopeKey || !activeAgentId || !activeThreadId) return;
+    saveStoredSelection(scopeKey, activeAgentId, activeThreadId);
+  }, [activeAgentId, activeThreadId, scopeKey]);
+
+  useEffect(() => {
+    const nextMessages = toStoredMessages(messages);
+    if (!activeThreadIdRef.current || nextMessages.length === 0) return;
+
+    setThreads((current) =>
+      current.map((thread) =>
+        thread.id !== activeThreadIdRef.current
+          ? thread
+          : {
+              ...thread,
+              messages: nextMessages,
+              title: deriveThreadTitle({ messages: nextMessages, fallback: thread.title }),
+              preview: deriveThreadPreview({ messages: nextMessages, fallback: thread.preview }),
+              updatedAt: nextMessages[nextMessages.length - 1]?.timestamp || Date.now(),
+            },
+      ),
+    );
+  }, [messages]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.documentElement.dataset.theme = resolvedTheme;
+  }, [resolvedTheme]);
+
+  useEffect(() => {
+    saveThemePreference(themePreference);
+    const mediaQuery =
+      typeof window !== "undefined" && typeof window.matchMedia === "function"
+        ? window.matchMedia("(prefers-color-scheme: dark)")
+        : null;
+
+    const applyTheme = () => {
+      setResolvedTheme(resolveThemePreference(themePreference, mediaQuery?.matches ?? false));
+    };
+
+    applyTheme();
+
+    if (!mediaQuery) return;
+
+    const listener = () => applyTheme();
+    mediaQuery.addEventListener?.("change", listener);
+    return () => mediaQuery.removeEventListener?.("change", listener);
+  }, [themePreference]);
+
+  function updateThreads(updater: (current: StoredChatThread[]) => StoredChatThread[]) {
+    setThreads((current) => updater(current));
+  }
+
+  function ensureLiveThread(params: {
+    agentId: string;
+    sessionKey: string;
+    session?: GatewayChatSession;
+    preferredThreadId?: string;
+    sessionId?: string;
+  }) {
+    const existing = threadsRef.current.find(
+      (thread) =>
+        thread.agentId === params.agentId &&
+        thread.sessionKey === params.sessionKey &&
+        thread.status !== "archived" &&
+        (!params.preferredThreadId || thread.id === params.preferredThreadId),
+    );
+
+    if (existing) {
+      updateThreads((current) =>
+        current.map((thread) =>
+          thread.id !== existing.id
+            ? thread
+            : {
+                ...thread,
+                status: "live",
+                sessionId: params.sessionId || params.session?.sessionId || thread.sessionId,
+                title: deriveThreadTitle({ session: params.session, messages: thread.messages, fallback: thread.title }),
+                preview: deriveThreadPreview({ session: params.session, messages: thread.messages, fallback: thread.preview }),
+                updatedAt: params.session?.updatedAt || thread.updatedAt || Date.now(),
+              },
+        ),
+      );
+      return existing.id;
+    }
+
+    const nextThread = createThread({
+      agentId: params.agentId,
+      sessionKey: params.sessionKey,
+      sessionId: params.sessionId || params.session?.sessionId,
+      status: params.session ? "live" : "draft",
+      session: params.session,
+      title: params.session ? formatSessionTitle(params.session) : "New chat",
+      preview: params.session?.lastMessagePreview || "Fresh conversation",
+    });
+    updateThreads((current) => [nextThread, ...current.filter((thread) => thread.id !== nextThread.id)]);
+    return nextThread.id;
+  }
 
   useEffect(() => {
     if (!bootstrap) return;
@@ -139,8 +362,9 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     };
 
     client.onSeqGap = () => {
-      if (activeSessionKeyRef.current) {
-        void loadHistory(activeSessionKeyRef.current, client);
+      const currentThread = threadsRef.current.find((thread) => thread.id === activeThreadIdRef.current);
+      if (activeSessionKeyRef.current && activeThreadIdRef.current && currentThread?.status !== "archived") {
+        void loadHistory(activeSessionKeyRef.current, activeThreadIdRef.current, client);
       }
     };
 
@@ -150,6 +374,12 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
 
     client.onAgentEvent = (event) => {
       handleAgentEvent(event);
+    };
+
+    client.onSessionsChanged = () => {
+      if (activeAgentIdRef.current) {
+        void refreshSessions(activeAgentIdRef.current, client, activeThreadIdRef.current || undefined);
+      }
     };
 
     void (async () => {
@@ -169,7 +399,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
         clientRef.current = null;
       }
     };
-  }, [bootstrap]);
+  }, [bootstrap, scopeKey]);
 
   async function bootstrapShell(client: GatewayChatClient) {
     try {
@@ -184,12 +414,12 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
       setActiveRunId("");
 
       if (!nextAgentId) {
-        setSessions([]);
+        setLiveSessions([]);
         setActiveSessionKey("");
         return;
       }
 
-      await refreshSessions(nextAgentId, client);
+      await refreshSessions(nextAgentId, client, loadStoredSelection(scopeKey, nextAgentId) || undefined);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setShellError(message);
@@ -197,40 +427,92 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     }
   }
 
-  async function refreshSessions(agentId: string, client = clientRef.current, preferredKey?: string) {
+  async function refreshSessions(agentId: string, client = clientRef.current, preferredThreadId?: string) {
     if (!client || !agentId) {
-      setSessions([]);
+      setLiveSessions([]);
       setActiveSessionKey("");
       setMessages([]);
       return;
     }
 
     const sessionPayload = await client.listSessions(agentId || undefined);
-    let nextSessions = sessionPayload.sessions || [];
-    let nextSessionKey = preferredKey || activeSessionKey;
+    const nextSessions = sessionPayload.sessions || [];
+    setLiveSessions(nextSessions);
 
-    if (!nextSessionKey || !nextSessions.some((session) => session.key === nextSessionKey)) {
-      nextSessionKey = nextSessions[0]?.key || "";
+    const desiredThreadId = preferredThreadId || loadStoredSelection(scopeKey, agentId) || activeThreadIdRef.current;
+    const desiredThread = threadsRef.current.find((thread) => thread.id === desiredThreadId && thread.agentId === agentId);
+    const desiredSessionKey = desiredThread?.sessionKey || activeSessionKeyRef.current || nextSessions[0]?.key || "main";
+    const matchedSession = nextSessions.find((session) => session.key === desiredSessionKey);
+    const nextThreadId = ensureLiveThread({
+      agentId,
+      sessionKey: desiredSessionKey,
+      session: matchedSession,
+      preferredThreadId: desiredThread?.status === "archived" ? undefined : desiredThread?.id,
+      sessionId: matchedSession?.sessionId || desiredThread?.sessionId,
+    });
+
+    setActiveThreadId(nextThreadId);
+    setActiveSessionKey(desiredSessionKey);
+
+    const selectedThread =
+      threadsRef.current.find((thread) => thread.id === nextThreadId) ||
+      createThread({ agentId, sessionKey: desiredSessionKey, status: matchedSession ? "live" : "draft" });
+
+    if (matchedSession || desiredSessionKey === "main") {
+      await loadHistory(desiredSessionKey, nextThreadId, client);
+      return;
     }
 
-    if (!nextSessionKey) {
-      const created = await client.createSession(agentId || undefined);
-      nextSessionKey = created.key;
-      const refreshed = await client.listSessions(agentId || undefined);
-      nextSessions = refreshed.sessions || [];
-    }
-
-    setSessions(nextSessions);
-    setActiveSessionKey(nextSessionKey);
-    await loadHistory(nextSessionKey, client);
+    setMessages(
+      selectedThread.messages.map((message) => ({
+        ...message,
+      })),
+    );
   }
 
-  async function loadHistory(sessionKey: string, client = clientRef.current) {
+  async function loadHistory(sessionKey: string, threadId: string, client = clientRef.current) {
     if (!client || !sessionKey) return;
     setLoadingHistory(true);
     try {
       const payload = await client.loadHistory(sessionKey);
-      setMessages(toChatMessages(payload.messages));
+      const nextMessages = toChatMessages(payload.messages);
+      setMessages(nextMessages);
+      updateThreads((current) =>
+        current.map((thread) =>
+          thread.id !== threadId
+            ? thread
+            : {
+                ...thread,
+                status: "live",
+                sessionId: payload.sessionId || thread.sessionId,
+                messages: toStoredMessages(nextMessages),
+                title: deriveThreadTitle({ messages: toStoredMessages(nextMessages), fallback: thread.title }),
+                preview: deriveThreadPreview({ messages: toStoredMessages(nextMessages), fallback: thread.preview }),
+                updatedAt: Date.now(),
+              },
+        ),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const missingSession = /not found|unknown session|key required/i.test(message);
+      if (missingSession) {
+        setMessages([]);
+        updateThreads((current) =>
+          current.map((thread) =>
+            thread.id !== threadId
+              ? thread
+              : {
+                  ...thread,
+                  status: "draft",
+                  sessionId: undefined,
+                  messages: [],
+                  preview: "Fresh conversation",
+                },
+          ),
+        );
+      } else {
+        setShellError(message);
+      }
     } finally {
       setLoadingHistory(false);
     }
@@ -257,7 +539,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
       );
       setActiveRunId("");
       setSending(false);
-      void refreshSessions(activeAgentIdRef.current, clientRef.current || undefined, activeSessionKeyRef.current);
+      void refreshSessions(activeAgentIdRef.current, clientRef.current || undefined, activeThreadIdRef.current || undefined);
     }
   }
 
@@ -283,31 +565,81 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   async function handleAgentSwitch(agentId: string) {
     if (!agentId || agentId === activeAgentId) return;
     setActiveAgentId(agentId);
-    setSessions([]);
+    setLiveSessions([]);
     setMessages([]);
     setActiveRunId("");
     await refreshSessions(agentId);
   }
 
-  async function handleSessionSwitch(sessionKey: string) {
-    setActiveSessionKey(sessionKey);
-    await loadHistory(sessionKey);
+  async function handleThreadSwitch(threadId: string) {
+    const thread = threads.find((candidate) => candidate.id === threadId);
+    if (!thread) return;
+    setActiveThreadId(threadId);
+    setActiveSessionKey(thread.sessionKey);
+    setShellError("");
+
+    if (thread.status === "archived") {
+      setMessages(
+        thread.messages.map((message) => ({
+          ...message,
+        })),
+      );
+      return;
+    }
+
+    await loadHistory(thread.sessionKey, thread.id);
   }
 
   async function handleNewChat() {
-    if (!clientRef.current || !activeAgentId || connectionState !== "connected") return;
+    if (!clientRef.current || !activeAgentId || !activeSessionKey || connectionState !== "connected") return;
+
+    const archivedMessages = toStoredMessages(messages);
+    const freshThread = createThread({
+      agentId: activeAgentId,
+      sessionKey: activeSessionKey,
+      status: "live",
+      title: "New chat",
+      preview: "Fresh conversation",
+    });
+
+    updateThreads((current) =>
+      current.flatMap((thread) => {
+        if (thread.id !== activeThreadIdRef.current) {
+          return [thread];
+        }
+        const archivedThread = {
+          ...thread,
+          status: "archived" as const,
+          messages: archivedMessages.length > 0 ? archivedMessages : thread.messages,
+          title: deriveThreadTitle({ messages: archivedMessages, fallback: thread.title }),
+          preview: deriveThreadPreview({ messages: archivedMessages, fallback: thread.preview }),
+          updatedAt: Date.now(),
+        };
+        return [freshThread, archivedThread];
+      }),
+    );
+
+    setActiveThreadId(freshThread.id);
+    setMessages([]);
+    setShellError("");
+    setSending(true);
+
     try {
-      const created = await clientRef.current.createSession(activeAgentId || undefined);
-      await refreshSessions(activeAgentId, clientRef.current, created.key);
+      const result = await clientRef.current.sendChat(activeSessionKey, "/new");
+      setActiveRunId(result.runId);
+      setMessages([{ id: `assistant-${result.runId}`, role: "assistant", text: "", runId: result.runId, pending: true }]);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setShellError(`Failed to create new chat: ${message}`);
+      setSending(false);
+      setShellError(`Failed to start a fresh chat: ${message}`);
     }
   }
 
   async function handleSend() {
     const text = composerValue.trim();
-    if (!text || !clientRef.current || !activeSessionKey || sending || connectionState !== "connected") return;
+    if (!text || !clientRef.current || !activeSessionKey || sending || connectionState !== "connected" || activeThreadIsArchived) {
+      return;
+    }
 
     setComposerValue("");
     setSending(true);
@@ -343,48 +675,116 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   }
 
   async function handleResetChat() {
-    if (!clientRef.current || !activeSessionKey || connectionState !== "connected") return;
-    await clientRef.current.resetSession(activeSessionKey);
-    await loadHistory(activeSessionKey);
+    if (!clientRef.current || !activeSessionKey || connectionState !== "connected" || activeThreadIsArchived) return;
+    setMessages([]);
+    setSending(true);
+    setShellError("");
+    try {
+      const result = await clientRef.current.sendChat(activeSessionKey, "/reset");
+      setActiveRunId(result.runId);
+      setMessages([{ id: `assistant-${result.runId}`, role: "assistant", text: "", runId: result.runId, pending: true }]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSending(false);
+      setShellError(`Failed to reset chat: ${message}`);
+    }
   }
 
   const gatewayConnected = connectionState === "connected";
   const chatReady = !!bootstrap && !bootstrapping && gatewayConnected;
-  const canCreateChat = chatReady && !!activeAgentId;
-  const canSend = chatReady && !!activeAgentId && !!activeSessionKey && !!composerValue.trim() && !sending;
+  const canCreateChat = chatReady && !!activeAgentId && !!activeSessionKey;
+  const canSend =
+    chatReady && !!activeAgentId && !!activeSessionKey && !!composerValue.trim() && !sending && !activeThreadIsArchived;
   const activeAgentName = agents.find((agent) => agent.id === activeAgentId)?.name || activeAgentId;
   const showEmptyAgentState = gatewayConnected && agents.length === 0;
-  const showConnectingState = connectionState === "connecting" || connectionState === "challenged" || connectionState === "authenticating" || connectionState === "reconnecting";
+  const showConnectingState =
+    connectionState === "connecting" ||
+    connectionState === "challenged" ||
+    connectionState === "authenticating" ||
+    connectionState === "reconnecting";
+
+  const agentThreads = threads
+    .filter((thread) => thread.agentId === activeAgentId)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  const liveThreads = agentThreads.filter((thread) => thread.status !== "archived");
+  const archivedThreads = agentThreads.filter((thread) => thread.status === "archived");
 
   return (
-    <div className="chat-shell">
+    <div className="chat-shell" data-theme={resolvedTheme}>
       <aside className="chat-sidebar">
-        <div className="chat-sidebar-brand">
-          <p className="chat-sidebar-kicker">Clawnetes OS</p>
-          <h1>Agent Workspace</h1>
+        <div className="chat-sidebar-top">
+          <div className="chat-sidebar-brand">
+            <p className="chat-sidebar-kicker">Clawnetes</p>
+            <h1>Agent Workspace</h1>
+            <span className="chat-sidebar-subtle">OpenClaw desktop shell</span>
+          </div>
+
+          <button
+            className="chat-primary-button"
+            data-testid="chat-new-session"
+            disabled={!canCreateChat}
+            onClick={() => void handleNewChat()}
+          >
+            New chat
+          </button>
         </div>
 
         <div className="chat-sidebar-section">
           <div className="chat-sidebar-section-header">
-            <span>Sessions</span>
-            <button className="secondary" data-testid="chat-new-session" disabled={!canCreateChat} onClick={() => void handleNewChat()}>New Chat</button>
+            <span>Live</span>
           </div>
           <div className="chat-session-list">
-            {sessions.map((session) => (
-              <button
-                key={session.key}
-                className={`chat-list-item ${activeSessionKey === session.key ? "active" : ""}`}
-                onClick={() => void handleSessionSwitch(session.key)}
-                data-testid={`chat-session-${session.key}`}
-              >
-                <strong>{formatSessionTitle(session)}</strong>
-                <small>{session.key}</small>
-              </button>
-            ))}
+            {liveThreads.length === 0 ? (
+              <div className="chat-list-empty">No active chats yet.</div>
+            ) : (
+              liveThreads.map((thread) => (
+                <button
+                  key={thread.id}
+                  className={`chat-list-item ${activeThreadId === thread.id ? "active" : ""}`}
+                  onClick={() => void handleThreadSwitch(thread.id)}
+                  data-testid={`chat-thread-${thread.id}`}
+                >
+                  <strong title={thread.title}>{thread.title}</strong>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="chat-sidebar-section">
+          <div className="chat-sidebar-section-header">
+            <span>Recent</span>
+          </div>
+          <div className="chat-session-list">
+            {archivedThreads.length === 0 ? (
+              <div className="chat-list-empty">Past chats appear here after `/new`.</div>
+            ) : (
+              archivedThreads.map((thread) => (
+                <button
+                  key={thread.id}
+                  className={`chat-list-item archived ${activeThreadId === thread.id ? "active" : ""}`}
+                  onClick={() => void handleThreadSwitch(thread.id)}
+                >
+                  <strong title={thread.title}>{thread.title}</strong>
+                </button>
+              ))
+            )}
           </div>
         </div>
 
         <div className="chat-sidebar-actions">
+          <div className="chat-theme-toggle" role="group" aria-label="Theme">
+            {(["light", "dark", "system"] as ChatThemePreference[]).map((theme) => (
+              <button
+                key={theme}
+                className={themePreference === theme ? "active" : ""}
+                onClick={() => setThemePreference(theme)}
+                type="button"
+              >
+                {theme}
+              </button>
+            ))}
+          </div>
           <button className="secondary" onClick={onOpenConfigure}>Configure</button>
           <div className="chat-sidebar-status">{connectionLabel}</div>
         </div>
@@ -407,11 +807,18 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                 ))}
               </select>
             ) : (
-              <h2 data-testid="chat-active-agent">{showEmptyAgentState ? "No agents available" : activeAgentName || "Connecting to gateway..."}</h2>
+              <h2 data-testid="chat-active-agent">
+                {showEmptyAgentState ? "No agents available" : activeAgentName || "Connecting to gateway..."}
+              </h2>
             )}
+            <span className="chat-header-thread-meta">
+              {activeThreadIsArchived ? "Archived transcript" : `Session ${activeSessionKey || "main"}`}
+            </span>
           </div>
           <div className="chat-main-actions">
-            <button className="secondary" disabled={!chatReady || !activeSessionKey} onClick={() => void handleResetChat()}>Reset Chat</button>
+            <button className="secondary" disabled={!chatReady || !activeSessionKey || activeThreadIsArchived} onClick={() => void handleResetChat()}>
+              Reset
+            </button>
             <button className="secondary" data-testid="chat-reconnect" onClick={onRetryConnection}>Reconnect</button>
           </div>
         </header>
@@ -433,7 +840,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                   <p>{connectionLabel}</p>
                 </div>
               ) : shellError ? (
-                <div className="chat-state-card" data-testid="chat-error-state">
+                <div className="chat-state-card error" data-testid="chat-error-state">
                   <h3>Gateway connection failed</h3>
                   <p>{shellError}</p>
                 </div>
@@ -448,9 +855,27 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                   <p>Fetching the latest transcript from OpenClaw.</p>
                 </div>
               ) : messages.length === 0 ? (
-                <div className="chat-state-card">
-                  <h3>New conversation</h3>
-                  <p>Start typing to drive the active OpenClaw agent.</p>
+                <div className="chat-empty-stage">
+                  <div className="chat-empty-stage-badge">Workspace</div>
+                  <h3>{activeThreadIsArchived ? activeThread?.title || "Archived chat" : "Let’s build"}</h3>
+                  <p>
+                    {activeThreadIsArchived
+                      ? "This transcript is archived locally. Switch to a live chat or start a new one to keep sending."
+                      : `${activeAgentName || "Your agent"} is ready on ${activeSessionKey || "main"}.`}
+                  </p>
+                  {!activeThreadIsArchived && (
+                    <div className="chat-suggestion-grid">
+                      <button type="button" onClick={() => setComposerValue("Build a release checklist for this repo.")}>
+                        Build a release checklist
+                      </button>
+                      <button type="button" onClick={() => setComposerValue("Summarize the current OpenClaw chat architecture.")}>
+                        Summarize this workspace
+                      </button>
+                      <button type="button" onClick={() => setComposerValue("Draft an implementation plan for the next bugfix.")}>
+                        Create a plan
+                      </button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 messages.map((message) => (
@@ -458,8 +883,12 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                     key={message.id}
                     className={`chat-bubble ${message.role} ${message.error ? "error" : ""}`}
                   >
-                    <span className="chat-bubble-role">{message.role === "user" ? "You" : message.role === "assistant" ? activeAgentName : "System"}</span>
-                    <p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>{message.text || (message.pending ? "Thinking..." : "")}</p>
+                    <span className="chat-bubble-role">
+                      {message.role === "user" ? "You" : message.role === "assistant" ? activeAgentName : "System"}
+                    </span>
+                    <p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>
+                      {message.text || (message.pending ? "Thinking..." : "")}
+                    </p>
                   </article>
                 ))
               )}
@@ -477,10 +906,14 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                       void handleSend();
                     }
                   }}
-                  placeholder={`Message ${activeAgentName || "agent"} (Enter to send)`}
+                  placeholder={
+                    activeThreadIsArchived
+                      ? "Archived chats are read-only"
+                      : `Message ${activeAgentName || "agent"} (Enter to send)`
+                  }
                   rows={1}
                   data-testid="chat-composer"
-                  disabled={!chatReady || !activeAgentId}
+                  disabled={!chatReady || !activeAgentId || activeThreadIsArchived}
                 />
                 {sending ? (
                   <button
@@ -504,7 +937,9 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                   </button>
                 )}
               </div>
-              {sending && <span className="chat-composer-status">Agent is thinking...</span>}
+              <span className="chat-composer-status">
+                {sending ? "Agent is thinking..." : activeThreadIsArchived ? "Read-only archived transcript" : "Enter sends, Shift+Enter adds a new line"}
+              </span>
             </div>
           </>
         )}

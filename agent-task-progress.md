@@ -1,11 +1,11 @@
 # Progress
 
-- [x] Inspect the current Clawnetes and OpenClaw code paths for the failing chat handshake.
-- [x] Update task tracking files for the gateway chat bugfix.
-- [x] Replace the simplified browser gateway client with the OpenClaw-compatible handshake and auth helpers.
-- [x] Fix chat-shell readiness, empty-state, and action-enable behavior.
-- [x] Add regression coverage for the corrected protocol and chat actions.
+- [x] Inspect the current chat shell behavior, styling, and tests for transcript/session/composer handling.
+- [x] Update the on-disk implementation plan and progress tracker for this UI cleanup pass.
+- [x] Hide non-error system transcript messages in the chat shell.
+- [x] Convert the chat workspace palette and controls to grayscale-only flat styling.
+- [x] Compress session rows and expand the composer textarea height.
+- [x] Add regression coverage for filtered system messages, preserved errors, and compact sidebar rows.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
-- [x] Validate the chat flow with Playwright.
-- [ ] Commit and push changes.
+- [ ] Commit and push changes if validation succeeds.
