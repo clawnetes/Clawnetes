@@ -6,15 +6,39 @@ const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
 }));
 
-function createReconnectMockWebSocket(initialTranscript?: Array<Record<string, unknown>>) {
-  let sessionId = "sess-1";
-  let transcript = initialTranscript || [
+type MockSession = {
+  agentId: string;
+  key: string;
+  sessionId: string;
+  displayName: string;
+  derivedTitle: string;
+  messages: Array<Record<string, unknown>>;
+};
+
+function createReconnectMockWebSocket(options?: {
+  historyMessages?: Array<Record<string, unknown>>;
+  sessions?: MockSession[];
+  onChatSend?: (sessionKey: string) => void;
+}) {
+  const initialSessions = options?.sessions || [
     {
-      role: "assistant",
-      content: [{ type: "text", text: "Welcome back." }],
-      timestamp: Date.now(),
+      agentId: "main",
+      key: "main",
+      sessionId: "sess-1",
+      displayName: "Main Session",
+      derivedTitle: "Main Session",
+      messages: options?.historyMessages || [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Welcome back." }],
+          timestamp: Date.now(),
+        },
+      ],
     },
   ];
+  const sessions = new Map(
+    initialSessions.map((session) => [session.key, { ...session, messages: session.messages.map((message) => ({ ...message })) }]),
+  );
   let runCounter = 0;
 
   class MockWebSocket {
@@ -71,36 +95,44 @@ function createReconnectMockWebSocket(initialTranscript?: Array<Record<string, u
           });
           break;
         case "sessions.list":
-          respond({
-            type: "res",
-            id: parsed.id,
-            ok: true,
-            payload: {
-              sessions: [
-                {
-                  key: "main",
-                  displayName: "Main Session",
-                  derivedTitle: "Main Session",
-                  sessionId,
+          {
+            const requestedAgentId = parsed.params?.agentId || "main";
+            const visibleSessions = [...sessions.values()].filter((session) =>
+              session.agentId === requestedAgentId || (parsed.params?.includeGlobal && session.agentId === "main"),
+            );
+            respond({
+              type: "res",
+              id: parsed.id,
+              ok: true,
+              payload: {
+                sessions: visibleSessions.map((session) => ({
+                  key: session.key,
+                  displayName: session.displayName,
+                  derivedTitle: session.derivedTitle,
+                  sessionId: session.sessionId,
                   updatedAt: Date.now(),
-                },
-              ],
-            },
-          });
+                })),
+              },
+            });
+          }
           break;
         case "chat.history":
-          respond({
-            type: "res",
-            id: parsed.id,
-            ok: true,
-            payload: {
-              sessionKey: "main",
-              sessionId,
-              messages: transcript,
-            },
-          });
+          {
+            const session = sessions.get(parsed.params.sessionKey);
+            respond({
+              type: "res",
+              id: parsed.id,
+              ok: true,
+              payload: {
+                sessionKey: parsed.params.sessionKey,
+                sessionId: session?.sessionId || null,
+                messages: session?.messages || [],
+              },
+            });
+          }
           break;
         case "chat.send":
+          options?.onChatSend?.(parsed.params.sessionKey);
           runCounter += 1;
           respond({
             type: "res",
@@ -109,14 +141,17 @@ function createReconnectMockWebSocket(initialTranscript?: Array<Record<string, u
             payload: { runId: `run-${runCounter}`, status: "started" },
           });
           if (parsed.params.message === "/new") {
-            sessionId = `sess-${runCounter + 1}`;
-            transcript = [
+            const mainSession = sessions.get("main");
+            if (!mainSession) break;
+            mainSession.sessionId = `sess-${runCounter + 1}`;
+            mainSession.messages = [
               {
                 role: "assistant",
                 content: [{ type: "text", text: "Fresh start." }],
                 timestamp: Date.now(),
               },
             ];
+            sessions.set("main", mainSession);
             queueMicrotask(() => {
               this.emit("message", {
                 data: JSON.stringify({
@@ -136,7 +171,33 @@ function createReconnectMockWebSocket(initialTranscript?: Array<Record<string, u
                 data: JSON.stringify({
                   type: "event",
                   event: "sessions.changed",
-                  payload: { sessionKey: "main", sessionId, updatedAt: Date.now(), reason: "reset" },
+                  payload: { sessionKey: "main", sessionId: mainSession.sessionId, updatedAt: Date.now(), reason: "reset" },
+                }),
+              });
+            });
+          } else {
+            const session = sessions.get(parsed.params.sessionKey);
+            if (!session) break;
+            const replyText = parsed.params.sessionKey === "ops" ? "Ops Agent handled it." : "Main Agent handled it.";
+            session.messages = [
+              ...session.messages,
+              { role: "user", text: parsed.params.message, timestamp: Date.now() },
+              { role: "assistant", content: [{ type: "text", text: replyText }], timestamp: Date.now() + 1 },
+            ];
+            sessions.set(parsed.params.sessionKey, session);
+            queueMicrotask(() => {
+              this.emit("message", {
+                data: JSON.stringify({
+                  type: "event",
+                  event: "agent",
+                  payload: { runId: `run-${runCounter}`, stream: "assistant", data: { text: replyText } },
+                }),
+              });
+              this.emit("message", {
+                data: JSON.stringify({
+                  type: "event",
+                  event: "chat",
+                  payload: { sessionKey: parsed.params.sessionKey, runId: `run-${runCounter}`, state: "final" },
                 }),
               });
             });
@@ -297,7 +358,7 @@ Tomorrow looks clear and cool.`,
         timestamp: Date.now(),
       },
     ];
-    vi.stubGlobal("WebSocket", createReconnectMockWebSocket(noisyTranscript));
+    vi.stubGlobal("WebSocket", createReconnectMockWebSocket({ historyMessages: noisyTranscript }));
 
     const user = userEvent.setup();
     render(<App />);
@@ -322,5 +383,52 @@ Tomorrow looks clear and cool.`,
 
     expect(screen.queryByText(/Weather report for:/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Timezone: Europe\/London/i)).not.toBeInTheDocument();
+  });
+
+  it("routes chat sends to the selected sub-agent session instead of main", async () => {
+    const sentSessionKeys: string[] = [];
+    const user = userEvent.setup();
+    vi.stubGlobal("WebSocket", createReconnectMockWebSocket({
+      sessions: [
+        {
+          agentId: "main",
+          key: "main",
+          sessionId: "sess-1",
+          displayName: "Main Session",
+          derivedTitle: "Main Session",
+          messages: [{ role: "assistant", content: [{ type: "text", text: "Welcome back." }], timestamp: Date.now() }],
+        },
+        {
+          agentId: "ops",
+          key: "ops",
+          sessionId: "sess-ops",
+          displayName: "Ops Session",
+          derivedTitle: "Ops Session",
+          messages: [{ role: "assistant", content: [{ type: "text", text: "Ops ready." }], timestamp: Date.now() }],
+        },
+      ],
+      onChatSend: (sessionKey) => sentSessionKeys.push(sessionKey),
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Welcome back.").length).toBeGreaterThan(0);
+    });
+
+    await user.selectOptions(screen.getByTestId("chat-active-agent"), "ops");
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Ops ready.").length).toBeGreaterThan(0);
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "Handle this");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Ops Agent handled it.").length).toBeGreaterThan(0);
+    });
+
+    expect(sentSessionKeys[sentSessionKeys.length - 1]).toBe("ops");
   });
 });

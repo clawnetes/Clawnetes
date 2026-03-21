@@ -365,6 +365,30 @@ function createThread(params: {
   } satisfies StoredChatThread;
 }
 
+function defaultSessionKeyForAgent(agentId: string) {
+  return agentId === "main" ? "main" : agentId;
+}
+
+function resolveSessionKeyForAgent(params: {
+  agentId: string;
+  liveSessions: GatewayChatSession[];
+  preferredSessionKey?: string;
+}) {
+  if (params.preferredSessionKey && params.liveSessions.some((session) => session.key === params.preferredSessionKey)) {
+    return params.preferredSessionKey;
+  }
+
+  if (params.agentId === "main") {
+    return params.liveSessions.find((session) => session.key === "main")?.key || params.liveSessions[0]?.key || "main";
+  }
+
+  return (
+    params.liveSessions.find((session) => session.key === params.agentId)?.key ||
+    params.liveSessions.find((session) => session.key !== "main")?.key ||
+    defaultSessionKeyForAgent(params.agentId)
+  );
+}
+
 function readPrefersDark() {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
     return false;
@@ -819,9 +843,13 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     const nextSessions = sessionPayload.sessions || [];
     setLiveSessions(nextSessions);
 
-    const desiredThreadId = preferredThreadId || loadStoredSelection(scopeKey, agentId) || activeThreadIdRef.current;
+    const desiredThreadId = preferredThreadId || loadStoredSelection(scopeKey, agentId) || "";
     const desiredThread = threadsRef.current.find((thread) => thread.id === desiredThreadId && thread.agentId === agentId);
-    const desiredSessionKey = desiredThread?.sessionKey || activeSessionKeyRef.current || nextSessions[0]?.key || "main";
+    const desiredSessionKey = resolveSessionKeyForAgent({
+      agentId,
+      liveSessions: nextSessions,
+      preferredSessionKey: desiredThread?.status !== "archived" ? desiredThread?.sessionKey : undefined,
+    });
     const matchedSession = nextSessions.find((session) => session.key === desiredSessionKey);
     const nextThreadId = ensureLiveThread({
       agentId,
@@ -838,7 +866,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
       threadsRef.current.find((thread) => thread.id === nextThreadId) ||
       createThread({ agentId, sessionKey: desiredSessionKey, status: matchedSession ? "live" : "draft" });
 
-    if (matchedSession || desiredSessionKey === "main") {
+    if (matchedSession) {
       await loadHistory(desiredSessionKey, nextThreadId, client);
       return;
     }
@@ -953,6 +981,8 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     if (!agentId || agentId === activeAgentId) return;
     setActiveAgentId(agentId);
     setLiveSessions([]);
+    setActiveSessionKey("");
+    setActiveThreadId("");
     setMessages([]);
     setActiveRunId("");
     await refreshSessions(agentId);
