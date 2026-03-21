@@ -804,30 +804,31 @@ pub fn build_unix_terminal_script(
     command: &str,
     marker_path: &str,
 ) -> String {
+    let requires_local_openclaw = !command.trim_start().starts_with("ssh ");
     let env_bootstrap = match platform {
         TerminalPlatform::Macos => concat!(
             "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; ",
             "export PATH=\"$PATH:/usr/local/bin:/opt/homebrew/bin\"; ",
             "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; ",
-            ". \"$HOME/.zprofile\" 2>/dev/null || true; ",
-            ". \"$HOME/.zshrc\" 2>/dev/null || true; ",
             ". \"$HOME/.profile\" 2>/dev/null || true"
         ),
         TerminalPlatform::Linux => concat!(
             "export PATH=\"$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin\"; ",
             "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; ",
             ". \"$HOME/.profile\" 2>/dev/null || true; ",
-            ". \"$HOME/.bash_profile\" 2>/dev/null || true; ",
-            ". \"$HOME/.bashrc\" 2>/dev/null || true; ",
-            ". \"$HOME/.zprofile\" 2>/dev/null || true; ",
-            ". \"$HOME/.zshrc\" 2>/dev/null || true"
+            ". \"$HOME/.bash_profile\" 2>/dev/null || true"
         ),
         TerminalPlatform::Windows => "",
     };
     let bootstrapped_command = match platform {
-        TerminalPlatform::Macos | TerminalPlatform::Linux => format!(
-            "{env_bootstrap}\nif ! command -v openclaw >/dev/null 2>&1; then\n  printf '%s\n' 'OpenClaw CLI not found in launched shell.' >&2\n  exit 127\nfi\n{command}"
-        ),
+        TerminalPlatform::Macos | TerminalPlatform::Linux => {
+            let local_check = if requires_local_openclaw {
+                "if ! command -v openclaw >/dev/null 2>&1; then\n  printf '%s\n' 'OpenClaw CLI not found in launched shell.' >&2\n  exit 127\nfi\n"
+            } else {
+                ""
+            };
+            format!("{env_bootstrap}\n{local_check}{command}")
+        }
         TerminalPlatform::Windows => command.to_string(),
     };
     let wrapped_command = match platform {
@@ -1373,6 +1374,17 @@ mod tests {
         assert!(script.contains(". \"$HOME/.profile\" 2>/dev/null || true;"));
         assert!(script.contains("command -v openclaw >/dev/null 2>&1"));
         assert!(script.contains("OpenClaw CLI not found in launched shell."));
+    }
+
+    #[test]
+    fn test_build_unix_terminal_script_skips_local_openclaw_check_for_remote_ssh_command() {
+        let script = build_unix_terminal_script(
+            TerminalPlatform::Macos,
+            "ssh -t user@example.com '/bin/sh -lc '\\''openclaw models auth login --provider '\\''\\''openai-codex'\\'''",
+            "/tmp/clawnetes-oauth.exit",
+        );
+        assert!(!script.contains("command -v openclaw >/dev/null 2>&1"));
+        assert!(!script.contains(". \"$HOME/.zshrc\""));
     }
 
     #[test]
