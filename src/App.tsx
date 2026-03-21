@@ -562,6 +562,7 @@ function App() {
         provider: item.targetProvider,
         method: item.authMethod,
         oauthProviderId: item.oauthProviderId,
+        remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
       }),
       onItemStart: (item) => {
         setOauthCompletionResults(prev => ({

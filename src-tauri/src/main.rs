@@ -163,8 +163,9 @@ fn start_provider_auth(
     provider: String,
     method: String,
     oauth_provider_id: String,
+    remote: Option<RemoteInfo>,
 ) -> Result<ProviderAuthData, String> {
-    oauth::start_provider_auth(&provider, &method, &oauth_provider_id)
+    oauth::start_provider_auth(&provider, &method, &oauth_provider_id, remote.as_ref())
 }
 
 #[command]

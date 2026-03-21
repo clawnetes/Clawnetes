@@ -10,7 +10,10 @@ use std::time::{Duration, Instant};
 use std::os::unix::fs::PermissionsExt;
 
 use crate::system::{shell_command, shell_single_quote};
-use crate::types::{PortListenerInfo, ProviderAuthData, TerminalLaunchPlan, TerminalPlatform};
+use crate::ssh::{connect_ssh, execute_ssh, get_env_prefix};
+use crate::types::{
+    PortListenerInfo, ProviderAuthData, RemoteInfo, TerminalLaunchPlan, TerminalPlatform,
+};
 
 pub fn default_provider_auth(
     provider: &str,
@@ -494,8 +497,22 @@ pub fn build_provider_auth_command(
     method: &str,
     oauth_provider_id: &str,
 ) -> String {
+    build_provider_auth_command_for_binary("openclaw", method, oauth_provider_id)
+}
+
+pub fn build_provider_auth_command_for_binary(
+    openclaw_binary: &str,
+    method: &str,
+    oauth_provider_id: &str,
+) -> String {
+    let command_word = if openclaw_binary == "openclaw" {
+        "openclaw".to_string()
+    } else {
+        shell_single_quote(openclaw_binary)
+    };
     let mut cmd = format!(
-        "openclaw models auth login --provider {}",
+        "{} models auth login --provider {}",
+        command_word,
         shell_single_quote(oauth_provider_id)
     );
     if !method.is_empty() && method != oauth_provider_id {
@@ -616,6 +633,159 @@ pub fn cleanup_stale_oauth_listener(oauth_provider_id: &str) -> Result<(), Strin
         }
         thread::sleep(Duration::from_millis(200));
     }
+}
+
+fn remote_cleanup_command(port: u16) -> String {
+    format!(
+        "if command -v lsof >/dev/null 2>&1; then lsof -nP -iTCP:{} -sTCP:LISTEN -Fpc 2>/dev/null || true; fi",
+        port
+    )
+}
+
+fn cleanup_stale_oauth_listener_remote(
+    sess: &ssh2::Session,
+    prefix: &str,
+    oauth_provider_id: &str,
+) -> Result<(), String> {
+    let Some(port) = oauth_callback_port(oauth_provider_id) else {
+        return Ok(());
+    };
+
+    let output = execute_ssh(sess, &format!("{}{}", prefix, remote_cleanup_command(port)))?;
+    let listeners = parse_lsof_listener_info(&output);
+    if listeners.is_empty() {
+        return Ok(());
+    }
+
+    let mut openclaw_listeners = Vec::new();
+    let mut foreign_listeners = Vec::new();
+    for listener in listeners {
+        if is_openclaw_listener(&listener) {
+            openclaw_listeners.push(listener);
+        } else {
+            foreign_listeners.push(listener);
+        }
+    }
+
+    if !foreign_listeners.is_empty() {
+        let details = foreign_listeners
+            .iter()
+            .map(|listener| format!("{} (pid {})", listener.command, listener.pid))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "Remote localhost:{} is already in use by a non-OpenClaw process: {}. Close it and retry OAuth.",
+            port, details
+        ));
+    }
+
+    for listener in &openclaw_listeners {
+        execute_ssh(sess, &format!("kill {}", listener.pid)).map_err(|err| {
+            format!(
+                "A previous remote OpenClaw OAuth session is still using localhost:{} and could not be replaced: {}",
+                port, err
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+fn enable_openclaw_plugin_remote(
+    sess: &ssh2::Session,
+    prefix: &str,
+    plugin_id: &str,
+) -> Result<(), String> {
+    execute_ssh(
+        sess,
+        &format!(
+            "{}openclaw plugins enable {}",
+            prefix,
+            shell_single_quote(plugin_id)
+        ),
+    )
+    .map(|_| ())
+}
+
+fn provider_id_is_available_remote(
+    sess: &ssh2::Session,
+    prefix: &str,
+    oauth_provider_id: &str,
+) -> Result<bool, String> {
+    let output = execute_ssh(sess, &format!("{}openclaw plugins list --json", prefix))?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&output).map_err(|e| format!("Failed to parse plugin list: {}", e))?;
+
+    Ok(parsed
+        .get("plugins")
+        .and_then(|plugins| plugins.as_array())
+        .map(|plugins| {
+            plugins.iter().any(|plugin| {
+                plugin
+                    .get("status")
+                    .and_then(|status| status.as_str())
+                    .map(|status| status == "loaded")
+                    .unwrap_or(false)
+                    && plugin
+                        .get("providerIds")
+                        .and_then(|provider_ids| provider_ids.as_array())
+                        .map(|provider_ids| {
+                            provider_ids
+                                .iter()
+                                .any(|provider_id| provider_id.as_str() == Some(oauth_provider_id))
+                        })
+                        .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false))
+}
+
+fn read_provider_auth_profiles_remote(
+    sess: &ssh2::Session,
+) -> Result<serde_json::Value, String> {
+    let auth_profiles_str =
+        execute_ssh(sess, "cat ~/.openclaw/agents/main/agent/auth-profiles.json")
+            .map_err(|e| format!("Failed to read remote auth profiles: {}", e))?;
+    serde_json::from_str(&auth_profiles_str)
+        .map_err(|e| format!("Failed to parse remote auth profiles: {}", e))
+}
+
+fn build_remote_provider_auth_terminal_command(
+    remote: &RemoteInfo,
+    prefix: &str,
+    method: &str,
+    oauth_provider_id: &str,
+) -> String {
+    let remote_openclaw_command = build_provider_auth_command_for_binary("openclaw", method, oauth_provider_id);
+    let remote_shell_command = format!("{}{}", prefix, remote_openclaw_command);
+
+    let mut parts = vec![
+        "ssh".to_string(),
+        "-o".to_string(),
+        "ExitOnForwardFailure=yes".to_string(),
+        "-o".to_string(),
+        "StrictHostKeyChecking=accept-new".to_string(),
+        "-t".to_string(),
+    ];
+
+    if let Some(port) = oauth_callback_port(oauth_provider_id) {
+        parts.push("-L".to_string());
+        parts.push(format!("{port}:127.0.0.1:{port}"));
+    }
+
+    if let Some(path) = remote.private_key_path.as_deref() {
+        if !path.trim().is_empty() {
+            parts.push("-i".to_string());
+            parts.push(shell_single_quote(path));
+        }
+    }
+
+    parts.push(format!("{}@{}", remote.user, remote.ip));
+    parts.push(format!(
+        "/bin/sh -lc {}",
+        shell_single_quote(&remote_shell_command)
+    ));
+    parts.join(" ")
 }
 
 // --- Terminal launch helpers ---
@@ -990,7 +1160,49 @@ pub fn start_provider_auth(
     provider: &str,
     method: &str,
     oauth_provider_id: &str,
+    remote: Option<&RemoteInfo>,
 ) -> Result<ProviderAuthData, String> {
+    if let Some(remote) = remote {
+        let sess = connect_ssh(remote)?;
+        let os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
+        let prefix = get_env_prefix(&os_type);
+
+        if let Some(plugin_id) = required_plugin_for_oauth_provider_id(oauth_provider_id) {
+            enable_openclaw_plugin_remote(&sess, &prefix, plugin_id).map_err(|err| {
+                format!(
+                    "Gemini CLI OAuth depends on the OpenClaw plugin `{}`. Clawnetes tried to enable it automatically on the remote host, but that failed: {}",
+                    plugin_id, err
+                )
+            })?;
+
+            if !provider_id_is_available_remote(&sess, &prefix, oauth_provider_id)? {
+                return Err(format!(
+                    "Gemini CLI OAuth depends on the OpenClaw plugin `{}`. Clawnetes enabled that plugin on the remote host, but the provider `{}` is still unavailable in OpenClaw.",
+                    plugin_id, oauth_provider_id
+                ));
+            }
+        }
+
+        cleanup_stale_oauth_listener_remote(&sess, &prefix, oauth_provider_id)?;
+        let terminal_command =
+            build_remote_provider_auth_terminal_command(remote, &prefix, method, oauth_provider_id);
+        launch_provider_auth_terminal(&terminal_command)
+            .map_err(|err| decorate_oauth_launch_error(oauth_provider_id, err))?;
+
+        let auth_config = read_provider_auth_profiles_remote(&sess)?;
+        return resolve_provider_auth_data(provider, &auth_config)
+            .map(|mut auth| {
+                auth.oauth_provider_id = Some(oauth_provider_id.to_string());
+                auth
+            })
+            .ok_or_else(|| {
+                format!(
+                    "OAuth completed on the remote host but no auth profile was found for provider {}",
+                    provider
+                )
+            });
+    }
+
     if let Some(plugin_id) = required_plugin_for_oauth_provider_id(oauth_provider_id) {
         enable_openclaw_plugin(plugin_id).map_err(|err| {
             format!(
@@ -1134,6 +1346,19 @@ mod tests {
         assert_eq!(
             cmd,
             "openclaw models auth login --provider 'google-gemini-cli' --method 'gemini-cli'"
+        );
+    }
+
+    #[test]
+    fn test_build_provider_auth_command_for_binary_uses_absolute_binary() {
+        let cmd = build_provider_auth_command_for_binary(
+            "/usr/local/bin/openclaw",
+            "openai-codex",
+            "openai-codex",
+        );
+        assert_eq!(
+            cmd,
+            "'/usr/local/bin/openclaw' models auth login --provider 'openai-codex'"
         );
     }
 
