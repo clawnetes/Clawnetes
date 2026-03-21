@@ -15,6 +15,7 @@ import ToolPolicyEditor from "./components/ToolPolicyEditor";
 import { createInheritedToolPolicy, DEFAULT_TOOL_POLICY, deriveToolPolicyFromLegacy, getSkillIdSet, materializeToolPolicy, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./utils/toolSelection";
 import { constructConfigPayload as buildConfigPayload, buildAgentToolsPayload as buildAgentTools } from "./utils/configPayload";
 import { executeDeferredOAuthQueue } from "./utils/oauthCompletion";
+import { toConfigSandboxMode } from "./utils/sandboxMode";
 import {
   continueToAdvancedSettings as continueToAdvancedSettingsController,
   handleAdvancedTransition as handleAdvancedTransitionController,
@@ -1012,8 +1013,6 @@ function App() {
 ---
 Managed by Clawnetes.`;
 
-    const mappedSandboxMode = initial.sandbox_mode === "full" ? "all" : (initial.sandbox_mode === "partial" ? "non-main" : (initial.sandbox_mode === "none" ? "off" : initial.sandbox_mode));
-
     return {
       provider: normalizedProvider,
       api_key: initialProviderAuths[normalizedProvider]?.token || initial.api_key,
@@ -1031,7 +1030,7 @@ Managed by Clawnetes.`;
       skills: normalizedTopLevelSelection.skills,
       service_keys: initial.service_keys || {},
       provider_auths: initialProviderAuths,
-      sandbox_mode: mappedSandboxMode,
+      sandbox_mode: toConfigSandboxMode(initial.sandbox_mode),
       tools_mode: initial.tools_mode ?? null,
       tools_profile: normalizedTopLevelToolPolicy.profile,
       allowed_tools: normalizedTopLevelToolPolicy.allow,

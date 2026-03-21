@@ -1,15 +1,17 @@
-# Fix Tool Access Dark Mode Contrast
+# Preserve Sandbox Mode During Reconfigure
 
 ## Summary
-- Fix the Tool Access page so section cards, headers, rows, and tags render with correct contrast in dark mode.
-- Keep the existing light-mode appearance aligned with the shared theme tokens.
+- Fix reconfigure so an existing `No Sandbox` setup stays `No Sandbox` in the wizard and in the saved config.
+- Prevent invalid backend sandbox values from leaking into UI dropdown state.
+- Add regression coverage for sandbox-mode mapping in both directions.
 
 ## Implementation Changes
-- Replace hardcoded light surfaces in `src/App.css` for the Tool Access editor with theme variables.
-- Ensure section headers, rows, tags, and elevated-runtime row inherit dark-mode-friendly panel and border colors.
+- Centralize sandbox-mode conversion between UI values (`none` / `partial` / `full`) and config values (`off` / `non-main` / `all`).
+- Use the UI mapping when loading existing config into the wizard during reconfigure.
+- Use the config mapping when building the payload sent back to OpenClaw.
 
 ## Validation
-- Run `npm test`.
+- Run targeted sandbox/config tests.
 - Run `npm test`.
 - Run `npm run tauri dev`.
 - Commit and push if validation succeeds.

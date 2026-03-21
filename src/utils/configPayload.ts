@@ -2,6 +2,7 @@ import type { AgentConfigData, AgentTypeId, CronJobConfig, ProviderAuthConfig, T
 import { applyModelProviderAuth } from "./providerAuth";
 import { getSkillIdSet, materializeToolPolicy, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./toolSelection";
 import { AVAILABLE_SKILLS } from "../presets/availableSkills";
+import { toConfigSandboxMode } from "./sandboxMode";
 
 export interface ConfigPayloadInput {
   provider: string;
@@ -72,7 +73,7 @@ export function constructConfigPayload(
   providerAuthsOverride?: Record<string, ProviderAuthConfig>,
 ) {
   const availableSkillIds = getSkillIdSet(AVAILABLE_SKILLS);
-  const mappedSandboxMode = input.sandboxMode === "full" ? "all" : (input.sandboxMode === "partial" ? "non-main" : "off");
+  const mappedSandboxMode = toConfigSandboxMode(input.sandboxMode);
   const defaultIdentity = `# IDENTITY.md - Who Am I?
 - **Name:** ${input.agentName}
 - **Emoji:** ${input.agentEmoji}

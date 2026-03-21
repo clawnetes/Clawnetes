@@ -14,6 +14,7 @@ import {
   normalizeModelRefForUi,
   normalizeProviderAuths,
 } from "./providerAuth";
+import { toUiSandboxMode } from "./sandboxMode";
 import {
   normalizeSkillAndToolSelection,
 } from "./toolSelection";
@@ -532,7 +533,7 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
     );
     controller.setSelectedSkills(normalizedTopLevelSelection.skills);
     controller.setServiceKeys(config.service_keys);
-    controller.setSandboxMode(config.sandbox_mode);
+    controller.setSandboxMode(toUiSandboxMode(config.sandbox_mode));
     controller.setToolPolicy(controller.getLoadedTopLevelToolPolicy(config));
     controller.setFallbackModels(
       config.fallback_models.map((modelRef: string) => normalizeModelRefForUi(modelRef, normalizedProviderAuths)),
