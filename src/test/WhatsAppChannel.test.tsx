@@ -1,16 +1,23 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 
-const QR_MOCK = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-
 vi.mock("../lib/tauri", () => ({
   invoke: vi.fn().mockImplementation((cmd: string) => {
     if (cmd === "check_prerequisites") {
       return Promise.resolve({ node_installed: true, docker_running: false, openclaw_installed: false });
     }
     if (cmd === "get_openclaw_version") return Promise.resolve("2026.3.2");
-    if (cmd === "start_whatsapp_login") return Promise.resolve(QR_MOCK);
-    if (cmd === "wait_whatsapp_login") return Promise.resolve(true);
+    if (cmd === "prepare_gateway_chat_connection") {
+      return Promise.resolve({
+        wsUrl: "ws://127.0.0.1:18789",
+        authToken: "token-123",
+        targetEnvironment: "local",
+        gatewayPort: 18789,
+        tunnelActive: false,
+        openClawVersion: "2026.3.2",
+      });
+    }
+    if (cmd === "restart_openclaw_gateway") return Promise.resolve(null);
     return Promise.resolve(null);
   }),
   openExternal: vi.fn(),
@@ -74,18 +81,14 @@ describe("WhatsAppChannel", () => {
     expect(options.length).toBe(3);
   });
 
-  it("start_whatsapp_login mock returns QR data URL", async () => {
+  it("prepare_gateway_chat_connection mock returns gateway bootstrap", async () => {
     const { invoke } = await import("../lib/tauri");
-    const result = await invoke("start_whatsapp_login", { gatewayPort: 18789 });
-    expect(typeof result).toBe("string");
-    expect((result as string).startsWith("data:image/png;base64,")).toBe(true);
-  });
-
-  it("wait_whatsapp_login mock returns connected boolean", async () => {
-    const { invoke } = await import("../lib/tauri");
-    const result = await invoke("wait_whatsapp_login", { gatewayPort: 18789 });
-    expect(typeof result).toBe("boolean");
-    expect(result).toBe(true);
+    const result = await invoke("prepare_gateway_chat_connection", { gatewayPort: 18789 });
+    expect(result).toMatchObject({
+      wsUrl: "ws://127.0.0.1:18789",
+      authToken: "token-123",
+      gatewayPort: 18789,
+    });
   });
 
   it("WS RPC message format is correct", () => {

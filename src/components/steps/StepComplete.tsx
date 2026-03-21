@@ -3,6 +3,8 @@ import { invoke, openExternal } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
 import { shouldShowTelegramPairing, getTelegramPairingDisplayCode, shouldShowWhatsAppPairing } from "../../utils/messagingPairing";
 import type { DeferredOAuthItem } from "../../utils/providerAuth";
+import type { GatewayChatBootstrap, RemoteConfig } from "../../types";
+import { GatewayChatClient } from "../../lib/gatewayChat";
 
 interface StepCompleteProps {
   handleToggleTunnel: () => void;
@@ -27,6 +29,54 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
 
   const setField = (field: string, value: unknown) =>
     dispatch({ type: "SET_FIELD", field: field as any, value });
+
+  function buildRemoteArg(): RemoteConfig | null {
+    if (targetEnvironment !== "cloud") {
+      return null;
+    }
+    return {
+      ip: remoteIp,
+      user: remoteUser,
+      password: remotePassword || null,
+      privateKeyPath: remotePrivateKeyPath || null,
+    };
+  }
+
+  async function runWhatsAppPairing(force = true) {
+    const remoteArg = buildRemoteArg();
+    const bootstrap = await invoke<GatewayChatBootstrap>("prepare_gateway_chat_connection", {
+      gatewayPort,
+      remote: remoteArg,
+    });
+    const client = new GatewayChatClient(bootstrap);
+
+    try {
+      await client.connect();
+      const startPayload = await client.rpc<{ qrDataUrl?: string }>("web.login.start", {
+        timeoutMs: 30000,
+        force,
+      });
+      const qrDataUrl = typeof startPayload?.qrDataUrl === "string" ? startPayload.qrDataUrl : "";
+      if (!qrDataUrl) {
+        throw new Error("Gateway returned ok but no QR code (already linked?)");
+      }
+
+      setField("whatsappQrDataUrl", qrDataUrl);
+
+      const waitPayload = await client.rpc<{ connected?: boolean }>("web.login.wait", {
+        timeoutMs: 120000,
+      });
+      if (!waitPayload?.connected) {
+        throw new Error("WhatsApp login did not complete before timeout");
+      }
+
+      setField("whatsappQrDataUrl", "");
+      setField("whatsappPaired", true);
+      await invoke("restart_openclaw_gateway", { remote: remoteArg });
+    } finally {
+      client.disconnect();
+    }
+  }
 
   return (
     <div className="step-view" data-testid="step-complete">
@@ -188,14 +238,7 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
                   setField("whatsappQrLoading", true);
                   setField("whatsappQrStep", true);
                   try {
-                    const remoteArg = targetEnvironment === "cloud" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null;
-                    const qrDataUrl: string = await invoke("start_whatsapp_login", { gatewayPort, remote: remoteArg });
-                    setField("whatsappQrDataUrl", qrDataUrl);
-                    await invoke("wait_whatsapp_login", { gatewayPort, remote: remoteArg });
-                    setField("whatsappQrDataUrl", "");
-                    setField("whatsappPaired", true);
-                    invoke("restart_openclaw_gateway", { remote: remoteArg })
-                      .catch(console.error);
+                    await runWhatsAppPairing(true);
                   } catch (err) {
                     console.error(err);
                     alert("WhatsApp pairing error: " + err);
@@ -224,14 +267,7 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
                       style={{ marginTop: "0.5rem" }}
                       onClick={async () => {
                         try {
-                          const remoteArg = targetEnvironment === "cloud" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null;
-                          const qrDataUrl: string = await invoke("start_whatsapp_login", { gatewayPort, remote: remoteArg });
-                          setField("whatsappQrDataUrl", qrDataUrl);
-                          await invoke("wait_whatsapp_login", { gatewayPort, remote: remoteArg });
-                          setField("whatsappQrDataUrl", "");
-                          setField("whatsappPaired", true);
-                          invoke("restart_openclaw_gateway", { remote: remoteArg })
-                            .catch(console.error);
+                          await runWhatsAppPairing(true);
                         } catch (err) {
                           console.error(err);
                           alert("WhatsApp pairing error: " + err);

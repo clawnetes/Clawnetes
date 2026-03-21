@@ -95,23 +95,23 @@ function shouldHideTranscriptMessage(message: Record<string, unknown>) {
 
 function toChatMessages(rawMessages: unknown[] | undefined): ChatMessage[] {
   if (!Array.isArray(rawMessages)) return [];
-  return rawMessages
-    .map((item, index) => {
-      if (typeof item !== "object" || item === null) return null;
-      const message = item as Record<string, unknown>;
+  const messages: ChatMessage[] = [];
+  rawMessages.forEach((item, index) => {
+    if (typeof item !== "object" || item === null) return;
+    const message = item as Record<string, unknown>;
 
-      if (shouldHideTranscriptMessage(message)) return null;
+    if (shouldHideTranscriptMessage(message)) return;
 
-      const role = message.role === "assistant" || message.role === "system" ? message.role : "user";
-      const text = extractMessageText(message);
-      return {
-        id: `${String(message.timestamp || index)}-${role}`,
-        role,
-        text,
-        timestamp: typeof message.timestamp === "number" ? message.timestamp : undefined,
-      } satisfies ChatMessage;
-    })
-    .filter((item): item is ChatMessage => item !== null);
+    const role = message.role === "assistant" || message.role === "system" ? message.role : "user";
+    const text = extractMessageText(message);
+    messages.push({
+      id: `${String(message.timestamp || index)}-${role}`,
+      role,
+      text,
+      timestamp: typeof message.timestamp === "number" ? message.timestamp : undefined,
+    });
+  });
+  return messages;
 }
 
 function toStoredMessages(messages: ChatMessage[]): StoredChatMessage[] {
@@ -393,8 +393,9 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
       (shouldAutoScrollRef.current || messages.length > previousMessageCountRef.current);
 
     if (shouldScroll) {
+      const scrollBehavior = pendingScrollBehaviorRef.current ?? undefined;
       if (typeof transcript.scrollTo === "function") {
-        transcript.scrollTo({ top: transcript.scrollHeight, behavior: pendingScrollBehaviorRef.current });
+        transcript.scrollTo({ top: transcript.scrollHeight, behavior: scrollBehavior });
       } else {
         transcript.scrollTop = transcript.scrollHeight;
       }

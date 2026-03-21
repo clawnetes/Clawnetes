@@ -298,7 +298,7 @@ export class GatewayChatClient {
   }
 
   async listAgents(): Promise<{ defaultId?: string; agents: GatewayChatAgent[] }> {
-    const payload = await this.request("agents.list", {});
+    const payload = await this.request<{ defaultId?: string; agents?: GatewayChatAgent[] }>("agents.list", {});
     return {
       defaultId: typeof payload?.defaultId === "string" ? payload.defaultId : undefined,
       agents: Array.isArray(payload?.agents) ? payload.agents : [],
@@ -306,7 +306,7 @@ export class GatewayChatClient {
   }
 
   async listSessions(agentId?: string): Promise<{ sessions: GatewayChatSession[] }> {
-    const payload = await this.request("sessions.list", {
+    const payload = await this.request<{ sessions?: GatewayChatSession[] }>("sessions.list", {
       includeGlobal: true,
       includeUnknown: false,
       includeDerivedTitles: true,
@@ -339,6 +339,10 @@ export class GatewayChatClient {
 
   async resetSession(sessionKey: string) {
     return await this.request("sessions.reset", { key: sessionKey });
+  }
+
+  async rpc<T = unknown>(method: string, params?: unknown): Promise<T> {
+    return await this.request<T>(method, params);
   }
 
   private connectSocket() {
@@ -690,7 +694,7 @@ export class GatewayChatClient {
     }
 
     if (parsed.event === "agent" && isObject(parsed.payload)) {
-      this.onAgentEvent?.(parsed.payload as GatewayAgentEventPayload);
+      this.onAgentEvent?.(parsed.payload as unknown as GatewayAgentEventPayload);
       return;
     }
 

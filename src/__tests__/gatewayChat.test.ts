@@ -96,7 +96,8 @@ describe("GatewayChatClient", () => {
 
     expect(sentFrames).toEqual([]);
 
-    socket?.emitChallenge();
+    expect(socket).not.toBeNull();
+    socket!.emitChallenge();
     await connectPromise;
 
     expect(sentFrames[0]?.method).toBe("connect");
@@ -104,5 +105,35 @@ describe("GatewayChatClient", () => {
       role: "operator",
       auth: { token: "token-123" },
     });
+  });
+
+  it("sends arbitrary RPC requests after connect", async () => {
+    let socket: MockWebSocket | null = null;
+    const TrackingWebSocket = class extends MockWebSocket {
+      constructor(url: string) {
+        super(url);
+        socket = this;
+      }
+    };
+    vi.stubGlobal("WebSocket", TrackingWebSocket);
+
+    const client = new GatewayChatClient({
+      wsUrl: "ws://127.0.0.1:18789",
+      authToken: "token-123",
+      targetEnvironment: "local",
+      gatewayPort: 18789,
+      tunnelActive: false,
+      openClawVersion: "2.0.0",
+    });
+
+    const connectPromise = client.connect();
+    await Promise.resolve();
+    expect(socket).not.toBeNull();
+    socket!.emitChallenge();
+    await connectPromise;
+
+    await client.rpc("web.login.start", { timeoutMs: 30000, force: true });
+
+    expect(sentFrames.some((frame) => frame.method === "web.login.start")).toBe(true);
   });
 });
