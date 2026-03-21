@@ -634,9 +634,37 @@ pub fn build_unix_terminal_script(
     command: &str,
     marker_path: &str,
 ) -> String {
+    let env_bootstrap = match platform {
+        TerminalPlatform::Macos => concat!(
+            "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; ",
+            "export PATH=\"$PATH:/usr/local/bin:/opt/homebrew/bin\"; ",
+            "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; ",
+            ". \"$HOME/.zprofile\" 2>/dev/null || true; ",
+            ". \"$HOME/.zshrc\" 2>/dev/null || true; ",
+            ". \"$HOME/.profile\" 2>/dev/null || true"
+        ),
+        TerminalPlatform::Linux => concat!(
+            "export PATH=\"$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin\"; ",
+            "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; ",
+            ". \"$HOME/.profile\" 2>/dev/null || true; ",
+            ". \"$HOME/.bash_profile\" 2>/dev/null || true; ",
+            ". \"$HOME/.bashrc\" 2>/dev/null || true; ",
+            ". \"$HOME/.zprofile\" 2>/dev/null || true; ",
+            ". \"$HOME/.zshrc\" 2>/dev/null || true"
+        ),
+        TerminalPlatform::Windows => "",
+    };
+    let bootstrapped_command = match platform {
+        TerminalPlatform::Macos | TerminalPlatform::Linux => format!(
+            "{env_bootstrap}\nif ! command -v openclaw >/dev/null 2>&1; then\n  printf '%s\n' 'OpenClaw CLI not found in launched shell.' >&2\n  exit 127\nfi\n{command}"
+        ),
+        TerminalPlatform::Windows => command.to_string(),
+    };
     let wrapped_command = match platform {
-        TerminalPlatform::Macos => command.to_string(),
-        TerminalPlatform::Linux => format!("/bin/sh -lc {}", shell_single_quote(command)),
+        TerminalPlatform::Macos => bootstrapped_command,
+        TerminalPlatform::Linux => {
+            format!("/bin/sh -lc {}", shell_single_quote(&bootstrapped_command))
+        }
         TerminalPlatform::Windows => command.to_string(),
     };
     let shebang = match platform {
@@ -798,6 +826,12 @@ pub fn wait_for_local_marker(marker_path: &Path, timeout: Duration) -> Result<()
             if exit_code == 0 {
                 return Ok(());
             }
+            if exit_code == 127 {
+                return Err(
+                    "OpenClaw auth exited with status 127. OpenClaw CLI was not found in the launched shell. Make sure your shell startup files add OpenClaw to PATH."
+                        .to_string(),
+                );
+            }
             return Err(format!("OpenClaw auth exited with status {}.", exit_code));
         }
         if started.elapsed() > timeout {
@@ -817,6 +851,12 @@ pub fn wait_for_wsl_marker(marker_path: &str, timeout: Duration) -> Result<(), S
             let _ = shell_command(&format!("rm -f {}", shell_single_quote(marker_path)));
             if exit_code == 0 {
                 return Ok(());
+            }
+            if exit_code == 127 {
+                return Err(
+                    "OpenClaw auth exited with status 127. OpenClaw CLI was not found in the launched shell. Make sure your shell startup files add OpenClaw to PATH."
+                        .to_string(),
+                );
             }
             return Err(format!("OpenClaw auth exited with status {}.", exit_code));
         }
@@ -1085,10 +1125,7 @@ mod tests {
     #[test]
     fn test_build_provider_auth_command_simple() {
         let cmd = build_provider_auth_command("openai", "openai-codex", "openai-codex");
-        assert_eq!(
-            cmd,
-            "openclaw models auth login --provider 'openai-codex'"
-        );
+        assert_eq!(cmd, "openclaw models auth login --provider 'openai-codex'");
     }
 
     #[test]
@@ -1098,6 +1135,31 @@ mod tests {
             cmd,
             "openclaw models auth login --provider 'google-gemini-cli' --method 'gemini-cli'"
         );
+    }
+
+    #[test]
+    fn test_build_unix_terminal_script_bootstraps_local_env_for_linux() {
+        let script = build_unix_terminal_script(
+            TerminalPlatform::Linux,
+            "openclaw models auth login --provider 'openai-codex'",
+            "/tmp/clawnetes-oauth.exit",
+        );
+        assert!(script.contains("export NVM_DIR=\"$HOME/.nvm\""));
+        assert!(script.contains(". \"$HOME/.profile\" 2>/dev/null || true;"));
+        assert!(script.contains("command -v openclaw >/dev/null 2>&1"));
+        assert!(script.contains("OpenClaw CLI not found in launched shell."));
+    }
+
+    #[test]
+    fn test_wait_for_local_marker_returns_specific_missing_cli_error() {
+        let marker_path = std::env::temp_dir().join(format!(
+            "clawnetes-oauth-marker-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::write(&marker_path, "127").expect("write marker");
+        let err = wait_for_local_marker(&marker_path, Duration::from_secs(1)).unwrap_err();
+        assert!(err.contains("OpenClaw auth exited with status 127."));
+        assert!(err.contains("OpenClaw CLI was not found"));
     }
 
     #[test]
@@ -1113,10 +1175,7 @@ mod tests {
             required_plugin_for_oauth_provider_id("google-gemini-cli"),
             Some("google-gemini-cli-auth")
         );
-        assert_eq!(
-            required_plugin_for_oauth_provider_id("openai-codex"),
-            None
-        );
+        assert_eq!(required_plugin_for_oauth_provider_id("openai-codex"), None);
     }
 
     #[test]
@@ -1163,10 +1222,8 @@ mod tests {
 
     #[test]
     fn test_build_effective_models_catalog() {
-        let models = build_effective_models_catalog(
-            "anthropic/claude-3",
-            &["openai/gpt-4".to_string()],
-        );
+        let models =
+            build_effective_models_catalog("anthropic/claude-3", &["openai/gpt-4".to_string()]);
         assert!(models.contains_key("anthropic/claude-3"));
         assert!(models.contains_key("openai/gpt-4"));
     }

@@ -6,6 +6,22 @@ import type { DeferredOAuthItem } from "../../utils/providerAuth";
 import type { GatewayChatBootstrap, RemoteConfig } from "../../types";
 import { GatewayChatClient } from "../../lib/gatewayChat";
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 interface StepCompleteProps {
   handleToggleTunnel: () => void;
   handlePairing: () => void;
@@ -66,11 +82,19 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
     const client = new GatewayChatClient(bootstrap);
 
     try {
-      await client.connect();
-      const startPayload = await client.rpc<{ qrDataUrl?: string }>("web.login.start", {
-        timeoutMs: 30000,
-        force,
-      });
+      await withTimeout(
+        client.connect(),
+        20000,
+        "Timed out connecting to the OpenClaw gateway for WhatsApp pairing.",
+      );
+      const startPayload = await withTimeout(
+        client.rpc<{ qrDataUrl?: string }>("web.login.start", {
+          timeoutMs: 30000,
+          force,
+        }),
+        35000,
+        "Timed out waiting for the gateway to return a WhatsApp QR code.",
+      );
       const qrDataUrl = typeof startPayload?.qrDataUrl === "string" ? startPayload.qrDataUrl : "";
       if (!qrDataUrl) {
         throw new Error("Gateway returned ok but no QR code (already linked?)");
@@ -78,11 +102,19 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
 
       setField("whatsappQrDataUrl", qrDataUrl);
 
-      await client.rpc("web.login.wait", {
-        timeoutMs: 120000,
-      });
+      await withTimeout(
+        client.rpc("web.login.wait", {
+          timeoutMs: 120000,
+        }),
+        130000,
+        "Timed out waiting for WhatsApp pairing to complete.",
+      );
 
-      const linked = await waitForWhatsAppLinkedStatus(remoteArg, 120000);
+      const linked = await withTimeout(
+        waitForWhatsAppLinkedStatus(remoteArg, 120000),
+        125000,
+        "Timed out confirming WhatsApp linked status.",
+      );
       if (!linked) {
         throw new Error("WhatsApp login did not complete before timeout");
       }

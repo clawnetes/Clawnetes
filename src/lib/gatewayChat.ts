@@ -121,6 +121,7 @@ const CAPS = ["tool-events"];
 const CONNECT_FAILED_CLOSE_CODE = 4008;
 const AUTH_TOKEN_MISMATCH = "AUTH_TOKEN_MISMATCH";
 const AUTH_DEVICE_TOKEN_MISMATCH = "AUTH_DEVICE_TOKEN_MISMATCH";
+const CONNECT_TIMEOUT_MS = 15000;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -406,6 +407,12 @@ export class GatewayChatClient {
         return;
       }
 
+      if (this.initialConnectPromise && connectError) {
+        this.emitState("failed", closeError.message);
+        this.rejectConnect(closeError);
+        return;
+      }
+
       this.emitState("reconnecting", closeError.message);
       this.scheduleReconnect();
     });
@@ -524,7 +531,8 @@ export class GatewayChatClient {
       };
     }
 
-    void this.request<GatewayHelloOk>("connect", {
+    void this.withTimeout(
+      this.request<GatewayHelloOk>("connect", {
       minProtocol: 3,
       maxProtocol: 3,
       client: {
@@ -541,7 +549,10 @@ export class GatewayChatClient {
       auth,
       userAgent: navigator.userAgent,
       locale: navigator.language,
-    })
+    }),
+      CONNECT_TIMEOUT_MS,
+      "Timed out connecting to the OpenClaw gateway.",
+    )
       .then((hello) => {
         this.pendingDeviceTokenRetry = false;
         this.deviceTokenRetryBudgetUsed = false;
@@ -630,6 +641,22 @@ export class GatewayChatClient {
     }
 
     return await response;
+  }
+
+  private withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+      promise.then(
+        (value) => {
+          window.clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          window.clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
   }
 
   private handleMessage(raw: string) {

@@ -63,6 +63,7 @@ class MockWebSocket {
 describe("GatewayChatClient", () => {
   beforeEach(() => {
     sentFrames.length = 0;
+    vi.useRealTimers();
     vi.stubGlobal("WebSocket", MockWebSocket);
     vi.stubGlobal("crypto", { randomUUID: () => "uuid-1" });
     vi.stubGlobal("navigator", {
@@ -135,5 +136,69 @@ describe("GatewayChatClient", () => {
     await client.rpc("web.login.start", { timeoutMs: 30000, force: true });
 
     expect(sentFrames.some((frame) => frame.method === "web.login.start")).toBe(true);
+  });
+
+  it("connects even if the gateway never emits a challenge", async () => {
+    vi.useFakeTimers();
+    const NoChallengeWebSocket = class extends MockWebSocket {
+      send(raw: string) {
+        const parsed = JSON.parse(raw);
+        sentFrames.push({ method: parsed.method, params: parsed.params });
+        this.emit("message", {
+          data: JSON.stringify({
+            type: "res",
+            id: parsed.id,
+            ok: true,
+            payload: { protocol: 3, auth: { role: "operator", scopes: ["operator.admin"] } },
+          }),
+        });
+      }
+    };
+    vi.stubGlobal("WebSocket", NoChallengeWebSocket);
+
+    const client = new GatewayChatClient({
+      wsUrl: "ws://127.0.0.1:18789",
+      authToken: "token-123",
+      targetEnvironment: "local",
+      gatewayPort: 18789,
+      tunnelActive: false,
+      openClawVersion: "2.0.0",
+    });
+
+    const connectPromise = client.connect();
+    await vi.advanceTimersByTimeAsync(800);
+    await connectPromise;
+
+    expect(sentFrames[0]?.method).toBe("connect");
+  });
+
+  it("fails connect when the gateway never responds", async () => {
+    vi.useFakeTimers();
+    const HangingWebSocket = class extends MockWebSocket {
+      send(raw: string) {
+        const parsed = JSON.parse(raw);
+        sentFrames.push({ method: parsed.method, params: parsed.params });
+      }
+    };
+    vi.stubGlobal("WebSocket", HangingWebSocket);
+
+    const client = new GatewayChatClient({
+      wsUrl: "ws://127.0.0.1:18789",
+      authToken: "token-123",
+      targetEnvironment: "local",
+      gatewayPort: 18789,
+      tunnelActive: false,
+      openClawVersion: "2.0.0",
+    });
+
+    const connectPromise = client.connect();
+    await Promise.resolve();
+    const settledPromise = connectPromise.then(
+      () => "resolved",
+      (error) => String(error),
+    );
+    await vi.advanceTimersByTimeAsync(16000);
+
+    await expect(settledPromise).resolves.toContain("Timed out connecting to the OpenClaw gateway.");
   });
 });
