@@ -1,14 +1,14 @@
-# Clawnetes Chat UI Cleanup
+# Chat Shell Polish Pass 2
 
 ## Summary
-- Hide non-user-facing system transcript entries in the chat workspace while preserving actionable error feedback.
-- Convert the chat shell to grayscale-only light/dark themes without gradients or raised session controls.
-- Compress the left session list into flat one-line rows and increase the default composer height.
+- Refine dark mode to use layered charcoal greys instead of near-black surfaces.
+- Restyle the chat-shell controls with compact icon+text treatments similar to the reference image.
+- Hide internal startup/bootstrap transcript noise in fresh chats and stabilize scroll behavior so replies no longer make the UI jump.
 
 ## Implementation Changes
-- Update `src/components/chat/ChatShell.tsx` so history normalization drops non-error `system` messages but still allows explicit failure messages added by the shell to render.
-- Simplify the left-pane thread buttons to title-only single-line rows with truncation and existing active-state behavior.
-- Refresh `src/App.css` to use only dark/light grey tokens, remove gradient fills, flatten button treatments, and enlarge the composer textarea.
-- Extend chat-shell tests to cover system-message filtering, visible error handling, and the compact sidebar row behavior.
+- Update `src/components/chat/ChatShell.tsx` with message-visibility helpers that suppress startup instructions, bootstrap file dumps, and JSON `read` `ENOENT` payloads while preserving real assistant/user messages and actionable shell errors.
+- Restyle chat controls in the sidebar, header, empty state, and composer to use flat icon+text actions while keeping the current chat-only scope.
+- Refresh `src/App.css` dark theme surfaces toward charcoal grey, reduce heavy contrast, and tune transcript/composer layout to avoid jumpy reply behavior.
+- Extend `src/__tests__/chatShellMessages.test.tsx` with regression coverage for hidden bootstrap noise, preserved visible errors, and the updated control behavior.
 - Validate with `npm test` and `npm run tauri dev`.
 - If validation succeeds, commit and push the changes.

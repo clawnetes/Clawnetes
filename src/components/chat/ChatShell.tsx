@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import type { GatewayChatBootstrap } from "../../types";
 import {
   extractMessageText,
@@ -61,6 +61,38 @@ function isToolMessage(message: Record<string, unknown>): boolean {
   return false;
 }
 
+function normalizeTranscriptText(text: string) {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function isBootstrapNoiseText(text: string) {
+  const normalized = normalizeTranscriptText(text);
+  if (!normalized) return false;
+
+  return (
+    /A new session was started via \/new or \/reset\./i.test(normalized) ||
+    /Run your Session Startup sequence/i.test(normalized) ||
+    /^Current time:/i.test(normalized) ||
+    /^#\s*(SOUL|USER|MEMORY)\.md\b/i.test(text.trim()) ||
+    (/\"status\"\s*:\s*\"error\"/i.test(text) &&
+      /\"tool\"\s*:\s*\"read\"/i.test(text) &&
+      /ENOENT: no such file or directory/i.test(text)) ||
+    (/ENOENT: no such file or directory/i.test(text) && /(workspace\/memory|MEMORY\.md)/i.test(text))
+  );
+}
+
+function shouldHideTranscriptMessage(message: Record<string, unknown>) {
+  if (isToolMessage(message)) return true;
+
+  const role = message.role === "assistant" || message.role === "system" ? message.role : "user";
+  const text = extractMessageText(message);
+
+  if (!text || role === "system") return true;
+  if (isBootstrapNoiseText(text)) return true;
+
+  return false;
+}
+
 function toChatMessages(rawMessages: unknown[] | undefined): ChatMessage[] {
   if (!Array.isArray(rawMessages)) return [];
   return rawMessages
@@ -68,11 +100,10 @@ function toChatMessages(rawMessages: unknown[] | undefined): ChatMessage[] {
       if (typeof item !== "object" || item === null) return null;
       const message = item as Record<string, unknown>;
 
-      if (isToolMessage(message)) return null;
+      if (shouldHideTranscriptMessage(message)) return null;
 
       const role = message.role === "assistant" || message.role === "system" ? message.role : "user";
       const text = extractMessageText(message);
-      if (!text || role === "system") return null;
       return {
         id: `${String(message.timestamp || index)}-${role}`,
         role,
@@ -166,13 +197,135 @@ function readPrefersDark() {
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
+function isNearBottom(element: HTMLDivElement, threshold = 96) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
+}
+
+function ChatIcon({ name }: { name: string }) {
+  switch (name) {
+    case "plus":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 16 16">
+          <path d="M8 3v10" />
+          <path d="M3 8h10" />
+        </svg>
+      );
+    case "sliders":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 16 16">
+          <path d="M3 4h10" />
+          <path d="M5 8h8" />
+          <path d="M3 12h10" />
+          <circle cx="6" cy="4" r="1.25" />
+          <circle cx="10" cy="8" r="1.25" />
+          <circle cx="8" cy="12" r="1.25" />
+        </svg>
+      );
+    case "reset":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 16 16">
+          <path d="M3.5 8a4.5 4.5 0 1 0 1.3-3.2" />
+          <path d="M3.5 4.5v3h3" />
+        </svg>
+      );
+    case "reconnect":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 16 16">
+          <path d="M13 5.5V3h-2.5" />
+          <path d="M3 10.5V13h2.5" />
+          <path d="M12.2 7A4.5 4.5 0 0 0 4 5.4" />
+          <path d="M3.8 9A4.5 4.5 0 0 0 12 10.6" />
+        </svg>
+      );
+    case "sun":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="2.5" />
+          <path d="M8 1.75v1.5" />
+          <path d="M8 12.75v1.5" />
+          <path d="M1.75 8h1.5" />
+          <path d="M12.75 8h1.5" />
+          <path d="M3.35 3.35l1.05 1.05" />
+          <path d="M11.6 11.6l1.05 1.05" />
+          <path d="M12.65 3.35L11.6 4.4" />
+          <path d="M4.4 11.6l-1.05 1.05" />
+        </svg>
+      );
+    case "moon":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 16 16">
+          <path d="M10.8 2.2A5.8 5.8 0 1 0 13.8 11 5.2 5.2 0 0 1 10.8 2.2Z" />
+        </svg>
+      );
+    case "system":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 16 16">
+          <rect x="2.5" y="3" width="11" height="8" rx="1.5" />
+          <path d="M6 13h4" />
+          <path d="M8 11v2" />
+        </svg>
+      );
+    case "spark":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 16 16">
+          <path d="M8 2.2 9.5 6.5 13.8 8 9.5 9.5 8 13.8 6.5 9.5 2.2 8 6.5 6.5Z" />
+        </svg>
+      );
+    case "note":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 16 16">
+          <path d="M3 3.5h10" />
+          <path d="M3 7.5h10" />
+          <path d="M3 11.5h7" />
+        </svg>
+      );
+    case "plan":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 16 16">
+          <path d="M3 4.5h10" />
+          <path d="M3 8h10" />
+          <path d="M3 11.5h6.5" />
+          <circle cx="11.75" cy="11.5" r="1.25" />
+        </svg>
+      );
+    case "chat":
+    default:
+      return (
+        <svg aria-hidden="true" viewBox="0 0 16 16">
+          <path d="M3 4.5A1.5 1.5 0 0 1 4.5 3h7A1.5 1.5 0 0 1 13 4.5v4A1.5 1.5 0 0 1 11.5 10h-4l-2.75 2v-2H4.5A1.5 1.5 0 0 1 3 8.5Z" />
+        </svg>
+      );
+  }
+}
+
+function ChatActionButton({
+  icon,
+  label,
+  className,
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  icon: ReactNode;
+  label: string;
+}) {
+  return (
+    <button className={`chat-action-button ${className || ""}`.trim()} {...props}>
+      <span className="chat-button-icon">{icon}</span>
+      <span className="chat-button-label">{children || label}</span>
+    </button>
+  );
+}
+
 function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection, onOpenConfigure }: ChatShellProps) {
   const clientRef = useRef<GatewayChatClient | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
   const activeAgentIdRef = useRef("");
   const activeSessionKeyRef = useRef("");
   const activeThreadIdRef = useRef("");
   const threadsRef = useRef<StoredChatThread[]>([]);
+  const shouldAutoScrollRef = useRef(true);
+  const pendingScrollBehaviorRef = useRef<ScrollBehavior | null>("auto");
+  const previousMessageCountRef = useRef(0);
 
   const [connectionLabel, setConnectionLabel] = useState("Connecting to gateway...");
   const [connectionState, setConnectionState] = useState<GatewayConnectState["status"]>("connecting");
@@ -198,7 +351,41 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   const activeThreadIsArchived = activeThread?.status === "archived";
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+
+    const updatePosition = () => {
+      shouldAutoScrollRef.current = isNearBottom(transcript);
+    };
+
+    updatePosition();
+    transcript.addEventListener("scroll", updatePosition);
+    return () => transcript.removeEventListener("scroll", updatePosition);
+  }, [bootstrap]);
+
+  useEffect(() => {
+    const transcript = transcriptRef.current;
+    if (!transcript) {
+      previousMessageCountRef.current = messages.length;
+      pendingScrollBehaviorRef.current = null;
+      return;
+    }
+
+    const shouldScroll =
+      pendingScrollBehaviorRef.current !== null &&
+      (shouldAutoScrollRef.current || messages.length > previousMessageCountRef.current);
+
+    if (shouldScroll) {
+      if (typeof transcript.scrollTo === "function") {
+        transcript.scrollTo({ top: transcript.scrollHeight, behavior: pendingScrollBehaviorRef.current });
+      } else {
+        transcript.scrollTop = transcript.scrollHeight;
+      }
+      shouldAutoScrollRef.current = true;
+    }
+
+    previousMessageCountRef.current = messages.length;
+    pendingScrollBehaviorRef.current = null;
   }, [messages]);
 
   useEffect(() => {
@@ -463,6 +650,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
       return;
     }
 
+    pendingScrollBehaviorRef.current = "auto";
     setMessages(
       selectedThread.messages.map((message) => ({
         ...message,
@@ -476,6 +664,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     try {
       const payload = await client.loadHistory(sessionKey);
       const nextMessages = toChatMessages(payload.messages);
+      pendingScrollBehaviorRef.current = "auto";
       setMessages(nextMessages);
       updateThreads((current) =>
         current.map((thread) =>
@@ -496,6 +685,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
       const message = error instanceof Error ? error.message : String(error);
       const missingSession = /not found|unknown session|key required/i.test(message);
       if (missingSession) {
+        pendingScrollBehaviorRef.current = "auto";
         setMessages([]);
         updateThreads((current) =>
           current.map((thread) =>
@@ -522,6 +712,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     if (!event.sessionKey || event.sessionKey !== activeSessionKeyRef.current) return;
 
     if (event.errorMessage) {
+      pendingScrollBehaviorRef.current = "smooth";
       setMessages((current) => [
         ...current,
         { id: `error-${Date.now()}`, role: "system", text: event.errorMessage || "Gateway error.", error: true },
@@ -555,6 +746,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
           index === existingIndex ? { ...message, text: `${message.text}${delta}`, pending: true } : message,
         );
       }
+      pendingScrollBehaviorRef.current = "smooth";
       return [
         ...current,
         { id: `assistant-${event.runId}`, role: "assistant", text: delta, runId: event.runId, pending: true },
@@ -579,6 +771,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     setShellError("");
 
     if (thread.status === "archived") {
+      pendingScrollBehaviorRef.current = "auto";
       setMessages(
         thread.messages.map((message) => ({
           ...message,
@@ -620,6 +813,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     );
 
     setActiveThreadId(freshThread.id);
+    pendingScrollBehaviorRef.current = "auto";
     setMessages([]);
     setShellError("");
     setSending(true);
@@ -643,6 +837,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
 
     setComposerValue("");
     setSending(true);
+    pendingScrollBehaviorRef.current = "smooth";
     setMessages((current) => [
       ...current,
       { id: `user-${Date.now()}`, role: "user", text, timestamp: Date.now() },
@@ -651,12 +846,14 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     try {
       const result = await clientRef.current.sendChat(activeSessionKey, text);
       setActiveRunId(result.runId);
+      pendingScrollBehaviorRef.current = "smooth";
       setMessages((current) => [
         ...current,
         { id: `assistant-${result.runId}`, role: "assistant", text: "", runId: result.runId, pending: true },
       ]);
     } catch (error) {
       setSending(false);
+      pendingScrollBehaviorRef.current = "smooth";
       setMessages((current) => [
         ...current,
         { id: `error-${Date.now()}`, role: "system", text: String(error), error: true },
@@ -676,6 +873,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
 
   async function handleResetChat() {
     if (!clientRef.current || !activeSessionKey || connectionState !== "connected" || activeThreadIsArchived) return;
+    pendingScrollBehaviorRef.current = "auto";
     setMessages([]);
     setSending(true);
     setShellError("");
@@ -725,7 +923,8 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
             disabled={!canCreateChat}
             onClick={() => void handleNewChat()}
           >
-            New chat
+            <span className="chat-button-icon"><ChatIcon name="plus" /></span>
+            <span className="chat-button-label">New chat</span>
           </button>
         </div>
 
@@ -744,6 +943,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                   onClick={() => void handleThreadSwitch(thread.id)}
                   data-testid={`chat-thread-${thread.id}`}
                 >
+                  <span className="chat-list-item-icon"><ChatIcon name="chat" /></span>
                   <strong title={thread.title}>{thread.title}</strong>
                 </button>
               ))
@@ -765,6 +965,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                   className={`chat-list-item archived ${activeThreadId === thread.id ? "active" : ""}`}
                   onClick={() => void handleThreadSwitch(thread.id)}
                 >
+                  <span className="chat-list-item-icon"><ChatIcon name="note" /></span>
                   <strong title={thread.title}>{thread.title}</strong>
                 </button>
               ))
@@ -781,11 +982,21 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                 onClick={() => setThemePreference(theme)}
                 type="button"
               >
-                {theme}
+                <span className="chat-button-icon">
+                  <ChatIcon name={theme === "light" ? "sun" : theme === "dark" ? "moon" : "system"} />
+                </span>
+                <span className="chat-button-label">{theme}</span>
               </button>
             ))}
           </div>
-          <button className="secondary" onClick={onOpenConfigure}>Configure</button>
+          <ChatActionButton
+            className="secondary"
+            data-testid="chat-configure"
+            icon={<ChatIcon name="sliders" />}
+            label="Configure"
+            onClick={onOpenConfigure}
+            type="button"
+          />
           <div className="chat-sidebar-status">{connectionLabel}</div>
         </div>
       </aside>
@@ -816,10 +1027,23 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
             </span>
           </div>
           <div className="chat-main-actions">
-            <button className="secondary" disabled={!chatReady || !activeSessionKey || activeThreadIsArchived} onClick={() => void handleResetChat()}>
-              Reset
-            </button>
-            <button className="secondary" data-testid="chat-reconnect" onClick={onRetryConnection}>Reconnect</button>
+            <ChatActionButton
+              className="secondary"
+              data-testid="chat-reset"
+              disabled={!chatReady || !activeSessionKey || activeThreadIsArchived}
+              icon={<ChatIcon name="reset" />}
+              label="Reset"
+              onClick={() => void handleResetChat()}
+              type="button"
+            />
+            <ChatActionButton
+              className="secondary"
+              data-testid="chat-reconnect"
+              icon={<ChatIcon name="reconnect" />}
+              label="Reconnect"
+              onClick={onRetryConnection}
+              type="button"
+            />
           </div>
         </header>
 
@@ -834,6 +1058,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
         {bootstrap && (
           <>
             <div className="chat-transcript">
+              <div ref={transcriptRef} className="chat-transcript-scroll">
               {showConnectingState ? (
                 <div className="chat-state-card" data-testid="chat-connecting-state">
                   <h3>Connecting to OpenClaw</h3>
@@ -865,15 +1090,24 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                   </p>
                   {!activeThreadIsArchived && (
                     <div className="chat-suggestion-grid">
-                      <button type="button" onClick={() => setComposerValue("Build a release checklist for this repo.")}>
-                        Build a release checklist
-                      </button>
-                      <button type="button" onClick={() => setComposerValue("Summarize the current OpenClaw chat architecture.")}>
-                        Summarize this workspace
-                      </button>
-                      <button type="button" onClick={() => setComposerValue("Draft an implementation plan for the next bugfix.")}>
-                        Create a plan
-                      </button>
+                      <ChatActionButton
+                        icon={<ChatIcon name="spark" />}
+                        label="Build a release checklist"
+                        onClick={() => setComposerValue("Build a release checklist for this repo.")}
+                        type="button"
+                      />
+                      <ChatActionButton
+                        icon={<ChatIcon name="note" />}
+                        label="Summarize this workspace"
+                        onClick={() => setComposerValue("Summarize the current OpenClaw chat architecture.")}
+                        type="button"
+                      />
+                      <ChatActionButton
+                        icon={<ChatIcon name="plan" />}
+                        label="Create a plan"
+                        onClick={() => setComposerValue("Draft an implementation plan for the next bugfix.")}
+                        type="button"
+                      />
                     </div>
                   )}
                 </div>
@@ -892,7 +1126,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                   </article>
                 ))
               )}
-              <div ref={messagesEndRef} />
+              </div>
             </div>
 
             <div className="chat-composer">

@@ -1,11 +1,17 @@
 # Progress
 
-- [x] Inspect the current chat shell behavior, styling, and tests for transcript/session/composer handling.
-- [x] Update the on-disk implementation plan and progress tracker for this UI cleanup pass.
-- [x] Hide non-error system transcript messages in the chat shell.
-- [x] Convert the chat workspace palette and controls to grayscale-only flat styling.
-- [x] Compress session rows and expand the composer textarea height.
-- [x] Add regression coverage for filtered system messages, preserved errors, and compact sidebar rows.
+- [x] Inspect the current chat shell styling, transcript filtering, and scroll behavior.
+- [x] Update the on-disk implementation plan and progress tracker for this polish pass.
+- [ ] Refine dark mode surfaces to layered dark greys.
+- [ ] Replace chat-shell buttons/controls with flat icon+text treatments.
+- [ ] Hide fresh-chat bootstrap/startup transcript noise while preserving visible errors.
+- [ ] Stabilize transcript scrolling so replies no longer jump the UI.
+- [ ] Add regression coverage for bootstrap filtering and control/scroll behavior.
+- [x] Refine dark mode surfaces to layered dark greys.
+- [x] Replace chat-shell buttons/controls with flat icon+text treatments.
+- [x] Hide fresh-chat bootstrap/startup transcript noise while preserving visible errors.
+- [x] Stabilize transcript scrolling so replies no longer jump the UI.
+- [x] Add regression coverage for bootstrap filtering and control/scroll behavior.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
 - [ ] Commit and push changes if validation succeeds.

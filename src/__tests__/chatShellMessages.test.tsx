@@ -289,6 +289,10 @@ describe("ChatShell message display", () => {
       configurable: true,
       value: vi.fn(),
     });
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+      configurable: true,
+      value: vi.fn(),
+    });
     Object.defineProperty(globalThis, "localStorage", {
       configurable: true,
       value: window.localStorage,
@@ -353,6 +357,52 @@ describe("ChatShell message display", () => {
     expect(screen.queryByText("Internal system notice")).not.toBeInTheDocument();
   });
 
+  it("hides fresh-chat bootstrap noise from loaded history", async () => {
+    const { WebSocket } = createMockWebSocket({
+      historyMessages: [
+        {
+          role: "user",
+          content: [{ type: "input_text", text: "A new session was started via /new or /reset. Run your Session Startup sequence - read the required files before responding to the user." }],
+          timestamp: 1,
+        },
+        {
+          role: "user",
+          content: [{ type: "input_text", text: "Current time: Saturday, March 21st, 2026 — 8:09 AM (Europe/London) / 2026-03-21 08:09 UTC" }],
+          timestamp: 2,
+        },
+        {
+          role: "user",
+          content: [{ type: "input_text", text: "# SOUL.md\n## Mission\nServe Mulu." }],
+          timestamp: 3,
+        },
+        {
+          role: "user",
+          content: [{ type: "input_text", text: "# USER.md - About Your Human\n- **Name:** Mulu" }],
+          timestamp: 4,
+        },
+        {
+          role: "user",
+          content: [{ type: "input_text", text: "{\"status\":\"error\",\"tool\":\"read\",\"error\":\"ENOENT: no such file or directory, access '/Users/mulugeta/.openclaw/workspace/MEMORY.md'\"}" }],
+          timestamp: 5,
+        },
+        { role: "assistant", content: [{ type: "text", text: "Fresh start." }], timestamp: 6 },
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Fresh start.").length).toBeGreaterThan(0);
+    });
+
+    expect(screen.queryByText(/A new session was started via \/new or \/reset/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Current time:/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/SOUL\.md/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/USER\.md/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ENOENT: no such file or directory/i)).not.toBeInTheDocument();
+  });
+
   it("shows send failures as visible system errors", async () => {
     const { WebSocket } = createMockWebSocket({ sendErrorMessage: "Request failed." });
     vi.stubGlobal("WebSocket", WebSocket);
@@ -391,6 +441,10 @@ describe("ChatShell fresh chat flow", () => {
       })),
     );
     Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", {
       configurable: true,
       value: vi.fn(),
     });
@@ -478,5 +532,21 @@ describe("ChatShell fresh chat flow", () => {
       .filter((button) => typeof button.className === "string" && button.className.includes("chat-list-item"));
     expect(threadButtons.length).toBeGreaterThan(0);
     expect(threadButtons.some((button) => button.textContent?.includes("Fresh conversation"))).toBe(false);
+  });
+
+  it("renders chat controls with visible icons", async () => {
+    const { WebSocket } = createMockWebSocket();
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("chat-new-session").querySelector("svg")).not.toBeNull();
+    expect(screen.getByTestId("chat-configure").querySelector("svg")).not.toBeNull();
+    expect(screen.getByTestId("chat-reset").querySelector("svg")).not.toBeNull();
+    expect(screen.getByTestId("chat-reconnect").querySelector("svg")).not.toBeNull();
   });
 });
