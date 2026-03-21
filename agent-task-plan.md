@@ -1,14 +1,14 @@
-# Themed Title Bar For Chat Shell
+# Clawnetes Chat UI Cleanup
 
 ## Summary
-- Replace the native white window chrome with a custom title bar that matches the selected app theme.
-- Keep the title bar consistent across loading, setup, and chat states instead of styling only one screen.
-- Preserve draggable window behavior and basic window controls inside the custom chrome.
+- Hide non-user-facing system transcript entries in the chat workspace while preserving actionable error feedback.
+- Convert the chat shell to grayscale-only light/dark themes without gradients or raised session controls.
+- Compress the left session list into flat one-line rows and increase the default composer height.
 
 ## Implementation Changes
-- Update the Tauri window configuration to disable the native decorated title bar and allow a frontend-owned title bar.
-- Add a top-level title-bar component in the app shell with theme-aware styling, draggable behavior, and minimize/maximize/close actions.
-- Apply the saved/resolved theme at the app level so the custom title bar and the rest of the UI share the same theme state.
-- Extend app/chat tests to cover title-bar rendering and theme synchronization.
+- Update `src/components/chat/ChatShell.tsx` so history normalization drops non-error `system` messages but still allows explicit failure messages added by the shell to render.
+- Simplify the left-pane thread buttons to title-only single-line rows with truncation and existing active-state behavior.
+- Refresh `src/App.css` to use only dark/light grey tokens, remove gradient fills, flatten button treatments, and enlarge the composer textarea.
+- Extend chat-shell tests to cover system-message filtering, visible error handling, and the compact sidebar row behavior.
 - Validate with `npm test` and `npm run tauri dev`.
 - If validation succeeds, commit and push the changes.
