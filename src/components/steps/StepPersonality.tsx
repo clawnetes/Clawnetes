@@ -78,30 +78,35 @@ export default function StepPersonality({ handleSaveWorkspace }: StepPersonality
           <textarea className="markdown-editor" rows={12} value={identityMd}
             onChange={e => setField("identityMd", e.target.value)}
             placeholder={`# IDENTITY.md - Who Am I?\n- **Name:** ${agentName}\n- **Emoji:** ${agentEmoji}\n\nAdd more details about your agent's identity...`}
+            autoComplete="off"
           />
         )}
         {activeWorkspaceTab === "user" && (
           <textarea className="markdown-editor" rows={12} value={userMd}
             onChange={e => setField("userMd", e.target.value)}
             placeholder={`# USER.md - About Your Human\n- **Name:** ${userName}\n\nAdd more details about yourself...`}
+            autoComplete="off"
           />
         )}
         {activeWorkspaceTab === "soul" && (
           <textarea className="markdown-editor" rows={12} value={soulMd}
             onChange={e => setField("soulMd", e.target.value)}
             placeholder={`# SOUL.md\n## Mission\nServe ${userName}.\n\nAdd your agent's mission statement and guiding principles...`}
+            autoComplete="off"
           />
         )}
         {activeWorkspaceTab === "tools" && (
           <textarea className="markdown-editor" rows={12} value={toolsMd}
             onChange={e => setField("toolsMd", e.target.value)}
             placeholder={`# TOOLS.md\nDefine tool usage policies and instructions for your agent...`}
+            autoComplete="off"
           />
         )}
         {activeWorkspaceTab === "agents" && (
           <textarea className="markdown-editor" rows={12} value={agentsMd}
             onChange={e => setField("agentsMd", e.target.value)}
             placeholder={`# AGENTS.md\nDefine agent routing and sub-agent configuration...`}
+            autoComplete="off"
           />
         )}
       </div>

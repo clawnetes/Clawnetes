@@ -182,6 +182,7 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
                   value={pairingInput}
                   onChange={(e) => setField("pairingInput", e.target.value.toUpperCase())}
                   style={{ textAlign: "center", letterSpacing: "2px", fontWeight: "bold" }}
+                  autoComplete="off"
                 />
                 <button className="primary" style={{ width: "100%", marginTop: "1rem" }} onClick={handlePairing} disabled={!pairingInput || pairingStatus === "Verifying..."}>
                   {pairingStatus === "Verifying..." ? "Verifying..." : "Pair Agent"}
@@ -212,6 +213,7 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
                   value={whatsappPhoneNumber}
                   onChange={(e) => setField("whatsappPhoneNumber", e.target.value)}
                   style={{ marginBottom: "0.75rem" }}
+                  autoComplete="off"
                 />
                 <p className="input-hint">Include country code, e.g. +1234567890.</p>
                 <button

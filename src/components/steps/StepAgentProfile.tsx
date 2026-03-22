@@ -15,7 +15,7 @@ export default function StepAgentProfile() {
       <p className="step-description">Give your agent a name and a personality.</p>
       <div className="form-group">
         <label>Agent Name</label>
-        <input autoFocus placeholder="e.g. Jeeves" data-testid="input-agent-name" value={agentName} onChange={(e) => {
+        <input autoFocus placeholder="e.g. Jeeves" data-testid="input-agent-name" autoComplete="off" value={agentName} onChange={(e) => {
           const val = e.target.value;
           setField("agentName", val);
           if (identityMd) {

@@ -53,6 +53,7 @@ export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemo
               placeholder="192.168.1.100"
               value={remoteIp}
               onChange={(e) => setField("remoteIp", e.target.value)}
+              autoComplete="off"
             />
           </div>
           <div className="form-group">
@@ -65,6 +66,7 @@ export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemo
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck="false"
+              autoComplete="off"
             />
           </div>
           <div className="form-group">
@@ -76,6 +78,7 @@ export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemo
                 value={remotePrivateKeyPath}
                 onChange={(e) => setField("remotePrivateKeyPath", e.target.value)}
                 style={{ flex: 1 }}
+                autoComplete="off"
               />
               <button
                 className="secondary"
@@ -104,6 +107,7 @@ export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemo
               placeholder="Password"
               value={remotePassword}
               onChange={(e) => setField("remotePassword", e.target.value)}
+              autoComplete="off"
             />
           </div>
 

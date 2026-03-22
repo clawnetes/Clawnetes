@@ -65,14 +65,14 @@ export default function StepConnectBrain({ renderProviderAuthEditor, getProvider
       {provider === "lmstudio" && (
         <div className="form-group" style={{ marginTop: "1.5rem" }}>
           <label>LM Studio Base URL</label>
-          <input type="text" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} placeholder="http://localhost:1234" />
+          <input type="text" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} placeholder="http://localhost:1234" autoComplete="off" />
         </div>
       )}
 
       {provider === "local" && (
         <div className="form-group" style={{ marginTop: "1.5rem" }}>
           <label>Local Endpoint Base URL</label>
-          <input type="text" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} placeholder="http://localhost:8080" />
+          <input type="text" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} placeholder="http://localhost:8080" autoComplete="off" />
         </div>
       )}
 
@@ -156,6 +156,7 @@ export default function StepConnectBrain({ renderProviderAuthEditor, getProvider
               type="text"
               placeholder={`Or type model name manually (e.g. ${provider === "ollama" ? "llama3.2" : "your-model-id"})`}
               style={{ fontSize: "0.85rem" }}
+              autoComplete="off"
               onBlur={(e) => {
                 const val = e.target.value.trim();
                 if (val) setField("model", provider === "lmstudio" ? val : `${provider}/${val}`);

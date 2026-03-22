@@ -43,6 +43,7 @@ export default function StepServiceKeys() {
             placeholder={currentService.placeholder}
             value={serviceKeys[currentService.id] || ""}
             onChange={(e) => setField("serviceKeys", { ...serviceKeys, [currentService.id]: e.target.value })}
+            autoComplete="off"
           />
         </div>
       )}

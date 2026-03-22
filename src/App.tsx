@@ -29,6 +29,12 @@ import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, G
 import { useWizardState, fieldSetter } from "./hooks/useWizardState";
 import { WizardContext } from "./context/WizardContext";
 import { clearAllChatShellStorage } from "./lib/chatShellStorage";
+import {
+  loadEnvironments,
+  upsertEnvironment,
+  setActiveEnvironmentId,
+  type StoredEnvironment,
+} from "./lib/environmentStorage";
 import { saveLastRemoteConnection } from "./lib/remoteConnectionStorage";
 import StepWelcome from "./components/steps/StepWelcome";
 import StepSecurity from "./components/steps/StepSecurity";
@@ -66,6 +72,11 @@ function App() {
   const [chatBootstrap, setChatBootstrap] = useState<GatewayChatBootstrap | null>(null);
   const [chatBootstrapping, setChatBootstrapping] = useState(false);
   const [chatBootstrapError, setChatBootstrapError] = useState("");
+  const [storedEnvironments, setStoredEnvironments] = useState<StoredEnvironment[]>([]);
+  const [pendingEnvSwitch, setPendingEnvSwitch] = useState<StoredEnvironment | null>(null);
+  const [envSwitchPassword, setEnvSwitchPassword] = useState("");
+  const [envSwitchKeyPath, setEnvSwitchKeyPath] = useState("");
+  const [addingEnvFromChat, setAddingEnvFromChat] = useState(false);
 
   // Destructure state for backwards-compatible access throughout the component
   const {
@@ -326,15 +337,73 @@ function App() {
       });
       setChatBootstrap(bootstrap);
       setAppScreen("chat");
+      // Save this environment to the registry
+      const saved = upsertEnvironment({
+        type: targetEnvironment as "local" | "cloud",
+        remoteIp: targetEnvironment === "cloud" ? remoteIp : undefined,
+        remoteUser: targetEnvironment === "cloud" ? remoteUser : undefined,
+      });
+      setActiveEnvironmentId(saved.id);
+      setStoredEnvironments(loadEnvironments());
     } catch (error) {
       setChatBootstrap(null);
       setChatBootstrapError(String(error));
     } finally {
       setChatBootstrapping(false);
     }
-  }, [buildActiveRemoteConfig, gatewayPort]);
+  }, [buildActiveRemoteConfig, gatewayPort, targetEnvironment, remoteIp, remoteUser]);
 
-  useEffect(() => { void checkSystem(true, false); }, []);
+  useEffect(() => { void checkSystem(true, false); setStoredEnvironments(loadEnvironments()); }, []);
+
+  const handleSwitchEnvironment = useCallback((envId: string) => {
+    const envs = loadEnvironments();
+    const env = envs.find((e) => e.id === envId);
+    if (!env) return;
+
+    if (env.type === "cloud") {
+      setPendingEnvSwitch(env);
+      setEnvSwitchPassword("");
+      setEnvSwitchKeyPath("");
+      return;
+    }
+
+    // Local — switch immediately
+    setTargetEnvironment("local");
+    setRemoteIp("");
+    setRemoteUser("");
+    setRemotePassword("");
+    setRemotePrivateKeyPath("");
+    setChatBootstrap(null);
+  }, [setTargetEnvironment, setRemoteIp, setRemoteUser, setRemotePassword, setRemotePrivateKeyPath]);
+
+  const confirmEnvSwitch = useCallback(() => {
+    if (!pendingEnvSwitch) return;
+    setTargetEnvironment("cloud");
+    setRemoteIp(pendingEnvSwitch.remoteIp || "");
+    setRemoteUser(pendingEnvSwitch.remoteUser || "");
+    setRemotePassword(envSwitchPassword);
+    setRemotePrivateKeyPath(envSwitchKeyPath);
+    setPendingEnvSwitch(null);
+    setChatBootstrap(null);
+  }, [pendingEnvSwitch, envSwitchPassword, envSwitchKeyPath, setTargetEnvironment, setRemoteIp, setRemoteUser, setRemotePassword, setRemotePrivateKeyPath]);
+
+  const handleAddEnvironment = useCallback(() => {
+    setTargetEnvironment("cloud");
+    setRemoteIp("");
+    setRemoteUser("");
+    setRemotePassword("");
+    setRemotePrivateKeyPath("");
+    setSshStatus("idle");
+    setSshError("");
+    setStep(1);
+    setAddingEnvFromChat(true);
+    setAppScreen("setup");
+  }, [setTargetEnvironment, setRemoteIp, setRemoteUser, setRemotePassword, setRemotePrivateKeyPath, setSshStatus, setSshError, setStep]);
+
+  const handleBackToChat = useCallback(() => {
+    setAddingEnvFromChat(false);
+    setAppScreen("chat");
+  }, []);
 
   useEffect(() => {
     if (appScreen !== "chat") return;
@@ -1572,7 +1641,77 @@ Managed by Clawnetes.`,
               void bootstrapGatewayChat();
             }}
             onOpenConfigure={openCommandCenter}
+            environments={storedEnvironments}
+            activeEnvironmentId={chatBootstrap ? storedEnvironments.find(
+              (e) => e.type === (chatBootstrap.targetEnvironment as "local" | "cloud")
+                && (chatBootstrap.targetEnvironment === "local" || (e.remoteIp === remoteIp && e.remoteUser === remoteUser))
+            )?.id || null : null}
+            onSwitchEnvironment={handleSwitchEnvironment}
+            onAddEnvironment={handleAddEnvironment}
           />
+          {pendingEnvSwitch && (
+            <div style={{
+              position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
+              background: "rgba(0,0,0,0.5)", zIndex: 1000,
+            }}>
+              <div style={{
+                background: "var(--surface-0)", border: "1px solid var(--border)", borderRadius: "16px",
+                padding: "2rem", width: "min(400px, 90vw)",
+              }}>
+                <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Connect to {pendingEnvSwitch.name}</h3>
+                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1.5rem" }}>
+                  Enter credentials to reconnect to this environment.
+                </p>
+                <div className="form-group">
+                  <label>SSH Password (if not using key)</label>
+                  <input
+                    type="password"
+                    placeholder="Password"
+                    value={envSwitchPassword}
+                    onChange={(e) => setEnvSwitchPassword(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="form-group" style={{ marginTop: "1rem" }}>
+                  <label>SSH Private Key (Optional)</label>
+                  <div style={{ display: "flex", gap: "0.5rem" }}>
+                    <input
+                      placeholder="/Users/you/.ssh/id_rsa"
+                      value={envSwitchKeyPath}
+                      onChange={(e) => setEnvSwitchKeyPath(e.target.value)}
+                      style={{ flex: 1 }}
+                      autoComplete="off"
+                    />
+                    <button
+                      className="secondary"
+                      onClick={async () => {
+                        const path = await openDialog({
+                          title: "Select SSH Private Key",
+                          directory: false,
+                          multiple: false,
+                          defaultPath: "~/.ssh",
+                        });
+                        if (path && typeof path === "string") {
+                          setEnvSwitchKeyPath(path);
+                        }
+                      }}
+                    >
+                      Browse
+                    </button>
+                  </div>
+                  <p className="input-hint">Leave empty to use default keys or SSH agent</p>
+                </div>
+                <div style={{ display: "flex", gap: "0.75rem", marginTop: "1.5rem" }}>
+                  <button className="primary" onClick={confirmEnvSwitch} style={{ flex: 1 }}>
+                    Connect
+                  </button>
+                  <button className="secondary" onClick={() => setPendingEnvSwitch(null)} style={{ flex: 1 }}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       ) : appScreen === "command-center" ? (
         <ConfigureDrawer
@@ -1591,6 +1730,18 @@ Managed by Clawnetes.`,
       ) : (
         <>
           <div className="top-bar">
+            {addingEnvFromChat && (
+              <button
+                className="secondary"
+                onClick={handleBackToChat}
+                style={{ position: "absolute", left: "0.75rem", display: "inline-flex", alignItems: "center", gap: "0.35rem", fontSize: "0.82rem", padding: "0.3rem 0.6rem" }}
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="11" y1="7" x2="3" y2="7" /><polyline points="6,4 3,7 6,10" />
+                </svg>
+                Back to chat
+              </button>
+            )}
             <span className="top-bar-title">Clawnetes</span>
           </div>
           <div className="step-progress">
@@ -1633,6 +1784,7 @@ Managed by Clawnetes.`,
                 onChange={(e) => setLicenseKey(e.target.value)}
                 placeholder="XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX"
                 autoFocus
+                autoComplete="off"
               />
             </div>
 

@@ -14,7 +14,7 @@ export default function StepGateway() {
       <p className="step-description">Configure the network bridge for your agent.</p>
       <div className="form-group">
         <label>Port</label>
-        <input type="number" value={gatewayPort} onChange={(e) => setField("gatewayPort", parseInt(e.target.value))} />
+        <input type="number" value={gatewayPort} onChange={(e) => setField("gatewayPort", parseInt(e.target.value))} autoComplete="off" />
       </div>
       <div className="form-group">
         <label>Bind Address</label>

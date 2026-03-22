@@ -37,7 +37,7 @@ function StepChannels({ handleAdvancedTransition }: StepChannelsProps) {
       {messagingChannel === "telegram" && (
         <div className="form-group" style={{ marginTop: "1rem" }}>
           <label>Telegram Bot Token</label>
-          <input type="password" data-testid="input-telegram-token" placeholder="123456:ABC-..." value={telegramToken} onChange={(e) => setField("telegramToken", e.target.value)} />
+          <input type="password" data-testid="input-telegram-token" placeholder="123456:ABC-..." value={telegramToken} onChange={(e) => setField("telegramToken", e.target.value)} autoComplete="off" />
           <p className="input-hint">Get one from @BotFather on Telegram.</p>
         </div>
       )}
@@ -68,6 +68,7 @@ function StepChannels({ handleAdvancedTransition }: StepChannelsProps) {
                 placeholder="+1234567890"
                 value={whatsappPhoneNumber}
                 onChange={(e) => setField("whatsappPhoneNumber", e.target.value)}
+                autoComplete="off"
               />
               <p className="input-hint">The phone number you will use to message the bot. Include country code.</p>
             </div>

@@ -71,13 +71,13 @@ function StepModels({ renderProviderAuthEditor, getProviderDefaultModel, getProv
         {provider === "lmstudio" && (
           <div style={{ marginTop: "0.75rem" }}>
             <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>LM Studio Base URL</label>
-            <input type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} />
+            <input type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} autoComplete="off" />
           </div>
         )}
         {provider === "local" && (
           <div style={{ marginTop: "0.75rem" }}>
             <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Custom Base URL</label>
-            <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} />
+            <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} autoComplete="off" />
           </div>
         )}
       </div>
@@ -277,13 +277,13 @@ function StepModels({ renderProviderAuthEditor, getProviderDefaultModel, getProv
                 {currentProvider === "lmstudio" && (
                   <div style={{ marginTop: "0.75rem" }}>
                     <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>LM Studio Base URL</label>
-                    <input type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} />
+                    <input type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} autoComplete="off" />
                   </div>
                 )}
                 {currentProvider === "local" && (
                   <div style={{ marginTop: "0.75rem" }}>
                     <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Custom Base URL</label>
-                    <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} />
+                    <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} autoComplete="off" />
                   </div>
                 )}
 

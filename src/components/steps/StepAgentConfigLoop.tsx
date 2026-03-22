@@ -165,6 +165,7 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
               });
             }}
             placeholder={`# IDENTITY.md\n- **Name:** ${currentAgent.name}\n- **Emoji:** ${currentAgent.emoji}`}
+            autoComplete="off"
           />
         )}
 
@@ -179,6 +180,7 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
               });
             }}
             placeholder={`# SOUL.md\n## Mission\nServe ${userName}.`}
+            autoComplete="off"
           />
         )}
 
@@ -193,6 +195,7 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
               });
             }}
             placeholder={`# TOOLS.md\nDefine tool usage policies for this agent...`}
+            autoComplete="off"
           />
         )}
 
@@ -207,6 +210,7 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
               });
             }}
             placeholder={`# AGENTS.md\nDefine sub-agent routing for this agent...`}
+            autoComplete="off"
           />
         )}
       </div>
@@ -253,13 +257,13 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
         {currentAgentProvider === "lmstudio" && (
           <div style={{ marginTop: "0.75rem" }}>
             <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>LM Studio Base URL</label>
-            <input type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} />
+            <input type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} autoComplete="off" />
           </div>
         )}
         {currentAgentProvider === "local" && (
           <div style={{ marginTop: "0.75rem" }}>
             <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Custom Base URL</label>
-            <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} />
+            <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} autoComplete="off" />
           </div>
         )}
       </div>
@@ -322,13 +326,13 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
               {currentFallbackProvider === "lmstudio" && (
                 <div style={{ marginTop: "0.75rem" }}>
                   <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>LM Studio Base URL</label>
-                  <input type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} />
+                  <input type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} autoComplete="off" />
                 </div>
               )}
               {currentFallbackProvider === "local" && (
                 <div style={{ marginTop: "0.75rem" }}>
                   <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Custom Base URL</label>
-                  <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} />
+                  <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} autoComplete="off" />
                 </div>
               )}
             </>
@@ -425,6 +429,7 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
                   });
                 }}
                 style={{ flex: 1 }}
+                autoComplete="off"
               />
               <button className="secondary" style={{ padding: "2px 8px", fontSize: "0.75rem", height: "auto", color: "var(--error)" }} onClick={() => {
                 updateAgentConfigs((updated) => {
@@ -441,6 +446,7 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
                 });
               }}
               style={{ marginBottom: "0.5rem" }}
+              autoComplete="off"
             />
             <input
               placeholder="Command"
@@ -450,6 +456,7 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
                   updated[currentAgentConfigIdx].cronJobs[cronIdx].command = e.target.value;
                 });
               }}
+              autoComplete="off"
             />
           </div>
         ))}

@@ -40,6 +40,7 @@ export default function StepSession() {
             onChange={e => setField("idleTimeoutMs", Number(e.target.value) * 60000)}
             min="1"
             max="1440"
+            autoComplete="off"
           />
           <p className="input-hint">Agent will reset context after this many minutes of inactivity.</p>
         </div>

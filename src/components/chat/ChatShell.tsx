@@ -36,12 +36,26 @@ type ChatMessage = {
   timestamp?: number;
 };
 
+interface StoredEnvironment {
+  id: string;
+  name: string;
+  type: "local" | "cloud";
+  remoteIp?: string;
+  remoteUser?: string;
+  addedAt: number;
+  lastUsedAt: number;
+}
+
 interface ChatShellProps {
   bootstrap: GatewayChatBootstrap | null;
   bootstrapping: boolean;
   bootstrapError: string;
   onRetryConnection: () => void;
   onOpenConfigure: () => void;
+  environments?: StoredEnvironment[];
+  activeEnvironmentId?: string | null;
+  onSwitchEnvironment?: (envId: string) => void;
+  onAddEnvironment?: () => void;
 }
 
 function isToolMessage(message: Record<string, unknown>): boolean {
@@ -719,7 +733,7 @@ function ChatActionButton({
   );
 }
 
-function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection, onOpenConfigure }: ChatShellProps) {
+function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection, onOpenConfigure, environments, activeEnvironmentId, onSwitchEnvironment, onAddEnvironment }: ChatShellProps) {
   const clientRef = useRef<GatewayChatClient | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const activeAgentIdRef = useRef("");
@@ -744,6 +758,8 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   const [sending, setSending] = useState(false);
   const [activeRunId, setActiveRunId] = useState("");
   const [shellError, setShellError] = useState("");
+  const [envDropdownOpen, setEnvDropdownOpen] = useState(false);
+  const envDropdownRef = useRef<HTMLDivElement>(null);
   const initialThemeStateRef = useRef<{
     themePreference: ChatThemePreference;
     resolvedTheme: ChatResolvedTheme;
@@ -756,6 +772,19 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   const [resolvedTheme, setResolvedTheme] = useState<ChatResolvedTheme>(initialThemeState.resolvedTheme);
 
   const scopeKey = bootstrap ? buildChatScopeKey(bootstrap) : "";
+
+  // Close env dropdown on click outside
+  useEffect(() => {
+    if (!envDropdownOpen) return;
+    function handleMouseDown(e: MouseEvent) {
+      if (envDropdownRef.current && !envDropdownRef.current.contains(e.target as Node)) {
+        setEnvDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, [envDropdownOpen]);
+
   const activeThread = threads.find((thread) => thread.id === activeThreadId) || null;
   const activeThreadIsArchived = activeThread?.status === "archived";
 
@@ -1346,6 +1375,64 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     <div className="chat-shell" data-theme={resolvedTheme}>
       <aside className="chat-sidebar">
         <div className="chat-sidebar-top">
+          {environments && environments.length >= 1 && onSwitchEnvironment && (
+            <div className="chat-env-switcher">
+              <p className="chat-sidebar-kicker">Environment</p>
+              <div className="chat-env-dropdown" ref={envDropdownRef} data-testid="chat-env-dropdown">
+                <button
+                  type="button"
+                  className="chat-env-trigger"
+                  onClick={() => setEnvDropdownOpen(!envDropdownOpen)}
+                >
+                  <span>{environments.find((e) => e.id === activeEnvironmentId)?.name || "Select..."}</span>
+                  <svg className={`dropdown-chevron ${envDropdownOpen ? "rotated" : ""}`} width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                {envDropdownOpen && (
+                  <div className="chat-env-panel">
+                    {[...environments]
+                      .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
+                      .map((env) => (
+                        <button
+                          key={env.id}
+                          type="button"
+                          className={`chat-env-option ${env.id === activeEnvironmentId ? "active" : ""}`}
+                          onClick={() => {
+                            if (env.id !== activeEnvironmentId) {
+                              onSwitchEnvironment(env.id);
+                            }
+                            setEnvDropdownOpen(false);
+                          }}
+                        >
+                          <span>{env.name}</span>
+                          {env.id === activeEnvironmentId && (
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                              <path d="M3 7L6 10L11 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
+                        </button>
+                      ))}
+                    {onAddEnvironment && (
+                      <>
+                        <div className="chat-env-divider" />
+                        <button
+                          type="button"
+                          className="chat-env-option add"
+                          onClick={() => {
+                            setEnvDropdownOpen(false);
+                            onAddEnvironment();
+                          }}
+                        >
+                          + Add remote environment
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           <div className="chat-sidebar-brand">
             <p className="chat-sidebar-kicker">Clawnetes</p>
             <h1>Agent Workspace</h1>
@@ -1485,9 +1572,9 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
         </header>
 
         {!bootstrap && (
-          <div className="chat-state-card">
-            <h3>Starting the gateway workspace</h3>
-            <p>{bootstrapping ? "Preparing the OpenClaw gateway connection..." : bootstrapError || "No gateway connection available."}</p>
+          <div className="chat-bootstrap-status">
+            <p className="chat-bootstrap-title">Starting the gateway workspace</p>
+            <p className="chat-bootstrap-detail">{bootstrapping ? "Preparing the OpenClaw gateway connection..." : bootstrapError || "No gateway connection available."}</p>
             {!bootstrapping && <button onClick={onRetryConnection}>Retry</button>}
           </div>
         )}
@@ -1583,6 +1670,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
                   rows={1}
                   data-testid="chat-composer"
                   disabled={!chatReady || !activeAgentId || activeThreadIsArchived}
+                  autoComplete="off"
                 />
                 {sending ? (
                   <button

@@ -36,7 +36,7 @@ export default function StepExtraSettings() {
           <div style={{ padding: "1rem", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-card)" }}>
             <div className="form-group">
               <label>Port</label>
-              <input type="number" value={gatewayPort} onChange={(e) => setField("gatewayPort", parseInt(e.target.value))} />
+              <input type="number" value={gatewayPort} onChange={(e) => setField("gatewayPort", parseInt(e.target.value))} autoComplete="off" />
             </div>
             <div className="form-group" style={{ marginTop: "1rem" }}>
               <label>Bind Address</label>
@@ -159,7 +159,7 @@ export default function StepExtraSettings() {
             {heartbeatMode === "idle" && (
               <div className="form-group" style={{ marginTop: "1rem" }}>
                 <label>Idle Timeout (minutes)</label>
-                <input type="number" value={idleTimeoutMs / 60000} onChange={e => setField("idleTimeoutMs", Number(e.target.value) * 60000)} min="1" max="1440" />
+                <input type="number" value={idleTimeoutMs / 60000} onChange={e => setField("idleTimeoutMs", Number(e.target.value) * 60000)} min="1" max="1440" autoComplete="off" />
               </div>
             )}
           </div>

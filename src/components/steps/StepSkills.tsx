@@ -88,6 +88,7 @@ function StepSkills({ handleInstall }: StepSkillsProps) {
                       onChange={(e) => setField("serviceKeys", { ...serviceKeys, [skill.id]: e.target.value })}
                       onClick={(e) => e.stopPropagation()}
                       style={{ width: "100%", fontSize: "0.8rem", padding: "0.5rem", borderRadius: "8px" }}
+                      autoComplete="off"
                     />
                   )}
                 </div>
@@ -111,6 +112,7 @@ function StepSkills({ handleInstall }: StepSkillsProps) {
               placeholder="my-custom-skill"
               value={customSkillName}
               onChange={e => setField("customSkillName", e.target.value)}
+              autoComplete="off"
             />
           </div>
           <div className="form-group">
@@ -121,6 +123,7 @@ function StepSkills({ handleInstall }: StepSkillsProps) {
               value={customSkillContent}
               onChange={e => setField("customSkillContent", e.target.value)}
               placeholder={`---\nname: My Custom Skill\ndescription: A useful skill\n---\n\n# Instructions\nAdd skill documentation here...`}
+              autoComplete="off"
             />
           </div>
           <button

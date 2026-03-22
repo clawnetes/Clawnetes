@@ -117,6 +117,85 @@ body {
   gap: 1rem;
 }
 
+.chat-env-switcher {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.chat-env-dropdown {
+  position: relative;
+}
+
+.chat-env-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.42rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-sidebar);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.chat-env-trigger:hover {
+  background: var(--surface-hover);
+}
+
+.chat-env-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: var(--surface-sidebar);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  z-index: 50;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.chat-env-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.7rem;
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.85rem;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.chat-env-option:hover {
+  background: var(--surface-hover);
+}
+
+.chat-env-option.active {
+  color: var(--text-strong);
+}
+
+.chat-env-option.add {
+  color: var(--text-subtle);
+  font-size: 0.82rem;
+}
+
+.chat-env-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0.2rem 0;
+}
+
 .chat-sidebar-brand {
   display: flex;
   flex-direction: column;
@@ -211,7 +290,7 @@ button {
   justify-content: flex-start;
   gap: 0.5rem;
   min-height: 2.1rem;
-  padding: 0.3rem 0;
+  padding: 0.3rem 0.4rem;
   background: transparent;
   color: var(--text-main);
   font-weight: 500;
@@ -397,8 +476,8 @@ button:disabled {
 }
 
 .chat-theme-toggle button {
-  min-height: 1.9rem;
-  padding: 0.2rem 0;
+  min-height: 2.1rem;
+  padding: 0.3rem 0;
   background: transparent;
   color: var(--text-subtle);
   text-transform: capitalize;
@@ -615,6 +694,26 @@ button:disabled {
 
 .chat-state-card {
   max-width: 760px;
+}
+
+.chat-bootstrap-status {
+  max-width: 760px;
+  padding: 1.15rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.chat-bootstrap-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.chat-bootstrap-detail {
+  font-size: 0.82rem;
+  color: var(--text-subtle);
+  line-height: 1.5;
 }
 
 .chat-empty-stage {
