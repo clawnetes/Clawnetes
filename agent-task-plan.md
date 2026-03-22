@@ -23,3 +23,4 @@
 - Restored the backend gateway client identity (`gateway-client` / `backend`) and added a Rust regression test to lock that behavior.
 - Follow-up regression diagnosis: the pairing scope bundle had been narrowed away from the previously working backend scope set.
 - Restored the broader WhatsApp gateway scope bundle to include `operator.admin`, `operator.approvals`, and `operator.pairing`, while keeping the timeout-flow fix intact.
+- Final restore: returned `src-tauri/src/whatsapp.rs` to the last known-good handshake shape from `57b8e9f4` so the backend pairing path matches the pre-regression behavior again.

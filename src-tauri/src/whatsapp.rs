@@ -16,11 +16,7 @@ const GATEWAY_CLIENT_ID: &str = "gateway-client";
 const GATEWAY_CLIENT_VERSION: &str = "clawnetes";
 const GATEWAY_CLIENT_MODE: &str = "backend";
 const GATEWAY_ROLE: &str = "operator";
-const GATEWAY_PAIRING_SCOPES: [&str; 3] = [
-    "operator.admin",
-    "operator.approvals",
-    "operator.pairing",
-];
+const GATEWAY_PAIRING_SCOPES: [&str; 2] = ["operator.admin", "operator.pairing"];
 
 fn build_connect_message(
     connect_req_id: &str,
@@ -147,18 +143,9 @@ async fn connect_gateway(
             tokio::time::sleep(Duration::from_secs(10)).await;
         }
 
-        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-        let mut request = url
-            .clone()
-            .into_client_request()
-            .map_err(|e| format!("Invalid WebSocket URL {}: {}", url, e))?;
-        request.headers_mut().insert(
-            "Origin",
-            tokio_tungstenite::tungstenite::http::HeaderValue::from_static("http://127.0.0.1:18789"),
-        );
-
-        let (ws_stream_result, _) = connect_async(request).await.map_err(|e| format!("WebSocket connect failed: {}", e))?;
-        let mut ws_stream = ws_stream_result;
+        let (mut ws_stream, _) = connect_async(&url)
+            .await
+            .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
         let connect_req_id = uuid::Uuid::new_v4().to_string();
         let connect_msg = build_connect_message(&connect_req_id, auth_token, scopes);
@@ -468,10 +455,6 @@ mod tests {
         assert!(
             GATEWAY_PAIRING_SCOPES.contains(&"operator.admin"),
             "GATEWAY_PAIRING_SCOPES must include operator.admin for web.login.start/wait"
-        );
-        assert!(
-            GATEWAY_PAIRING_SCOPES.contains(&"operator.approvals"),
-            "GATEWAY_PAIRING_SCOPES must include operator.approvals to preserve the previous working gateway scope bundle"
         );
         assert!(
             GATEWAY_PAIRING_SCOPES.contains(&"operator.pairing"),
