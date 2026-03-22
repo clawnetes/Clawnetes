@@ -20,4 +20,4 @@
 - [x] Run `cargo test --manifest-path src-tauri/Cargo.toml`.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
-- [ ] Commit and push if validation succeeds.
+- [x] Commit and push if validation succeeds.
