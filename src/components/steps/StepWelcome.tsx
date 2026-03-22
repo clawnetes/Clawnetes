@@ -5,7 +5,9 @@ export default function StepWelcome() {
 
   return (
     <div className="step-view welcome-view" data-testid="step-welcome">
-      <div className="welcome-logo">🦞</div>
+      <div className="welcome-logo">
+        <img src="/images/logo.png" alt="Clawnetes Logo" />
+      </div>
       <h1 className="welcome-title">Welcome to Clawnetes</h1>
       <p className="welcome-text">
         The fastest way to deploy your AI agent. Get started in minutes.

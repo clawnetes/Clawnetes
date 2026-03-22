@@ -1543,8 +1543,16 @@ button:disabled {
 }
 
 .welcome-logo {
-  font-size: 3.8rem;
   margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.welcome-logo img {
+  width: 180px;
+  height: auto;
+  max-width: 100%;
 }
 
 .welcome-title {
