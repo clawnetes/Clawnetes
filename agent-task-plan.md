@@ -10,7 +10,7 @@
 - [completed] Update the WhatsApp pairing flow to treat linked-session confirmation as the success source of truth.
 - [completed] Add regression tests for the recovered pairing path and retained failure path.
 - [completed] Run `npm test`, `cargo test`, and `npm run tauri dev`.
-- [in_progress] Commit and push the validated fix.
+- [completed] Commit and push the validated fix.
 
 ## Progress Notes
 - Confirmed the current false timeout comes from `runWhatsAppPairingCommandFlow` throwing immediately when `wait_whatsapp_login` returns `false`, before the linked-session poll can recover.
@@ -18,3 +18,4 @@
 - Updated the WhatsApp pairing flow to allow linked-session confirmation to recover from a `wait_whatsapp_login` false result.
 - Added frontend regression coverage for the recovered success path and the retained double-failure path.
 - Validation passed with `npm test`, `cargo test`, and a successful `npm run tauri dev` launch after clearing a stale local Vite listener on port `1420`.
+- Created commit `34fc9bb8` and pushed the fix to `origin/add_ui`.
