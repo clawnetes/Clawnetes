@@ -60,6 +60,31 @@ However, you can easily install OpenClaw onto a remote Linux server! Simply run 
 - **One-Click Launch:** Starts the agent and opens the web dashboard
 - **Maintenance Mode:** Repair, audit, update, or uninstall existing installations
 
+## 🤖 Supported Model Providers
+
+Clawnetes supports a wide range of AI model providers, giving you flexibility to choose the best models for your use case:
+
+### Cloud Providers
+- **Anthropic** - Claude 3/3.5/3.7/4/4.5/4.6 (Haiku, Sonnet, Opus) with 200k-1M context
+- **OpenAI** - GPT-4, GPT-4 Turbo, GPT-4.1, GPT-4o, GPT-5.x series, o1/o3/o4 reasoning models
+- **Google** - Gemini 1.5/2.0/2.5/3/3.1 (Flash, Pro) with up to 1M context
+- **xAI** - Grok 2/3/4 series models
+- **OpenRouter** - Access to 100+ models from multiple providers through a unified API
+
+
+### Local & Self-Hosted
+- **Ollama** - Run Llama, Mistral, and other open models locally
+- **LM Studio** - Local model hosting with custom base URL support
+- **Custom Local** - Connect to any OpenAI-compatible API endpoint
+
+### Authentication Methods
+- **API Keys** - Direct token-based authentication
+- **OAuth 2.0** - Secure browser-based authentication flow for supported providers
+- **Profile-based Auth** - Reuse existing OpenClaw authentication profiles
+- **Device Tokens** - Secure device-specific authentication
+
+Each provider supports model fallbacks, allowing you to configure backup models if your primary model is unavailable or rate-limited.
+
 ## 🛠️ Developer Setup (Building from Source)
 
 **Prerequisites:**
