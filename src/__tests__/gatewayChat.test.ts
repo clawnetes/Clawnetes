@@ -53,7 +53,7 @@ class MockWebSocket {
     });
   }
 
-  private emit(type: string, event?: any) {
+  protected emit(type: string, event?: any) {
     for (const handler of this.listeners.get(type) || []) {
       handler(event);
     }

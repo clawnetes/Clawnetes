@@ -97,6 +97,7 @@ describe("wizardReducer", () => {
       expect(INITIAL_WIZARD_STATE.model).toBe("anthropic/claude-opus-4-6");
       expect(INITIAL_WIZARD_STATE.gatewayPort).toBe(18789);
       expect(INITIAL_WIZARD_STATE.selectedSkills).toEqual(["filesystem", "terminal"]);
+      expect(INITIAL_WIZARD_STATE.sandboxMode).toBe("none");
       expect(INITIAL_WIZARD_STATE.messagingChannel).toBe("telegram");
       expect(INITIAL_WIZARD_STATE.agentEmoji).toBe("🦞");
     });

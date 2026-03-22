@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { RemoteConfig } from "../types";
-import { runWhatsAppPairingCommandFlow } from "../utils/whatsappPairing";
+import { runWhatsAppPairingCommandFlow, type RunWhatsAppPairingCommandFlowOptions } from "../utils/whatsappPairing";
+
+type InvokeCommand = RunWhatsAppPairingCommandFlowOptions["invokeCommand"];
 
 describe("runWhatsAppPairingCommandFlow", () => {
   it("uses backend pairing commands and restarts the gateway after confirmation", async () => {
@@ -12,18 +14,19 @@ describe("runWhatsAppPairingCommandFlow", () => {
       privateKeyPath: null,
     };
     const qrUpdates: string[] = [];
-    const invokeCommand = vi.fn(async (command: string) => {
+    const invokeCommandMock = vi.fn(async <T = unknown>(command: string) => {
       if (command === "start_whatsapp_login") {
-        return "data:image/png;base64,qr";
+        return "data:image/png;base64,qr" as T;
       }
       if (command === "wait_whatsapp_login") {
-        return true;
+        return true as T;
       }
       if (command === "restart_openclaw_gateway") {
-        return null;
+        return null as T;
       }
       throw new Error(`unexpected command ${command}`);
     });
+    const invokeCommand = invokeCommandMock as InvokeCommand;
     const waitForLinkedStatus = vi.fn(async () => true);
     const onPaired = vi.fn();
 
@@ -36,7 +39,7 @@ describe("runWhatsAppPairingCommandFlow", () => {
       waitForLinkedStatus,
     });
 
-    expect(invokeCommand.mock.calls).toEqual([
+    expect(invokeCommandMock.mock.calls).toEqual([
       ["start_whatsapp_login", { gatewayPort: 18789, remote }],
       ["wait_whatsapp_login", { gatewayPort: 18789, remote }],
       ["restart_openclaw_gateway", { remote }],
@@ -47,18 +50,19 @@ describe("runWhatsAppPairingCommandFlow", () => {
   });
 
   it("accepts linked-session confirmation even when gateway wait returns false", async () => {
-    const invokeCommand = vi.fn(async (command: string) => {
+    const invokeCommandMock = vi.fn(async <T = unknown>(command: string) => {
       if (command === "start_whatsapp_login") {
-        return "data:image/png;base64,qr";
+        return "data:image/png;base64,qr" as T;
       }
       if (command === "wait_whatsapp_login") {
-        return false;
+        return false as T;
       }
       if (command === "restart_openclaw_gateway") {
-        return null;
+        return null as T;
       }
       throw new Error(`unexpected command ${command}`);
     });
+    const invokeCommand = invokeCommandMock as InvokeCommand;
     const onPaired = vi.fn();
     const onQrCode = vi.fn();
     const waitForLinkedStatus = vi.fn(async () => true);
@@ -79,15 +83,15 @@ describe("runWhatsAppPairingCommandFlow", () => {
   });
 
   it("fails when both gateway wait and linked-session confirmation fail", async () => {
-    const invokeCommand = vi.fn(async (command: string) => {
+    const invokeCommand = vi.fn(async <T = unknown>(command: string) => {
       if (command === "start_whatsapp_login") {
-        return "data:image/png;base64,qr";
+        return "data:image/png;base64,qr" as T;
       }
       if (command === "wait_whatsapp_login") {
-        return false;
+        return false as T;
       }
-      return null;
-    });
+      return null as T;
+    }) as InvokeCommand;
 
     await expect(
       runWhatsAppPairingCommandFlow({

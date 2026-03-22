@@ -196,7 +196,7 @@ export interface ConfigPayload {
   skills: string[];
   service_keys: Record<string, string>;
   provider_auths?: Record<string, ProviderAuthConfig>;
-  sandbox_mode: string | null;
+  sandbox_mode: string;
   tools_mode?: string | null;
   tools_profile?: ToolProfileId | null;
   allowed_tools: string[] | null;

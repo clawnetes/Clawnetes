@@ -102,7 +102,7 @@ Managed by Clawnetes.`;
     skills: input.selectedSkills,
     service_keys: input.serviceKeys,
     provider_auths: effectiveProviderAuths,
-    sandbox_mode: usePresetFields ? mappedSandboxMode : null,
+    sandbox_mode: mappedSandboxMode,
     tools_mode: usePresetFields
       ? (normalizedTopLevelToolPolicy.profile === "full" && normalizedTopLevelToolPolicy.allow.length === 0 && normalizedTopLevelToolPolicy.deny.length === 0 ? "all" : "allowlist")
       : "all",

@@ -86,9 +86,9 @@ describe("constructConfigPayload", () => {
       expect(payload.tools_mode).toBe("all");
     });
 
-    it("nullifies advanced fields for custom basic mode", () => {
+    it("keeps sandbox explicit and nullifies the remaining advanced fields for custom basic mode", () => {
       const payload = constructConfigPayload(createDefaultInput());
-      expect(payload.sandbox_mode).toBeNull();
+      expect(payload.sandbox_mode).toBe("off");
       expect(payload.tools_profile).toBeNull();
       expect(payload.allowed_tools).toBeNull();
       expect(payload.denied_tools).toBeNull();

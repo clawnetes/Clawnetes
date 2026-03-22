@@ -229,7 +229,7 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
                   setField("whatsappQrLoading", true);
                   setField("whatsappQrStep", true);
                   try {
-                    await runWhatsAppPairing(true);
+                    await runWhatsAppPairing();
                   } catch (err) {
                     console.error(err);
                     alert("WhatsApp pairing error: " + err);
@@ -258,7 +258,7 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
                       style={{ marginTop: "0.5rem" }}
                       onClick={async () => {
                         try {
-                          await runWhatsAppPairing(true);
+                          await runWhatsAppPairing();
                         } catch (err) {
                           console.error(err);
                           alert("WhatsApp pairing error: " + err);

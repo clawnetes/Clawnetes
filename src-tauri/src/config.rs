@@ -41,6 +41,15 @@ pub fn build_agent_session_init_command(agent_id: &str) -> String {
     )
 }
 
+fn map_loaded_sandbox_mode(mode: Option<&str>) -> &'static str {
+    match mode {
+        Some("all") | Some("full") => "full",
+        Some("non-main") | Some("partial") => "partial",
+        Some("off") | Some("none") => "none",
+        Some(_) | None => "none",
+    }
+}
+
 pub fn read_workspace_files() -> Result<serde_json::Value, String> {
     #[cfg(target_os = "windows")]
     {
@@ -1144,21 +1153,12 @@ pub fn get_current_config(
         }
     }
 
-    let sandbox_mode = defaults
-        .get("sandbox")
-        .and_then(|s| s.get("mode"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("full")
-        .to_string();
-    let mapped_sandbox = if sandbox_mode == "all" {
-        "full"
-    } else if sandbox_mode == "non-main" {
-        "partial"
-    } else if sandbox_mode == "off" {
-        "none"
-    } else {
-        &sandbox_mode
-    };
+    let mapped_sandbox = map_loaded_sandbox_mode(
+        defaults
+            .get("sandbox")
+            .and_then(|s| s.get("mode"))
+            .and_then(|v| v.as_str()),
+    );
 
     let tools = oc_config.get("tools").unwrap_or(&empty_json);
     let tools_profile = tools
@@ -1551,5 +1551,21 @@ mod tests {
         let cmd = build_agent_session_init_command("agent-1");
         assert!(cmd.contains("--agent agent-1"));
         assert!(cmd.contains("--message"));
+    }
+
+    #[test]
+    fn test_map_loaded_sandbox_mode_preserves_explicit_values() {
+        assert_eq!(map_loaded_sandbox_mode(Some("all")), "full");
+        assert_eq!(map_loaded_sandbox_mode(Some("non-main")), "partial");
+        assert_eq!(map_loaded_sandbox_mode(Some("off")), "none");
+        assert_eq!(map_loaded_sandbox_mode(Some("full")), "full");
+        assert_eq!(map_loaded_sandbox_mode(Some("partial")), "partial");
+        assert_eq!(map_loaded_sandbox_mode(Some("none")), "none");
+    }
+
+    #[test]
+    fn test_map_loaded_sandbox_mode_defaults_missing_and_unknown_to_none() {
+        assert_eq!(map_loaded_sandbox_mode(None), "none");
+        assert_eq!(map_loaded_sandbox_mode(Some("unexpected")), "none");
     }
 }
