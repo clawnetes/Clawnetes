@@ -14,26 +14,24 @@ mod system;
 mod types;
 mod whatsapp;
 
-use tauri::{command, Manager};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::time::Duration;
+use tauri::{command, Manager};
 
 #[macro_use]
 extern crate lazy_static;
 
-use types::{
-    AgentConfig, CurrentConfig, GatewayChatBootstrap,
-    PrereqCheck, ProviderAuthData, RemoteInfo,
-};
 use license::verify_license_with_gumroad;
 use ssh::connect_ssh;
 use system::shell_command;
 #[cfg(target_os = "windows")]
 use system::{
-    check_wsl2_installed, ensure_wsl2_installed, wait_for_wsl_ready,
-    wsl_home_dir, wsl_list_dirs, wsl_mkdir_p, wsl_read_file,
-    wsl_remove_dir, wsl_root_command, wsl_write_file,
+    check_wsl2_installed, ensure_wsl2_installed, wait_for_wsl_ready, wsl_home_dir, wsl_list_dirs,
+    wsl_mkdir_p, wsl_read_file, wsl_remove_dir, wsl_root_command, wsl_write_file,
+};
+use types::{
+    AgentConfig, CurrentConfig, GatewayChatBootstrap, PrereqCheck, ProviderAuthData, RemoteInfo,
 };
 
 const ADVANCED_LICENSE_STORAGE_FILE: &str = "advanced-license.json";
@@ -425,40 +423,36 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use crate::config::{apply_agent_overrides, build_agent_session_init_command};
     use crate::gateway::{
         extract_gateway_token_from_config, parse_dashboard_url_cli_output,
         parse_gateway_token_cli_output,
     };
     use crate::license::{
-        decrypt_saved_license_value, derive_license_encryption_key,
-        encrypt_saved_license_value, parse_windows_machine_guid,
-        read_first_nonempty_file, validate_license_response,
-    };
-    use crate::pairing::{
-        read_telegram_dm_policy_from_config_str, read_telegram_dm_policy_via_cli,
-        telegram_allow_from_entries_from_str, whatsapp_session_is_linked,
-        extract_telegram_dm_policy_from_config, telegram_allow_from_is_linked_local,
-        telegram_pairing_status_from_dm_policy,
+        decrypt_saved_license_value, derive_license_encryption_key, encrypt_saved_license_value,
+        parse_windows_machine_guid, read_first_nonempty_file, validate_license_response,
     };
     use crate::oauth::{
-        apply_model_provider_auth, auth_provider_id_for_config,
-        build_auth_profiles_doc, build_effective_models_catalog,
-        build_linux_terminal_launches, build_macos_terminal_launch,
-        build_provider_auth_command, build_terminal_runner_command,
-        build_unix_terminal_script, build_windows_terminal_launches,
-        collect_required_plugin_ids, decorate_oauth_launch_error,
-        is_openclaw_listener, merge_enabled_plugin_entries,
-        normalize_auth_mode, normalize_model_ref_for_ui,
-        normalize_provider_for_ui, oauth_callback_port,
+        apply_model_provider_auth, auth_provider_id_for_config, build_auth_profiles_doc,
+        build_effective_models_catalog, build_linux_terminal_launches, build_macos_terminal_launch,
+        build_provider_auth_command, build_terminal_runner_command, build_unix_terminal_script,
+        build_windows_terminal_launches, collect_required_plugin_ids, decorate_oauth_launch_error,
+        is_openclaw_listener, merge_enabled_plugin_entries, normalize_auth_mode,
+        normalize_model_ref_for_ui, normalize_provider_for_ui, oauth_callback_port,
         parse_lsof_listener_info, required_plugin_for_oauth_provider_id,
         resolve_provider_auth_data,
+    };
+    use crate::pairing::{
+        extract_telegram_dm_policy_from_config, read_telegram_dm_policy_from_config_str,
+        read_telegram_dm_policy_via_cli, telegram_allow_from_entries_from_str,
+        telegram_allow_from_is_linked_local, telegram_pairing_status_from_dm_policy,
+        whatsapp_session_is_linked,
     };
     use crate::types::{
         AgentData, AgentToolsConfig, ElevatedToolConfig, PortListenerInfo, SubagentConfig,
         TerminalPlatform,
     };
+    use std::fs;
 
     #[test]
     fn test_agent_config_deserialization() {
@@ -1160,7 +1154,9 @@ mod tests {
 
         let policy = read_telegram_dm_policy_from_config_str(config);
         assert_eq!(policy, Some("open".to_string()));
-        assert!(telegram_pairing_status_from_dm_policy(policy.as_deref().unwrap()));
+        assert!(telegram_pairing_status_from_dm_policy(
+            policy.as_deref().unwrap()
+        ));
     }
 
     #[test]
@@ -1205,8 +1201,10 @@ mod tests {
 
     #[test]
     fn test_telegram_allow_from_is_linked_local_detects_account_file() {
-        let temp_dir = std::env::temp_dir()
-            .join(format!("clawnetes-telegram-allowfrom-{}", uuid::Uuid::new_v4()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "clawnetes-telegram-allowfrom-{}",
+            uuid::Uuid::new_v4()
+        ));
         fs::create_dir_all(&temp_dir).expect("create temp telegram credentials dir");
         fs::write(
             temp_dir.join("telegram-default-allowFrom.json"),

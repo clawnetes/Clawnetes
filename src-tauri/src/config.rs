@@ -157,8 +157,7 @@ pub fn validate_openclaw_config(
 ) -> Result<String, String> {
     use crate::system::shell_command;
     if let Some(r) = remote {
-        let sess =
-            crate::ssh::connect_ssh(r).map_err(|e| format!("SSH connect failed: {}", e))?;
+        let sess = crate::ssh::connect_ssh(r).map_err(|e| format!("SSH connect failed: {}", e))?;
         let os_type = crate::ssh::execute_ssh(&sess, "uname -s")
             .unwrap_or_default()
             .trim()
@@ -949,7 +948,9 @@ Serve {}."#,
     Ok("Configured.".into())
 }
 
-pub fn get_current_config(remote: Option<&crate::types::RemoteInfo>) -> Result<CurrentConfig, String> {
+pub fn get_current_config(
+    remote: Option<&crate::types::RemoteInfo>,
+) -> Result<CurrentConfig, String> {
     fn extract_md_value(content: &str, key: &str) -> String {
         let pattern = format!("**{}:**", key);
 
@@ -1007,7 +1008,9 @@ pub fn get_current_config(remote: Option<&crate::types::RemoteInfo>) -> Result<C
     let list_directories = |base_path: &str| -> Vec<String> {
         let mut dirs_found = Vec::new();
         if let Some(sess) = &session {
-            if let Ok(output) = crate::ssh::execute_ssh(sess, &format!("ls -1 -F \"{}\"", base_path)) {
+            if let Ok(output) =
+                crate::ssh::execute_ssh(sess, &format!("ls -1 -F \"{}\"", base_path))
+            {
                 for line in output.lines() {
                     if line.trim().ends_with('/') {
                         dirs_found.push(line.trim().trim_matches('/').to_string());
@@ -1246,7 +1249,13 @@ pub fn get_current_config(remote: Option<&crate::types::RemoteInfo>) -> Result<C
 
             let afallbacks_raw: Vec<String> = agent_val
                 .get("model")
-                .and_then(|m| if m.is_object() { m.get("fallbacks") } else { None })
+                .and_then(|m| {
+                    if m.is_object() {
+                        m.get("fallbacks")
+                    } else {
+                        None
+                    }
+                })
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or_default();
             let afallbacks: Vec<String> = afallbacks_raw

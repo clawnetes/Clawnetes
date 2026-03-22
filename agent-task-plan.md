@@ -1,16 +1,17 @@
-# Fix Remote WhatsApp Pairing Scope Failure
+# Commit And Push Pending Remote Config Changes
 
-## Summary
-- Restore remote WhatsApp pairing when the remote gateway token does not include `operator.admin`.
-- Keep the WhatsApp websocket handshake scoped to the pairing flow instead of reusing the broader chat UI scope bundle.
-- Add a regression so the backend WhatsApp pairing path no longer depends on `operator.admin`.
+## Objective
+- Review the current uncommitted Rust changes on `add_ui`.
+- Validate that the pending changes are safe to ship.
+- Commit and push the changes that belong in this branch if validation succeeds.
 
-## Implementation Changes
-- Update `src-tauri/src/whatsapp.rs` so the gateway connect payload for WhatsApp login uses only the scopes required for pairing.
-- Extend the Rust unit tests in `src-tauri/src/whatsapp.rs` to assert the reduced scope set and preserve gateway error parsing coverage.
+## Plan
+- [completed] Inspect the current diff to understand the scope and confirm what should be committed.
+- [completed] Run required validation commands, including tests and `npm run tauri dev`.
+- [in_progress] Stage the validated changes and create a commit with a focused message.
+- [pending] Push the commit to the remote branch and record the outcome here.
 
-## Validation
-- Run targeted Rust WhatsApp tests.
-- Run `npm test`.
-- Run `npm run tauri dev`.
-- Commit and push if validation succeeds.
+## Progress Notes
+- Replaced the stale plan file so it matches the current request.
+- Reviewed the pending Rust diff; the substantive branch work was already present and the visible changes are formatter-aligned edits.
+- Validation passed with `cargo test`, `npm test`, and a successful `npm run tauri dev` startup check.

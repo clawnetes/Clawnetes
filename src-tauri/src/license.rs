@@ -384,8 +384,14 @@ mod tests {
         // Random nonce means different ciphertext each time
         assert_ne!(enc1, enc2);
         // Both should decrypt to the same value
-        assert_eq!(decrypt_saved_license_value(&enc1, &key).unwrap(), "LICENSE-123");
-        assert_eq!(decrypt_saved_license_value(&enc2, &key).unwrap(), "LICENSE-123");
+        assert_eq!(
+            decrypt_saved_license_value(&enc1, &key).unwrap(),
+            "LICENSE-123"
+        );
+        assert_eq!(
+            decrypt_saved_license_value(&enc2, &key).unwrap(),
+            "LICENSE-123"
+        );
     }
 
     #[test]

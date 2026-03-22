@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-use crate::system::{shell_command, shell_single_quote};
 use crate::ssh::{connect_ssh, execute_ssh, get_env_prefix};
+use crate::system::{shell_command, shell_single_quote};
 use crate::types::{
     PortListenerInfo, ProviderAuthData, RemoteInfo, TerminalLaunchPlan, TerminalPlatform,
 };
@@ -740,9 +740,7 @@ fn provider_id_is_available_remote(
         .unwrap_or(false))
 }
 
-fn read_provider_auth_profiles_remote(
-    sess: &ssh2::Session,
-) -> Result<serde_json::Value, String> {
+fn read_provider_auth_profiles_remote(sess: &ssh2::Session) -> Result<serde_json::Value, String> {
     let auth_profiles_str =
         execute_ssh(sess, "cat ~/.openclaw/agents/main/agent/auth-profiles.json")
             .map_err(|e| format!("Failed to read remote auth profiles: {}", e))?;
@@ -756,7 +754,8 @@ fn build_remote_provider_auth_terminal_command(
     method: &str,
     oauth_provider_id: &str,
 ) -> String {
-    let remote_openclaw_command = build_provider_auth_command_for_binary("openclaw", method, oauth_provider_id);
+    let remote_openclaw_command =
+        build_provider_auth_command_for_binary("openclaw", method, oauth_provider_id);
     let remote_shell_command = format!("{}{}", prefix, remote_openclaw_command);
 
     let mut parts = vec![
@@ -1389,10 +1388,8 @@ mod tests {
 
     #[test]
     fn test_wait_for_local_marker_returns_specific_missing_cli_error() {
-        let marker_path = std::env::temp_dir().join(format!(
-            "clawnetes-oauth-marker-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let marker_path =
+            std::env::temp_dir().join(format!("clawnetes-oauth-marker-{}", uuid::Uuid::new_v4()));
         fs::write(&marker_path, "127").expect("write marker");
         let err = wait_for_local_marker(&marker_path, Duration::from_secs(1)).unwrap_err();
         assert!(err.contains("OpenClaw auth exited with status 127."));
