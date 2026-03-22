@@ -7,4 +7,4 @@
 - [x] Run targeted tests.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
-- [ ] Commit and push changes if validation succeeds.
+- [x] Commit and push changes if validation succeeds.
