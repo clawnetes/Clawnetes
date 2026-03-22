@@ -394,17 +394,29 @@ pub async fn prepare_gateway_chat_connection(
     let ws_url = format!("ws://127.0.0.1:{}", gateway_port);
 
     if let Some(remote) = remote {
-        ensure_remote_gateway_tunnel(remote)?;
-        verify_tunnel_connectivity(remote)?;
+        let remote = remote.clone();
+        let ws_url = ws_url.clone();
 
-        return Ok(GatewayChatBootstrap {
-            ws_url,
-            auth_token: get_remote_gateway_token_with_timeout(remote, REMOTE_SSH_COMMAND_TIMEOUT)?,
-            target_environment: "cloud".to_string(),
-            gateway_port,
-            tunnel_active: true,
-            openclaw_version: crate::maintenance::get_remote_openclaw_version(remote)?,
-        });
+        return tauri::async_runtime::spawn_blocking(
+            move || -> Result<GatewayChatBootstrap, String> {
+                ensure_remote_gateway_tunnel(&remote)?;
+                verify_tunnel_connectivity(&remote)?;
+
+                Ok(GatewayChatBootstrap {
+                    ws_url,
+                    auth_token: get_remote_gateway_token_with_timeout(
+                        &remote,
+                        REMOTE_SSH_COMMAND_TIMEOUT,
+                    )?,
+                    target_environment: "cloud".to_string(),
+                    gateway_port,
+                    tunnel_active: true,
+                    openclaw_version: crate::maintenance::get_remote_openclaw_version(&remote)?,
+                })
+            },
+        )
+        .await
+        .map_err(|err| err.to_string())?;
     }
 
     if TcpStream::connect(("127.0.0.1", gateway_port)).is_err() {
