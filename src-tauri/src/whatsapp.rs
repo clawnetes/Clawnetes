@@ -1,7 +1,13 @@
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
+use ed25519_dalek::{Signer, SigningKey};
 use std::path::Path;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use lazy_static::lazy_static;
+use rand::rngs::OsRng;
+use sha2::{Digest, Sha256};
 use tokio::net::TcpStream;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
@@ -17,11 +23,115 @@ const GATEWAY_CLIENT_VERSION: &str = "clawnetes";
 const GATEWAY_CLIENT_MODE: &str = "backend";
 const GATEWAY_ROLE: &str = "operator";
 const GATEWAY_PAIRING_SCOPES: [&str; 2] = ["operator.admin", "operator.pairing"];
+const CONNECT_CHALLENGE_WAIT: Duration = Duration::from_millis(750);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GatewayDeviceIdentity {
+    device_id: String,
+    public_key: String,
+    private_key: [u8; 32],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GatewayConnectDevice {
+    id: String,
+    public_key: String,
+    signature: String,
+    signed_at: u64,
+    nonce: String,
+}
+
+lazy_static! {
+    static ref GATEWAY_DEVICE_IDENTITY: std::sync::Mutex<Option<GatewayDeviceIdentity>> =
+        std::sync::Mutex::new(None);
+}
+
+fn base64url_encode(bytes: &[u8]) -> String {
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>()
+}
+
+fn load_or_create_gateway_device_identity() -> Result<GatewayDeviceIdentity, String> {
+    let mut guard = GATEWAY_DEVICE_IDENTITY
+        .lock()
+        .map_err(|_| "Failed to lock gateway device identity state.".to_string())?;
+
+    if let Some(identity) = guard.clone() {
+        return Ok(identity);
+    }
+
+    let signing_key = SigningKey::generate(&mut OsRng);
+    let public_key = signing_key.verifying_key().to_bytes();
+    let identity = GatewayDeviceIdentity {
+        device_id: sha256_hex(&public_key),
+        public_key: base64url_encode(&public_key),
+        private_key: signing_key.to_bytes(),
+    };
+
+    *guard = Some(identity.clone());
+    Ok(identity)
+}
+
+fn current_time_millis() -> Result<u64, String> {
+    Ok(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("System clock is before UNIX_EPOCH: {}", e))?
+        .as_millis() as u64)
+}
+
+fn build_device_auth_payload(
+    identity: &GatewayDeviceIdentity,
+    auth_token: Option<&str>,
+    scopes: &[&str],
+    signed_at_ms: u64,
+    nonce: &str,
+) -> String {
+    [
+        "v2".to_string(),
+        identity.device_id.clone(),
+        GATEWAY_CLIENT_ID.to_string(),
+        GATEWAY_CLIENT_MODE.to_string(),
+        GATEWAY_ROLE.to_string(),
+        scopes.join(","),
+        signed_at_ms.to_string(),
+        auth_token.unwrap_or("").to_string(),
+        nonce.to_string(),
+    ]
+    .join("|")
+}
+
+fn build_connect_device(
+    identity: &GatewayDeviceIdentity,
+    auth_token: Option<&str>,
+    scopes: &[&str],
+    nonce: &str,
+) -> Result<GatewayConnectDevice, String> {
+    let signed_at = current_time_millis()?;
+    let payload = build_device_auth_payload(identity, auth_token, scopes, signed_at, nonce);
+    let signing_key = SigningKey::from_bytes(&identity.private_key);
+    let signature = signing_key.sign(payload.as_bytes()).to_bytes();
+
+    Ok(GatewayConnectDevice {
+        id: identity.device_id.clone(),
+        public_key: identity.public_key.clone(),
+        signature: base64url_encode(&signature),
+        signed_at,
+        nonce: nonce.to_string(),
+    })
+}
 
 fn build_connect_message(
     connect_req_id: &str,
     auth_token: Option<&str>,
     scopes: &[&str],
+    device: Option<&GatewayConnectDevice>,
 ) -> serde_json::Value {
     let mut connect_msg = serde_json::json!({
         "type": "req",
@@ -50,6 +160,24 @@ fn build_connect_message(
         }
     }
 
+    if let Some(device) = device {
+        if let Some(params) = connect_msg
+            .get_mut("params")
+            .and_then(|params| params.as_object_mut())
+        {
+            params.insert(
+                "device".to_string(),
+                serde_json::json!({
+                    "id": device.id,
+                    "publicKey": device.public_key,
+                    "signature": device.signature,
+                    "signedAt": device.signed_at,
+                    "nonce": device.nonce,
+                }),
+            );
+        }
+    }
+
     connect_msg
 }
 
@@ -57,6 +185,60 @@ fn read_gateway_error_text(value: &serde_json::Value) -> Option<String> {
     value
         .get("error")
         .and_then(|error| serde_json::to_string(error).ok())
+}
+
+fn parse_connect_challenge_nonce(value: &serde_json::Value) -> Option<String> {
+    if value.get("type").and_then(|value| value.as_str()) != Some("event") {
+        return None;
+    }
+    if value.get("event").and_then(|value| value.as_str()) != Some("connect.challenge") {
+        return None;
+    }
+    value
+        .get("payload")
+        .and_then(|payload| payload.get("nonce"))
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+}
+
+fn granted_scopes_from_connect_response(value: &serde_json::Value) -> Option<Vec<String>> {
+    value
+        .get("payload")
+        .and_then(|payload| payload.get("auth"))
+        .and_then(|auth| auth.get("scopes"))
+        .and_then(|value| value.as_array())
+        .map(|scopes| {
+            scopes
+                .iter()
+                .filter_map(|scope| scope.as_str().map(|scope| scope.to_string()))
+                .collect::<Vec<_>>()
+        })
+}
+
+fn missing_scopes(required: &[&str], granted: &[String]) -> Vec<String> {
+    required
+        .iter()
+        .filter(|required_scope| {
+            !granted
+                .iter()
+                .any(|granted_scope| granted_scope == **required_scope)
+        })
+        .map(|scope| (*scope).to_string())
+        .collect()
+}
+
+async fn send_connect_message(
+    ws_stream: &mut GatewaySocket,
+    connect_req_id: &str,
+    auth_token: Option<&str>,
+    scopes: &[&str],
+    device: Option<&GatewayConnectDevice>,
+) -> Result<(), String> {
+    let connect_msg = build_connect_message(connect_req_id, auth_token, scopes, device);
+    ws_stream
+        .send(Message::Text(connect_msg.to_string()))
+        .await
+        .map_err(|e| format!("WebSocket send connect failed: {}", e))
 }
 
 fn parse_qr_data_url(value: &serde_json::Value) -> Result<Option<String>, String> {
@@ -137,6 +319,7 @@ async fn connect_gateway(
     max_attempts: u8,
 ) -> Result<GatewaySocket, String> {
     let url = format!("ws://127.0.0.1:{}", gateway_port);
+    let device_identity = load_or_create_gateway_device_identity()?;
 
     for attempt in 0..max_attempts {
         if attempt > 0 {
@@ -148,22 +331,77 @@ async fn connect_gateway(
             .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
         let connect_req_id = uuid::Uuid::new_v4().to_string();
-        let connect_msg = build_connect_message(&connect_req_id, auth_token, scopes);
-
-        ws_stream
-            .send(Message::Text(connect_msg.to_string()))
-            .await
-            .map_err(|e| format!("WebSocket send connect failed: {}", e))?;
-
         let mut handshake_ok = false;
         let mut needs_reconnect = false;
-        while let Some(msg) = ws_stream.next().await {
+        let mut connect_sent = false;
+        let connect_deadline = tokio::time::Instant::now() + CONNECT_CHALLENGE_WAIT;
+        loop {
+            if !connect_sent && tokio::time::Instant::now() >= connect_deadline {
+                send_connect_message(&mut ws_stream, &connect_req_id, auth_token, scopes, None)
+                    .await?;
+                connect_sent = true;
+                continue;
+            }
+
+            let next_message = if connect_sent {
+                ws_stream.next().await
+            } else {
+                let wait_duration =
+                    connect_deadline.saturating_duration_since(tokio::time::Instant::now());
+                match tokio::time::timeout(wait_duration, ws_stream.next()).await {
+                    Ok(message) => message,
+                    Err(_) => {
+                        send_connect_message(
+                            &mut ws_stream,
+                            &connect_req_id,
+                            auth_token,
+                            scopes,
+                            None,
+                        )
+                        .await?;
+                        connect_sent = true;
+                        continue;
+                    }
+                }
+            };
+
+            let Some(msg) = next_message else {
+                break;
+            };
+
             match msg {
                 Ok(Message::Text(text)) => {
                     let val: serde_json::Value =
                         serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
+                    if !connect_sent {
+                        if let Some(nonce) = parse_connect_challenge_nonce(&val) {
+                            let device =
+                                build_connect_device(&device_identity, auth_token, scopes, &nonce)?;
+                            send_connect_message(
+                                &mut ws_stream,
+                                &connect_req_id,
+                                auth_token,
+                                scopes,
+                                Some(&device),
+                            )
+                            .await?;
+                            connect_sent = true;
+                            continue;
+                        }
+                    }
                     if val.get("id").and_then(|value| value.as_str()) == Some(&connect_req_id) {
                         if val.get("ok").and_then(|value| value.as_bool()) == Some(true) {
+                            if let Some(granted_scopes) = granted_scopes_from_connect_response(&val)
+                            {
+                                let missing = missing_scopes(scopes, &granted_scopes);
+                                if !missing.is_empty() {
+                                    return Err(format!(
+                                        "Gateway connect granted insufficient scopes: missing [{}], granted [{}]",
+                                        missing.join(", "),
+                                        granted_scopes.join(", ")
+                                    ));
+                                }
+                            }
                             handshake_ok = true;
                             break;
                         }
@@ -404,9 +642,11 @@ pub async fn check_whatsapp_linked(gateway_port: u16) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_connect_message, parse_connected, parse_qr_data_url, whatsapp_session_dir,
-        GATEWAY_CLIENT_ID, GATEWAY_CLIENT_MODE, GATEWAY_CLIENT_VERSION, GATEWAY_PAIRING_SCOPES,
-        GATEWAY_ROLE,
+        build_connect_device, build_connect_message, build_device_auth_payload,
+        granted_scopes_from_connect_response, missing_scopes, parse_connect_challenge_nonce,
+        parse_connected, parse_qr_data_url, whatsapp_session_dir, GatewayConnectDevice,
+        GatewayDeviceIdentity, GATEWAY_CLIENT_ID, GATEWAY_CLIENT_MODE, GATEWAY_CLIENT_VERSION,
+        GATEWAY_PAIRING_SCOPES, GATEWAY_ROLE,
     };
 
     #[test]
@@ -427,7 +667,8 @@ mod tests {
 
     #[test]
     fn build_connect_message_uses_pairing_scope_and_auth_token() {
-        let message = build_connect_message("req-1", Some("test-token"), &GATEWAY_PAIRING_SCOPES);
+        let message =
+            build_connect_message("req-1", Some("test-token"), &GATEWAY_PAIRING_SCOPES, None);
         let params = &message["params"];
 
         assert_eq!(message["type"], "req");
@@ -443,11 +684,125 @@ mod tests {
 
     #[test]
     fn build_connect_message_uses_backend_gateway_client_identity() {
-        let message = build_connect_message("req-1", Some("test-token"), &GATEWAY_PAIRING_SCOPES);
+        let message =
+            build_connect_message("req-1", Some("test-token"), &GATEWAY_PAIRING_SCOPES, None);
         let client = &message["params"]["client"];
 
         assert_eq!(client["id"], "gateway-client");
         assert_eq!(client["mode"], "backend");
+    }
+
+    #[test]
+    fn build_device_auth_payload_matches_webchat_contract() {
+        let identity = GatewayDeviceIdentity {
+            device_id: "device-1".to_string(),
+            public_key: "public".to_string(),
+            private_key: [7; 32],
+        };
+
+        let payload = build_device_auth_payload(
+            &identity,
+            Some("token-123"),
+            &GATEWAY_PAIRING_SCOPES,
+            1234,
+            "nonce-123",
+        );
+
+        assert_eq!(
+            payload,
+            "v2|device-1|gateway-client|backend|operator|operator.admin,operator.pairing|1234|token-123|nonce-123"
+        );
+    }
+
+    #[test]
+    fn build_connect_message_includes_signed_device_auth() {
+        let device = GatewayConnectDevice {
+            id: "device-1".to_string(),
+            public_key: "public".to_string(),
+            signature: "signature".to_string(),
+            signed_at: 1234,
+            nonce: "nonce-123".to_string(),
+        };
+
+        let message = build_connect_message(
+            "req-1",
+            Some("test-token"),
+            &GATEWAY_PAIRING_SCOPES,
+            Some(&device),
+        );
+
+        assert_eq!(message["params"]["device"]["id"], "device-1");
+        assert_eq!(message["params"]["device"]["publicKey"], "public");
+        assert_eq!(message["params"]["device"]["signature"], "signature");
+        assert_eq!(message["params"]["device"]["signedAt"], 1234);
+        assert_eq!(message["params"]["device"]["nonce"], "nonce-123");
+    }
+
+    #[test]
+    fn build_connect_device_uses_nonce_and_signs_payload() {
+        let identity = GatewayDeviceIdentity {
+            device_id: "device-1".to_string(),
+            public_key: "public".to_string(),
+            private_key: [7; 32],
+        };
+
+        let device = build_connect_device(
+            &identity,
+            Some("token-123"),
+            &GATEWAY_PAIRING_SCOPES,
+            "nonce-123",
+        )
+        .expect("device auth should build");
+
+        assert_eq!(device.id, "device-1");
+        assert_eq!(device.public_key, "public");
+        assert_eq!(device.nonce, "nonce-123");
+        assert!(device.signed_at > 0);
+        assert!(!device.signature.is_empty());
+    }
+
+    #[test]
+    fn parse_connect_challenge_nonce_reads_nonce() {
+        let response = serde_json::json!({
+            "type": "event",
+            "event": "connect.challenge",
+            "payload": {
+                "nonce": "nonce-123"
+            }
+        });
+
+        assert_eq!(
+            parse_connect_challenge_nonce(&response).as_deref(),
+            Some("nonce-123")
+        );
+    }
+
+    #[test]
+    fn granted_scopes_from_connect_response_reads_auth_scopes() {
+        let response = serde_json::json!({
+            "type": "res",
+            "ok": true,
+            "payload": {
+                "auth": {
+                    "scopes": ["operator.admin", "operator.pairing"]
+                }
+            }
+        });
+
+        assert_eq!(
+            granted_scopes_from_connect_response(&response),
+            Some(vec![
+                "operator.admin".to_string(),
+                "operator.pairing".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn missing_scopes_reports_requested_scope_gap() {
+        let missing = missing_scopes(&GATEWAY_PAIRING_SCOPES, &[String::from("operator.pairing")]);
+
+        assert_eq!(missing, vec!["operator.admin".to_string()]);
     }
 
     #[test]
