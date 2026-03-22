@@ -1,16 +1,12 @@
 # Progress
 
-- [x] Confirm the recent uninstall regression is in the confirmation UI flow, not the backend uninstall entrypoint.
 - [x] Update the on-disk task plan and progress tracker.
-- [x] Return explicit success/failure from maintenance actions.
-- [x] Gate uninstall UI reset on a successful backend uninstall.
-- [x] Add regression coverage for failed uninstall confirmation.
-- [x] Run targeted uninstall tests.
+- [x] Confirm the remote OAuth flow now reaches the remote OpenClaw prompt successfully.
+- [x] Trace the workspace spinner to the remote `prepare_gateway_chat_connection` bootstrap path.
+- [x] Patch remote tunnel startup to recover from stale `already running` state.
+- [x] Add SSH timeouts to remote gateway verification and token retrieval.
+- [x] Add regression coverage for the new remote bootstrap helpers.
+- [x] Run targeted tests.
 - [x] Run `npm test`.
 - [x] Run `npm run tauri dev`.
 - [ ] Commit and push changes if validation succeeds.
-- [x] Identify the two new regressions as local deferred OAuth launcher env handling and secure WhatsApp pairing hang behavior.
-- [x] Patch OAuth terminal bootstrapping and error reporting.
-- [x] Patch secure WhatsApp pairing timeout handling.
-- [x] Add regression tests for both flows.
-- [x] Run targeted tests, `npm test`, and `npm run tauri dev`.
