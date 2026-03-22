@@ -21,3 +21,5 @@
 - Created commit `34fc9bb8` and pushed the fix to `origin/add_ui`.
 - Follow-up regression diagnosis: the WhatsApp gateway handshake was incorrectly identifying as `openclaw-control-ui` in `ui` mode, which triggered `CONTROL_UI_DEVICE_IDENTITY_REQUIRED`.
 - Restored the backend gateway client identity (`gateway-client` / `backend`) and added a Rust regression test to lock that behavior.
+- Follow-up regression diagnosis: the pairing scope bundle had been narrowed away from the previously working backend scope set.
+- Restored the broader WhatsApp gateway scope bundle to include `operator.admin`, `operator.approvals`, and `operator.pairing`, while keeping the timeout-flow fix intact.
