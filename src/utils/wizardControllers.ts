@@ -658,6 +658,7 @@ export interface TunnelController {
     | "remoteUser"
     | "remotePassword"
     | "remotePrivateKeyPath"
+    | "gatewayPort"
   >;
   setLoading: Setter<boolean>;
   setTunnelActive: Setter<boolean>;
