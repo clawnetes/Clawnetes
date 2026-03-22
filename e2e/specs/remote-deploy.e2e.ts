@@ -133,7 +133,7 @@ test.describe.serial("Remote Deployment", () => {
     console.log("[test] remote dashboard URL:", dashboardUrl);
 
     // Verify dashboard is accessible through the tunnel
-    const dashboardResponse = await page.request.get("http://127.0.0.1:18789");
+    const dashboardResponse = await page.request.get("http://127.0.0.1:28789");
     expect(dashboardResponse.ok()).toBeTruthy();
 
     // Navigate to tokenized dashboard URL
@@ -159,7 +159,7 @@ test.describe.serial("Remote Deployment", () => {
     let lastError: Error | null = null;
     while (Date.now() - start < maxWait) {
       try {
-        const response = await page.request.get("http://127.0.0.1:18789");
+        const response = await page.request.get("http://127.0.0.1:28789");
         expect(response.ok()).toBeTruthy();
         lastError = null;
         break;
@@ -246,13 +246,13 @@ test.describe.serial("Remote Deployment", () => {
     expect(gotResponse, "Expected assistant to respond within 2 minutes").toBeTruthy();
   });
 
-  test("shows maintenance screen on reopen", async ({ page }) => {
+  test("reopens into chat after the remote environment is confirmed", async ({ page }) => {
     await page.goto("/");
 
     await waitForTestId(page, "step-welcome");
     await clickTestId(page, "btn-start-setup");
 
-    // Select Cloud Server — triggers remote check which detects openclaw installed
+    // Select Cloud Server, then explicitly continue into the installed remote workspace.
     await waitForTestId(page, "step-environment");
     await selectModeCard(page, "Cloud Server");
 
@@ -270,9 +270,7 @@ test.describe.serial("Remote Deployment", () => {
 
     await clickTestId(page, "btn-continue");
 
-    // Should redirect to maintenance screen (openclaw already installed on remote)
-    await waitForText(page, "Welcome Back", 30_000);
-    await waitForText(page, "Open Dashboard");
+    await waitForText(page, "Agent Workspace", 30_000);
   });
 
   test.afterAll(async () => {

@@ -102,6 +102,15 @@ export interface RemoteConfig {
   privateKeyPath: string | null;
 }
 
+export interface GatewayChatBootstrap {
+  wsUrl: string;
+  authToken: string;
+  targetEnvironment: string;
+  gatewayPort: number;
+  tunnelActive: boolean;
+  openClawVersion: string;
+}
+
 // Agent Type Presets
 export type AgentTypeId = "coding-assistant" | "office-assistant" | "travel-planner" | "custom";
 
@@ -187,7 +196,7 @@ export interface ConfigPayload {
   skills: string[];
   service_keys: Record<string, string>;
   provider_auths?: Record<string, ProviderAuthConfig>;
-  sandbox_mode: string | null;
+  sandbox_mode: string;
   tools_mode?: string | null;
   tools_profile?: ToolProfileId | null;
   allowed_tools: string[] | null;

@@ -14,6 +14,9 @@ lazy_static! {
     pub static ref TUNNEL_RUNNING: AtomicBool = AtomicBool::new(false);
 }
 
+pub const DEFAULT_GATEWAY_PORT: u16 = 18789;
+pub const REMOTE_TUNNEL_LOCAL_PORT: u16 = 28789;
+
 pub fn get_env_prefix(os_type: &str) -> String {
     if os_type == "Darwin" {
         "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; ".to_string()
@@ -147,7 +150,23 @@ pub fn execute_ssh(sess: &Session, cmd: &str) -> Result<String, String> {
     Ok(s)
 }
 
-pub fn start_ssh_tunnel(remote: &RemoteInfo) -> Result<String, String> {
+pub fn is_tunnel_listener_reachable(port: u16) -> bool {
+    TcpStream::connect(("127.0.0.1", port)).is_ok()
+}
+
+fn should_reset_stale_tunnel_state(tunnel_running: bool, listener_reachable: bool) -> bool {
+    tunnel_running && !listener_reachable
+}
+
+pub fn start_ssh_tunnel(remote: &RemoteInfo, remote_gateway_port: u16) -> Result<String, String> {
+    if should_reset_stale_tunnel_state(
+        TUNNEL_RUNNING.load(Ordering::Relaxed),
+        is_tunnel_listener_reachable(REMOTE_TUNNEL_LOCAL_PORT),
+    ) {
+        TUNNEL_RUNNING.store(false, Ordering::Relaxed);
+        thread::sleep(Duration::from_millis(100));
+    }
+
     if TUNNEL_RUNNING.load(Ordering::Relaxed) {
         return Err("SSH tunnel is already running".to_string());
     }
@@ -156,10 +175,13 @@ pub fn start_ssh_tunnel(remote: &RemoteInfo) -> Result<String, String> {
     let remote_info = remote.clone();
 
     thread::spawn(move || {
-        let listener = match TcpListener::bind("127.0.0.1:18789") {
+        let listener = match TcpListener::bind(("127.0.0.1", REMOTE_TUNNEL_LOCAL_PORT)) {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("Failed to bind local port 18789: {}", e);
+                eprintln!(
+                    "Failed to bind local port {}: {}",
+                    REMOTE_TUNNEL_LOCAL_PORT, e
+                );
                 TUNNEL_RUNNING.store(false, Ordering::Relaxed);
                 return;
             }
@@ -181,7 +203,11 @@ pub fn start_ssh_tunnel(remote: &RemoteInfo) -> Result<String, String> {
                         };
 
                         let mut remote_channel =
-                            match sess.channel_direct_tcpip("127.0.0.1", 18789, None) {
+                            match sess.channel_direct_tcpip(
+                                "127.0.0.1",
+                                remote_gateway_port,
+                                None,
+                            ) {
                                 Ok(c) => c,
                                 Err(e) => {
                                     eprintln!("Failed to open SSH channel for tunnel: {}", e);
@@ -263,4 +289,16 @@ pub fn start_ssh_tunnel(remote: &RemoteInfo) -> Result<String, String> {
 
 pub fn stop_ssh_tunnel() {
     TUNNEL_RUNNING.store(false, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_should_reset_stale_tunnel_state_only_when_flag_is_stale() {
+        assert!(should_reset_stale_tunnel_state(true, false));
+        assert!(!should_reset_stale_tunnel_state(true, true));
+        assert!(!should_reset_stale_tunnel_state(false, false));
+    }
 }

@@ -141,6 +141,26 @@ pub fn whatsapp_session_is_linked(session_dir: &Path) -> bool {
     false
 }
 
+fn local_whatsapp_session_dir_string() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let home_dir = crate::system::wsl_home_dir()?.trim().to_string();
+        Ok(format!(
+            "{}/.openclaw/credentials/whatsapp/default",
+            home_dir.trim_end_matches('/')
+        ))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let home_dir = dirs::home_dir().ok_or("Could not determine local home directory.")?;
+        Ok(home_dir
+            .join(".openclaw/credentials/whatsapp/default")
+            .to_string_lossy()
+            .to_string())
+    }
+}
+
 pub fn check_whatsapp_link_status(remote: Option<&RemoteInfo>) -> Result<bool, String> {
     if let Some(r) = remote {
         let sess = connect_ssh(r)?;
@@ -150,9 +170,21 @@ pub fn check_whatsapp_link_status(remote: Option<&RemoteInfo>) -> Result<bool, S
         )?;
         Ok(output.trim() == "linked")
     } else {
-        let home_dir = dirs::home_dir().ok_or("Could not determine local home directory.")?;
-        let session_dir = home_dir.join(".openclaw/credentials/whatsapp/default");
-        Ok(whatsapp_session_is_linked(&session_dir))
+        let session_dir = local_whatsapp_session_dir_string()?;
+
+        #[cfg(target_os = "windows")]
+        {
+            let output = crate::system::shell_command(&format!(
+                "if [ -d \"{0}\" ] && find \"{0}\" -type f 2>/dev/null | grep -q .; then printf linked; else printf unlinked; fi",
+                session_dir
+            ))?;
+            Ok(output.trim() == "linked")
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            Ok(whatsapp_session_is_linked(Path::new(&session_dir)))
+        }
     }
 }
 
@@ -170,9 +202,10 @@ pub fn check_pairing_status(remote: Option<&RemoteInfo>) -> Result<bool, String>
             }
         }
 
-        if let Some(policy) = read_telegram_dm_policy_from_config_str(
-            &execute_ssh(&sess, "cat ~/.openclaw/openclaw.json")?,
-        ) {
+        if let Some(policy) = read_telegram_dm_policy_from_config_str(&execute_ssh(
+            &sess,
+            "cat ~/.openclaw/openclaw.json",
+        )?) {
             if telegram_pairing_status_from_dm_policy(&policy) {
                 return Ok(true);
             }
@@ -292,6 +325,22 @@ mod tests {
     #[test]
     fn test_whatsapp_session_is_linked_nonexistent() {
         assert!(!whatsapp_session_is_linked(Path::new("/nonexistent/path")));
+    }
+
+    #[test]
+    fn test_local_whatsapp_session_dir_suffix_is_correct() {
+        let path = {
+            #[cfg(target_os = "windows")]
+            {
+                "/home/testuser/.openclaw/credentials/whatsapp/default".to_string()
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                "/tmp/testuser/.openclaw/credentials/whatsapp/default".to_string()
+            }
+        };
+
+        assert!(path.ends_with(".openclaw/credentials/whatsapp/default"));
     }
 
     #[test]

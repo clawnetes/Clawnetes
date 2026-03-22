@@ -2,6 +2,7 @@ import type { AgentConfigData, AgentTypeId, CronJobConfig, ProviderAuthConfig, T
 import { applyModelProviderAuth } from "./providerAuth";
 import { getSkillIdSet, materializeToolPolicy, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./toolSelection";
 import { AVAILABLE_SKILLS } from "../presets/availableSkills";
+import { toConfigSandboxMode } from "./sandboxMode";
 
 export interface ConfigPayloadInput {
   provider: string;
@@ -72,7 +73,7 @@ export function constructConfigPayload(
   providerAuthsOverride?: Record<string, ProviderAuthConfig>,
 ) {
   const availableSkillIds = getSkillIdSet(AVAILABLE_SKILLS);
-  const mappedSandboxMode = input.sandboxMode === "full" ? "all" : (input.sandboxMode === "partial" ? "non-main" : "off");
+  const mappedSandboxMode = toConfigSandboxMode(input.sandboxMode);
   const defaultIdentity = `# IDENTITY.md - Who Am I?
 - **Name:** ${input.agentName}
 - **Emoji:** ${input.agentEmoji}
@@ -101,7 +102,7 @@ Managed by Clawnetes.`;
     skills: input.selectedSkills,
     service_keys: input.serviceKeys,
     provider_auths: effectiveProviderAuths,
-    sandbox_mode: usePresetFields ? mappedSandboxMode : null,
+    sandbox_mode: mappedSandboxMode,
     tools_mode: usePresetFields
       ? (normalizedTopLevelToolPolicy.profile === "full" && normalizedTopLevelToolPolicy.allow.length === 0 && normalizedTopLevelToolPolicy.deny.length === 0 ? "all" : "allowlist")
       : "all",

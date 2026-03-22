@@ -1,6 +1,6 @@
 {
   "name": "clawnetes",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Native setup wizard for OpenClaw",
   "scripts": {
     "tauri": "tauri",
@@ -15,6 +15,7 @@
     "test:e2e:build": "npm run tauri build && npm run test:e2e"
   },
   "dependencies": {
+    "@noble/ed25519": "^3.0.1",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.4.1",
     "@tauri-apps/plugin-opener": "^2.5.0",
@@ -30,10 +31,10 @@
     "@types/react": "^19.2.13",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.0.0",
+    "dotenv": "^16.4.7",
     "jsdom": "^28.1.0",
     "typescript": "^5.0.2",
     "vite": "^4.3.9",
-    "dotenv": "^16.4.7",
     "vitest": "^4.0.18"
   }
 }

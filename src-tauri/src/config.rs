@@ -41,6 +41,15 @@ pub fn build_agent_session_init_command(agent_id: &str) -> String {
     )
 }
 
+fn map_loaded_sandbox_mode(mode: Option<&str>) -> &'static str {
+    match mode {
+        Some("all") | Some("full") => "full",
+        Some("non-main") | Some("partial") => "partial",
+        Some("off") | Some("none") => "none",
+        Some(_) | None => "none",
+    }
+}
+
 pub fn read_workspace_files() -> Result<serde_json::Value, String> {
     #[cfg(target_os = "windows")]
     {
@@ -157,8 +166,7 @@ pub fn validate_openclaw_config(
 ) -> Result<String, String> {
     use crate::system::shell_command;
     if let Some(r) = remote {
-        let sess =
-            crate::ssh::connect_ssh(r).map_err(|e| format!("SSH connect failed: {}", e))?;
+        let sess = crate::ssh::connect_ssh(r).map_err(|e| format!("SSH connect failed: {}", e))?;
         let os_type = crate::ssh::execute_ssh(&sess, "uname -s")
             .unwrap_or_default()
             .trim()
@@ -949,7 +957,9 @@ Serve {}."#,
     Ok("Configured.".into())
 }
 
-pub fn get_current_config(remote: Option<&crate::types::RemoteInfo>) -> Result<CurrentConfig, String> {
+pub fn get_current_config(
+    remote: Option<&crate::types::RemoteInfo>,
+) -> Result<CurrentConfig, String> {
     fn extract_md_value(content: &str, key: &str) -> String {
         let pattern = format!("**{}:**", key);
 
@@ -1007,7 +1017,9 @@ pub fn get_current_config(remote: Option<&crate::types::RemoteInfo>) -> Result<C
     let list_directories = |base_path: &str| -> Vec<String> {
         let mut dirs_found = Vec::new();
         if let Some(sess) = &session {
-            if let Ok(output) = crate::ssh::execute_ssh(sess, &format!("ls -1 -F \"{}\"", base_path)) {
+            if let Ok(output) =
+                crate::ssh::execute_ssh(sess, &format!("ls -1 -F \"{}\"", base_path))
+            {
                 for line in output.lines() {
                     if line.trim().ends_with('/') {
                         dirs_found.push(line.trim().trim_matches('/').to_string());
@@ -1141,21 +1153,12 @@ pub fn get_current_config(remote: Option<&crate::types::RemoteInfo>) -> Result<C
         }
     }
 
-    let sandbox_mode = defaults
-        .get("sandbox")
-        .and_then(|s| s.get("mode"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("full")
-        .to_string();
-    let mapped_sandbox = if sandbox_mode == "all" {
-        "full"
-    } else if sandbox_mode == "non-main" {
-        "partial"
-    } else if sandbox_mode == "off" {
-        "none"
-    } else {
-        &sandbox_mode
-    };
+    let mapped_sandbox = map_loaded_sandbox_mode(
+        defaults
+            .get("sandbox")
+            .and_then(|s| s.get("mode"))
+            .and_then(|v| v.as_str()),
+    );
 
     let tools = oc_config.get("tools").unwrap_or(&empty_json);
     let tools_profile = tools
@@ -1246,7 +1249,13 @@ pub fn get_current_config(remote: Option<&crate::types::RemoteInfo>) -> Result<C
 
             let afallbacks_raw: Vec<String> = agent_val
                 .get("model")
-                .and_then(|m| if m.is_object() { m.get("fallbacks") } else { None })
+                .and_then(|m| {
+                    if m.is_object() {
+                        m.get("fallbacks")
+                    } else {
+                        None
+                    }
+                })
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or_default();
             let afallbacks: Vec<String> = afallbacks_raw
@@ -1542,5 +1551,21 @@ mod tests {
         let cmd = build_agent_session_init_command("agent-1");
         assert!(cmd.contains("--agent agent-1"));
         assert!(cmd.contains("--message"));
+    }
+
+    #[test]
+    fn test_map_loaded_sandbox_mode_preserves_explicit_values() {
+        assert_eq!(map_loaded_sandbox_mode(Some("all")), "full");
+        assert_eq!(map_loaded_sandbox_mode(Some("non-main")), "partial");
+        assert_eq!(map_loaded_sandbox_mode(Some("off")), "none");
+        assert_eq!(map_loaded_sandbox_mode(Some("full")), "full");
+        assert_eq!(map_loaded_sandbox_mode(Some("partial")), "partial");
+        assert_eq!(map_loaded_sandbox_mode(Some("none")), "none");
+    }
+
+    #[test]
+    fn test_map_loaded_sandbox_mode_defaults_missing_and_unknown_to_none() {
+        assert_eq!(map_loaded_sandbox_mode(None), "none");
+        assert_eq!(map_loaded_sandbox_mode(Some("unexpected")), "none");
     }
 }

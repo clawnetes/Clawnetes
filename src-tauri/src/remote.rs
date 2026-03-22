@@ -7,8 +7,7 @@ use crate::executor::{CommandExecutor, SshExecutor};
 use crate::oauth::{
     apply_model_provider_auth, auth_provider_id_for_config, build_auth_profiles_doc,
     build_effective_models_catalog, collect_required_plugin_ids, default_provider_auth,
-    get_provider_auth_map, merge_enabled_plugin_entries, normalize_auth_mode,
-    resolve_profile_name,
+    get_provider_auth_map, merge_enabled_plugin_entries, normalize_auth_mode, resolve_profile_name,
 };
 use crate::ssh::get_env_prefix;
 use crate::system::shell_single_quote;
@@ -88,9 +87,9 @@ pub async fn setup_remote_openclaw(
         }
 
         let install_node = "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; brew install node";
-        executor
-            .run(install_node)
-            .map_err(|e| ClawError::System(format!("Failed to install Node.js via Homebrew: {}", e)))?;
+        executor.run(install_node).map_err(|e| {
+            ClawError::System(format!("Failed to install Node.js via Homebrew: {}", e))
+        })?;
     }
 
     let check_claw_cmd = if os_type == "Linux" {
@@ -210,7 +209,10 @@ pub async fn setup_remote_openclaw(
     });
 
     if !effective_fallback_models.is_empty() {
-        if let Some(primary) = defaults_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
+        if let Some(primary) = defaults_obj
+            .get_mut("model")
+            .and_then(|m| m.as_object_mut())
+        {
             primary.insert(
                 "fallbacks".to_string(),
                 serde_json::to_value(&effective_fallback_models)?,
@@ -610,7 +612,12 @@ pub async fn setup_remote_openclaw(
         &executor,
         &format!("{}/USER.md", workspace),
         config.user_md.as_ref(),
-        || format!("# USER.md - About Your Human\n- **Name:** {}\n---", config.user_name),
+        || {
+            format!(
+                "# USER.md - About Your Human\n- **Name:** {}\n---",
+                config.user_name
+            )
+        },
     )?;
     write_markdown_file(
         &executor,
@@ -686,7 +693,12 @@ pub async fn setup_remote_openclaw(
                 &executor,
                 &format!("{}/USER.md", agent_workspace),
                 agent.user_md.as_ref(),
-                || format!("# USER.md - About Your Human\n- **Name:** {}\n---", config.user_name),
+                || {
+                    format!(
+                        "# USER.md - About Your Human\n- **Name:** {}\n---",
+                        config.user_name
+                    )
+                },
             )?;
             write_markdown_file(
                 &executor,
@@ -701,8 +713,12 @@ pub async fn setup_remote_openclaw(
         }
     }
 
-    let _ = executor.run(&format!("{}openclaw doctor --fix --yes || true", nvm_prefix));
-    let _ = executor.run("systemctl --user reset-failed openclaw-gateway.service 2>/dev/null || true");
+    let _ = executor.run(&format!(
+        "{}openclaw doctor --fix --yes || true",
+        nvm_prefix
+    ));
+    let _ =
+        executor.run("systemctl --user reset-failed openclaw-gateway.service 2>/dev/null || true");
     executor.run(&format!("{}openclaw gateway stop || true", nvm_prefix))?;
     executor.run(&format!("{}openclaw gateway start", nvm_prefix))?;
 
@@ -712,7 +728,11 @@ pub async fn setup_remote_openclaw(
             if agent.id == "main" {
                 continue;
             }
-            let cmd = format!("{}{}", nvm_prefix, build_agent_session_init_command(&agent.id));
+            let cmd = format!(
+                "{}{}",
+                nvm_prefix,
+                build_agent_session_init_command(&agent.id)
+            );
             let _ = executor.run(&cmd);
             sleep(Duration::from_secs(1)).await;
         }

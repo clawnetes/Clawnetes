@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, openDialog, openExternal } from "./lib/tauri";
 import "./App.css";
 import { PERSONA_TEMPLATES } from "./presets/personaTemplates";
@@ -15,6 +15,7 @@ import ToolPolicyEditor from "./components/ToolPolicyEditor";
 import { createInheritedToolPolicy, DEFAULT_TOOL_POLICY, deriveToolPolicyFromLegacy, getSkillIdSet, materializeToolPolicy, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./utils/toolSelection";
 import { constructConfigPayload as buildConfigPayload, buildAgentToolsPayload as buildAgentTools } from "./utils/configPayload";
 import { executeDeferredOAuthQueue } from "./utils/oauthCompletion";
+import { toConfigSandboxMode } from "./utils/sandboxMode";
 import {
   continueToAdvancedSettings as continueToAdvancedSettingsController,
   handleAdvancedTransition as handleAdvancedTransitionController,
@@ -24,9 +25,10 @@ import {
   loadExistingConfig as loadExistingConfigController,
 } from "./utils/wizardControllers";
 import Dropdown from "./components/Dropdown";
-import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "./types";
+import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, GatewayChatBootstrap, ProviderAuthConfig, ToolPolicy } from "./types";
 import { useWizardState, fieldSetter } from "./hooks/useWizardState";
 import { WizardContext } from "./context/WizardContext";
+import { clearAllChatShellStorage } from "./lib/chatShellStorage";
 import StepWelcome from "./components/steps/StepWelcome";
 import StepSecurity from "./components/steps/StepSecurity";
 import StepIdentity from "./components/steps/StepIdentity";
@@ -52,10 +54,17 @@ import StepModels from "./components/steps/StepModels";
 import StepMaintenance from "./components/steps/StepMaintenance";
 import StepAgentConfigLoop from "./components/steps/StepAgentConfigLoop";
 import StepComplete from "./components/steps/StepComplete";
+import ChatShell from "./components/chat/ChatShell";
+import ConfigureDrawer from "./components/chat/ConfigureDrawer";
 
 function App() {
   const [state, dispatch] = useWizardState();
   const initialConfigRef = useRef<any>(null);
+  const [appScreen, setAppScreen] = useState<"loading" | "setup" | "chat" | "command-center">("loading");
+  const [pendingMaintenanceConfirm, setPendingMaintenanceConfirm] = useState<"repair" | "audit" | "update" | "uninstall" | null>(null);
+  const [chatBootstrap, setChatBootstrap] = useState<GatewayChatBootstrap | null>(null);
+  const [chatBootstrapping, setChatBootstrapping] = useState(false);
+  const [chatBootstrapError, setChatBootstrapError] = useState("");
 
   // Destructure state for backwards-compatible access throughout the component
   const {
@@ -292,7 +301,45 @@ function App() {
     availableSkills,
   });
 
-  useEffect(() => { checkSystem(true); }, []);
+  const buildActiveRemoteConfig = useCallback(() => {
+    if (targetEnvironment !== "cloud") {
+      return null;
+    }
+
+    return {
+      ip: remoteIp,
+      user: remoteUser,
+      password: remotePassword || null,
+      privateKeyPath: remotePrivateKeyPath || null,
+    };
+  }, [remoteIp, remotePassword, remotePrivateKeyPath, remoteUser, targetEnvironment]);
+
+  const bootstrapGatewayChat = useCallback(async () => {
+    setChatBootstrapping(true);
+    setChatBootstrapError("");
+
+    try {
+      const bootstrap = await invoke<GatewayChatBootstrap>("prepare_gateway_chat_connection", {
+        gatewayPort,
+        remote: buildActiveRemoteConfig(),
+      });
+      setChatBootstrap(bootstrap);
+      setAppScreen("chat");
+    } catch (error) {
+      setChatBootstrap(null);
+      setChatBootstrapError(String(error));
+    } finally {
+      setChatBootstrapping(false);
+    }
+  }, [buildActiveRemoteConfig, gatewayPort]);
+
+  useEffect(() => { void checkSystem(true, false); }, []);
+
+  useEffect(() => {
+    if (appScreen !== "chat") return;
+    if (chatBootstrapping || chatBootstrap) return;
+    void bootstrapGatewayChat();
+  }, [appScreen, chatBootstrap, chatBootstrapping, bootstrapGatewayChat]);
 
   useEffect(() => {
     let cancelled = false;
@@ -515,6 +562,7 @@ function App() {
         provider: item.targetProvider,
         method: item.authMethod,
         oauthProviderId: item.oauthProviderId,
+        remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
       }),
       onItemStart: (item) => {
         setOauthCompletionResults(prev => ({
@@ -670,7 +718,7 @@ function App() {
     setNodeInstallError("");
     try {
       await invoke("install_local_nodejs");
-      await checkSystem(false);
+      await checkSystem(true, false);
     } catch (e: any) {
       setNodeInstallError("Failed to install: " + e);
     } finally {
@@ -678,7 +726,7 @@ function App() {
     }
   }
 
-  async function checkSystem(skipRedirect = false) {
+  async function checkSystem(skipRedirect = false, allowInstalledChat = true) {
     // Always check local system on initial load
     const res: any = await invoke("check_prerequisites");
     setChecks({
@@ -689,13 +737,21 @@ function App() {
     const version: string = await invoke("get_openclaw_version");
     setOpenClawVersion(version);
 
-    if (res.openclaw_installed && !skipRedirect) {
-      setStep(0);
-      return true; // Indicate that we're going to maintenance
+    if (res.openclaw_installed) {
+      if (allowInstalledChat) {
+        setAppScreen("chat");
+      } else {
+        setStep(1);
+        setAppScreen("setup");
+      }
+      return true;
     } else if (!skipRedirect) {
-      setStep(0.5); // Go to Welcome page if not installed
+      setStep(0.5);
+      setAppScreen("setup");
+    } else {
+      setAppScreen("setup");
     }
-    return res.openclaw_installed; // Return installation status
+    return res.openclaw_installed;
   }
 
   async function checkRemoteSystem(skipRedirect = false) {
@@ -717,12 +773,11 @@ function App() {
       const version: string = await invoke("get_remote_openclaw_version", { remote });
       setOpenClawVersion(version);
 
-      // If OpenClaw is already installed remotely, go to maintenance screen (unless skipping)
-      if (res.openclaw_installed && !skipRedirect) {
-        setStep(0);
-        return true; // Indicate that we're going to maintenance
+      if (res.openclaw_installed) {
+        setAppScreen("chat");
+        return true;
       }
-      return res.openclaw_installed; // Return installation status
+      return res.openclaw_installed;
     }
     return false;
   }
@@ -964,8 +1019,6 @@ function App() {
 ---
 Managed by Clawnetes.`;
 
-    const mappedSandboxMode = initial.sandbox_mode === "full" ? "all" : (initial.sandbox_mode === "partial" ? "non-main" : (initial.sandbox_mode === "none" ? "off" : initial.sandbox_mode));
-
     return {
       provider: normalizedProvider,
       api_key: initialProviderAuths[normalizedProvider]?.token || initial.api_key,
@@ -983,7 +1036,7 @@ Managed by Clawnetes.`;
       skills: normalizedTopLevelSelection.skills,
       service_keys: initial.service_keys || {},
       provider_auths: initialProviderAuths,
-      sandbox_mode: mappedSandboxMode,
+      sandbox_mode: toConfigSandboxMode(initial.sandbox_mode),
       tools_mode: initial.tools_mode ?? null,
       tools_profile: normalizedTopLevelToolPolicy.profile,
       allowed_tools: normalizedTopLevelToolPolicy.allow,
@@ -1076,6 +1129,7 @@ Managed by Clawnetes.`,
         telegramToken,
         whatsappDmPolicy,
         whatsappPhoneNumber,
+        gatewayPort,
         selectedSkills,
       },
       configPayloadInput,
@@ -1123,6 +1177,7 @@ Managed by Clawnetes.`,
     setTunnelActive,
     setWhatsappPaired,
     setWhatsappPhoneSubmitted,
+    gatewayPort,
     targetEnvironment,
     telegramToken,
     transformInitialToPayload,
@@ -1155,7 +1210,7 @@ Managed by Clawnetes.`,
   }
 
   const handleMaintenanceAction = useCallback(async (action: string) => {
-    await handleMaintenanceActionController({
+    return await handleMaintenanceActionController({
       state: {
         targetEnvironment,
         sshStatus,
@@ -1163,6 +1218,7 @@ Managed by Clawnetes.`,
         remoteUser,
         remotePassword,
         remotePrivateKeyPath,
+        gatewayPort,
       },
       setLoading,
       setMaintenanceStatus,
@@ -1171,6 +1227,7 @@ Managed by Clawnetes.`,
       setMaintCompleted,
     }, action);
   }, [
+    gatewayPort,
     remoteIp,
     remotePassword,
     remotePrivateKeyPath,
@@ -1314,6 +1371,7 @@ Managed by Clawnetes.`,
         remoteUser,
         remotePassword,
         remotePrivateKeyPath,
+        gatewayPort,
       },
       setLoading,
       setTunnelActive,
@@ -1329,6 +1387,76 @@ Managed by Clawnetes.`,
     setTunnelActive,
     tunnelActive,
   ]);
+
+  const openChatWorkspace = useCallback(() => {
+    setChatBootstrap(null);
+    setChatBootstrapError("");
+    setLogs("");
+    setMaintenanceStatus("");
+    setMaintCompleted(false);
+    setAppScreen("chat");
+  }, [setLogs, setMaintCompleted, setMaintenanceStatus]);
+
+  const openCommandCenter = useCallback(() => {
+    if (!loading) {
+      setLogs("");
+      setMaintenanceStatus("");
+      setMaintCompleted(false);
+    }
+    setAppScreen("command-center");
+  }, [loading, setLogs, setMaintCompleted, setMaintenanceStatus]);
+
+  const handleReconfigureFromDrawer = useCallback(async () => {
+    const loaded = await loadExistingConfig();
+    if (!loaded) return;
+    setChatBootstrap(null);
+    setChatBootstrapError("");
+    setAppScreen("setup");
+    setMode("advanced");
+    setStep(6);
+  }, [loadExistingConfig, setMode, setStep]);
+
+  const requestMaintenanceConfirmation = useCallback((action: "repair" | "audit" | "update" | "uninstall") => {
+    if (loading) return;
+    setPendingMaintenanceConfirm(action);
+  }, [loading]);
+
+  const closeMaintenanceConfirmation = useCallback(() => {
+    if (loading) return;
+    setPendingMaintenanceConfirm(null);
+  }, [loading]);
+
+  const completeUninstallFlow = useCallback(() => {
+    clearAllChatShellStorage();
+    setChatBootstrap(null);
+    setChatBootstrapError("");
+    setLogs("");
+    setMaintenanceStatus("");
+    setMaintCompleted(false);
+    setAppScreen("setup");
+    setStep(0.5);
+  }, [setLogs, setMaintCompleted, setMaintenanceStatus, setStep]);
+
+  const confirmMaintenanceAction = useCallback(async () => {
+    if (!pendingMaintenanceConfirm) return;
+
+    const action = pendingMaintenanceConfirm;
+    setPendingMaintenanceConfirm(null);
+    const succeeded = await handleMaintenanceAction(action);
+
+    if (action === "uninstall" && succeeded) {
+      completeUninstallFlow();
+      return;
+    }
+
+    if (succeeded) {
+      setChatBootstrap(null);
+    }
+  }, [completeUninstallFlow, handleMaintenanceAction, pendingMaintenanceConfirm]);
+
+  const handleDrawerMaintenanceAction = useCallback(async (action: "repair" | "audit" | "update" | "uninstall") => {
+    requestMaintenanceConfirmation(action);
+  }, [requestMaintenanceConfirmation]);
 
   const toggleSkill = (id: string) => {
     setSelectedSkills(prev =>
@@ -1347,11 +1475,21 @@ Managed by Clawnetes.`,
   const currentPayload = buildConfigPayload(configPayloadInput);
   const initialPayload = transformInitialToPayload(initialConfigRef.current);
   const hasChanges = !initialConfigRef.current || !isDeepEqual(initialPayload, currentPayload);
+  const remoteSummary = targetEnvironment === "cloud"
+    ? `${remoteUser || "remote-user"}@${remoteIp || "remote-host"}${tunnelActive ? " via SSH tunnel" : ""}`
+    : "Running against the local OpenClaw gateway on loopback.";
 
   const renderStep = () => {
     switch (step) {
       case 0:
-        return <StepMaintenance handleMaintenanceAction={handleMaintenanceAction} loadExistingConfig={loadExistingConfig} formatSshError={formatSshError} />;
+        return (
+          <StepMaintenance
+            handleMaintenanceAction={handleMaintenanceAction}
+            onRequestConfirmation={requestMaintenanceConfirmation}
+            loadExistingConfig={loadExistingConfig}
+            formatSshError={formatSshError}
+          />
+        );
       case 0.5:
         return <StepWelcome />;
       case 1:
@@ -1403,7 +1541,7 @@ Managed by Clawnetes.`,
       case 10.5:
         return <StepPersonality handleSaveWorkspace={handleSaveWorkspace} />;
       case 17:
-        return <StepComplete handleToggleTunnel={handleToggleTunnel} handlePairing={handlePairing} handleAdvancedTransition={handleAdvancedTransition} runDeferredOAuthQueue={runDeferredOAuthQueue} deferredOAuthQueue={deferredOAuthQueue} />;
+        return <StepComplete handleToggleTunnel={handleToggleTunnel} handlePairing={handlePairing} handleAdvancedTransition={handleAdvancedTransition} runDeferredOAuthQueue={runDeferredOAuthQueue} deferredOAuthQueue={deferredOAuthQueue} onOpenWorkspace={openChatWorkspace} />;
       default:
         return null;
     }
@@ -1412,24 +1550,64 @@ Managed by Clawnetes.`,
   return (
     <WizardContext.Provider value={{ state, dispatch }}>
     <div className="app-container">
-      <div className="top-bar">
-        <span className="top-bar-title">Clawnetes</span>
-      </div>
-      <div className="step-progress">
-        {stepsList
-          .filter(s => !s.hidden)
-          .filter(s => mode === "advanced" || !s.advanced)
-          .filter(s => !skipBasicConfig || (s.id !== 8 && s.id !== 9))
-          .map((s) => (
-            <div key={s.id} className={`step-dot ${getStepStatus(s.id)}`} />
-          ))}
-      </div>
+      {appScreen === "loading" ? (
+        <main className="main-content">
+          <div className="content-wrapper">
+            <div className="step-view">
+              <h2>Preparing Clawnetes</h2>
+              <p className="step-description">Checking your OpenClaw installation and gateway state.</p>
+            </div>
+          </div>
+        </main>
+      ) : appScreen === "chat" ? (
+        <>
+          <ChatShell
+            bootstrap={chatBootstrap}
+            bootstrapping={chatBootstrapping}
+            bootstrapError={chatBootstrapError}
+            onRetryConnection={() => {
+              setChatBootstrap(null);
+              void bootstrapGatewayChat();
+            }}
+            onOpenConfigure={openCommandCenter}
+          />
+        </>
+      ) : appScreen === "command-center" ? (
+        <ConfigureDrawer
+            busy={loading}
+            maintenanceStatus={maintenanceStatus}
+            logs={logs}
+            targetEnvironment={targetEnvironment}
+            remoteSummary={remoteSummary}
+            onClose={openChatWorkspace}
+            onRepair={() => void handleDrawerMaintenanceAction("repair")}
+            onAudit={() => void handleDrawerMaintenanceAction("audit")}
+            onUpgrade={() => void handleDrawerMaintenanceAction("update")}
+            onReconfigure={() => void handleReconfigureFromDrawer()}
+            onUninstall={() => void handleDrawerMaintenanceAction("uninstall")}
+          />
+      ) : (
+        <>
+          <div className="top-bar">
+            <span className="top-bar-title">Clawnetes</span>
+          </div>
+          <div className="step-progress">
+            {stepsList
+              .filter(s => !s.hidden)
+              .filter(s => mode === "advanced" || !s.advanced)
+              .filter(s => !skipBasicConfig || (s.id !== 8 && s.id !== 9))
+              .map((s) => (
+                <div key={s.id} className={`step-dot ${getStepStatus(s.id)}`} />
+              ))}
+          </div>
 
-      <main className="main-content">
-        <div className="content-wrapper">
-          {renderStep()}
-        </div>
-      </main>
+          <main className="main-content">
+            <div className="content-wrapper">
+              {renderStep()}
+            </div>
+          </main>
+        </>
+      )}
 
       {showLicenseModal && (
         <div className="modal-overlay" style={{
@@ -1502,6 +1680,39 @@ Managed by Clawnetes.`,
                 }}
                 disabled={verifyingLicense}
               >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingMaintenanceConfirm && (
+        <div className="modal-overlay">
+          <div className="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="maintenance-confirm-title">
+            <h3 id="maintenance-confirm-title" style={{ marginTop: 0 }}>
+              {pendingMaintenanceConfirm === "repair"
+                ? "Repair System"
+                : pendingMaintenanceConfirm === "audit"
+                  ? "Security Audit"
+                  : pendingMaintenanceConfirm === "update"
+                    ? "Upgrade OpenClaw"
+                    : "Uninstall OpenClaw"}
+            </h3>
+            <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>
+              {pendingMaintenanceConfirm === "repair"
+                ? "Run OpenClaw system repair now?"
+                : pendingMaintenanceConfirm === "audit"
+                  ? "Run OpenClaw security audit and apply fixes now?"
+                  : pendingMaintenanceConfirm === "update"
+                    ? "Upgrade OpenClaw now?"
+                    : "Are you absolutely sure you want to completely remove OpenClaw and all its data?"}
+            </p>
+            <div className="button-group" style={{ marginTop: "1.5rem" }}>
+              <button className="primary" onClick={() => void confirmMaintenanceAction()} disabled={loading} type="button">
+                Yes
+              </button>
+              <button className="secondary" onClick={closeMaintenanceConfirmation} disabled={loading} type="button">
                 Cancel
               </button>
             </div>

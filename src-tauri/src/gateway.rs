@@ -1,14 +1,27 @@
 use std::net::TcpStream;
+use std::sync::mpsc::RecvTimeoutError;
+use std::thread;
 use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::ssh::{connect_ssh, execute_ssh, get_env_prefix};
 use crate::system::shell_command;
-use crate::types::RemoteInfo;
+use crate::types::{GatewayChatBootstrap, RemoteInfo};
+
+const REMOTE_SSH_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+const REMOTE_TUNNEL_RESTART_SETTLE_TIME: Duration = Duration::from_millis(250);
+
+fn should_restart_remote_tunnel(tunnel_flag_running: bool, local_port_ready: bool) -> bool {
+    tunnel_flag_running && !local_port_ready
+}
 
 pub fn parse_gateway_token_cli_output(output: &str) -> Option<String> {
     let token = output.trim().trim_matches('"').to_string();
-    if token.is_empty() || token == "null" || token == "undefined" {
+    if token.is_empty()
+        || token == "null"
+        || token == "undefined"
+        || token == "__OPENCLAW_REDACTED__"
+    {
         None
     } else {
         Some(token)
@@ -24,7 +37,22 @@ pub fn parse_dashboard_url_cli_output(output: &str) -> Option<String> {
     })
 }
 
-pub fn extract_gateway_token_from_config(config_str: &str, context: &str) -> Result<String, String> {
+fn build_remote_tunnel_dashboard_url(token: &str) -> String {
+    format!(
+        "http://127.0.0.1:{}/#token={}",
+        crate::ssh::REMOTE_TUNNEL_LOCAL_PORT,
+        token
+    )
+}
+
+fn build_remote_tunnel_ws_url() -> String {
+    format!("ws://127.0.0.1:{}", crate::ssh::REMOTE_TUNNEL_LOCAL_PORT)
+}
+
+pub fn extract_gateway_token_from_config(
+    config_str: &str,
+    context: &str,
+) -> Result<String, String> {
     let json: serde_json::Value = serde_json::from_str(config_str).map_err(|e| e.to_string())?;
     json.get("gateway")
         .and_then(|g| g.get("auth"))
@@ -51,6 +79,138 @@ pub fn get_remote_gateway_token(remote: &RemoteInfo) -> Result<String, String> {
 
     let content = execute_ssh(&sess, "cat ~/.openclaw/openclaw.json")?;
     extract_gateway_token_from_config(&content, "remote config")
+}
+
+fn execute_remote_ssh_command_with_timeout(
+    remote: &RemoteInfo,
+    cmd: &str,
+    timeout: Duration,
+    context: &str,
+) -> Result<String, String> {
+    let remote = remote.clone();
+    let cmd = cmd.to_string();
+    let context = context.to_string();
+    let (sender, receiver) = std::sync::mpsc::channel();
+
+    thread::spawn(move || {
+        let result = (|| {
+            let sess = connect_ssh(&remote)?;
+            execute_ssh(&sess, &cmd)
+        })();
+        let _ = sender.send(result);
+    });
+
+    match receiver.recv_timeout(timeout) {
+        Ok(result) => result.map_err(|err| format!("{}: {}", context, err)),
+        Err(RecvTimeoutError::Timeout) => Err(format!(
+            "Timed out after {}s while {}.",
+            timeout.as_secs(),
+            context
+        )),
+        Err(RecvTimeoutError::Disconnected) => {
+            Err(format!("{} failed before returning a result.", context))
+        }
+    }
+}
+
+fn get_remote_env_prefix_with_timeout(
+    remote: &RemoteInfo,
+    timeout: Duration,
+) -> Result<String, String> {
+    let os_type = execute_remote_ssh_command_with_timeout(
+        remote,
+        "uname -s",
+        timeout,
+        "detecting remote OS",
+    )?;
+    Ok(get_env_prefix(os_type.trim()))
+}
+
+fn get_remote_gateway_token_with_timeout(
+    remote: &RemoteInfo,
+    timeout: Duration,
+) -> Result<String, String> {
+    let prefix = get_remote_env_prefix_with_timeout(remote, timeout)?;
+    let cli_token = execute_remote_ssh_command_with_timeout(
+        remote,
+        &format!("{}openclaw config get gateway.auth.token", prefix),
+        timeout,
+        "reading remote gateway token via OpenClaw CLI",
+    )
+    .ok()
+    .and_then(|output| parse_gateway_token_cli_output(&output));
+
+    if let Some(token) = cli_token {
+        return Ok(token);
+    }
+
+    let content = execute_remote_ssh_command_with_timeout(
+        remote,
+        "cat ~/.openclaw/openclaw.json",
+        timeout,
+        "reading remote OpenClaw config",
+    )?;
+    extract_gateway_token_from_config(&content, "remote config")
+}
+
+fn ensure_remote_gateway_tunnel(remote: &RemoteInfo, remote_gateway_port: u16) -> Result<(), String> {
+    let local_port_ready =
+        crate::ssh::is_tunnel_listener_reachable(crate::ssh::REMOTE_TUNNEL_LOCAL_PORT);
+    let tunnel_flag_running = crate::ssh::TUNNEL_RUNNING.load(std::sync::atomic::Ordering::Relaxed);
+
+    if should_restart_remote_tunnel(tunnel_flag_running, local_port_ready) {
+        crate::ssh::stop_ssh_tunnel();
+        std::thread::sleep(REMOTE_TUNNEL_RESTART_SETTLE_TIME);
+    }
+
+    if crate::ssh::is_tunnel_listener_reachable(crate::ssh::REMOTE_TUNNEL_LOCAL_PORT) {
+        return Ok(());
+    }
+
+    match crate::ssh::start_ssh_tunnel(remote, remote_gateway_port) {
+        Ok(_) => Ok(()),
+        Err(err)
+            if err.contains("already running")
+                && crate::ssh::is_tunnel_listener_reachable(crate::ssh::REMOTE_TUNNEL_LOCAL_PORT) =>
+        {
+            Ok(())
+        }
+        Err(err) => Err(err),
+    }
+}
+
+pub fn get_local_gateway_token() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use crate::system::{wsl_home_dir, wsl_read_file, wsl_root_command};
+
+        if let Some(token) = wsl_root_command("openclaw config get gateway.auth.token")
+            .ok()
+            .and_then(|output| parse_gateway_token_cli_output(&output))
+        {
+            return Ok(token);
+        }
+
+        let home = wsl_home_dir()?.trim().to_string();
+        let config_path = format!("{}/.openclaw/openclaw.json", home);
+        let config_str = wsl_read_file(&config_path)?;
+        return extract_gateway_token_from_config(&config_str, "config");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(token) = shell_command("openclaw config get gateway.auth.token")
+            .ok()
+            .and_then(|output| parse_gateway_token_cli_output(&output))
+        {
+            return Ok(token);
+        }
+
+        let home = dirs::home_dir().ok_or("Could not find home directory")?;
+        let config_path = home.join(".openclaw").join("openclaw.json");
+        let config_str = std::fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+        extract_gateway_token_from_config(&config_str, "config")
+    }
 }
 
 pub async fn start_gateway() -> Result<String, String> {
@@ -140,10 +300,7 @@ pub async fn generate_pairing_code() -> Result<String, String> {
     Ok("Ready! Send any message to your Telegram bot to start pairing. The bot will respond automatically with a code.".to_string())
 }
 
-pub fn approve_pairing(
-    code: &str,
-    remote: Option<&RemoteInfo>,
-) -> Result<String, String> {
+pub fn approve_pairing(code: &str, remote: Option<&RemoteInfo>) -> Result<String, String> {
     let cmd_raw = format!("openclaw pairing approve {} --channel telegram", code);
 
     let output = if let Some(r) = remote {
@@ -179,19 +336,14 @@ pub fn approve_pairing(
 pub fn get_dashboard_url(
     is_remote: bool,
     remote: Option<&RemoteInfo>,
+    gateway_port: Option<u16>,
 ) -> Result<String, String> {
+    let gateway_port = gateway_port.unwrap_or(crate::ssh::DEFAULT_GATEWAY_PORT);
     let token = if is_remote && remote.is_some() {
         let r = remote.unwrap();
         let sess = connect_ssh(r)?;
         let os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
         let prefix = get_env_prefix(&os_type);
-
-        if let Some(url) = execute_ssh(&sess, &format!("{}openclaw dashboard --no-open", prefix))
-            .ok()
-            .and_then(|output| parse_dashboard_url_cli_output(&output))
-        {
-            return Ok(url);
-        }
 
         if let Some(token) = execute_ssh(
             &sess,
@@ -238,25 +390,64 @@ pub fn get_dashboard_url(
                 return Ok(url);
             }
 
-            if let Some(token) = shell_command("openclaw config get gateway.auth.token")
-                .ok()
-                .and_then(|output| parse_gateway_token_cli_output(&output))
-            {
-                token
-            } else {
-                let home = dirs::home_dir().ok_or("Could not find home directory")?;
-                let config_path = home.join(".openclaw").join("openclaw.json");
-                let config_str =
-                    std::fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-                extract_gateway_token_from_config(&config_str, "config")?
-            }
+            get_local_gateway_token()?
         }
     };
 
-    Ok(format!("http://127.0.0.1:18789/#token={}", token))
+    if is_remote && remote.is_some() {
+        return Ok(build_remote_tunnel_dashboard_url(&token));
+    }
+
+    Ok(format!("http://127.0.0.1:{}/#token={}", gateway_port, token))
 }
 
-pub fn verify_tunnel_connectivity(remote: &RemoteInfo) -> Result<bool, String> {
+pub async fn prepare_gateway_chat_connection(
+    gateway_port: u16,
+    remote: Option<&RemoteInfo>,
+) -> Result<GatewayChatBootstrap, String> {
+    let ws_url = format!("ws://127.0.0.1:{}", gateway_port);
+
+    if let Some(remote) = remote {
+        let remote = remote.clone();
+        let remote_gateway_port = gateway_port;
+
+        return tauri::async_runtime::spawn_blocking(
+            move || -> Result<GatewayChatBootstrap, String> {
+                ensure_remote_gateway_tunnel(&remote, remote_gateway_port)?;
+                verify_tunnel_connectivity(&remote, remote_gateway_port)?;
+
+                Ok(GatewayChatBootstrap {
+                    ws_url: build_remote_tunnel_ws_url(),
+                    auth_token: get_remote_gateway_token_with_timeout(
+                        &remote,
+                        REMOTE_SSH_COMMAND_TIMEOUT,
+                    )?,
+                    target_environment: "cloud".to_string(),
+                    gateway_port: crate::ssh::REMOTE_TUNNEL_LOCAL_PORT,
+                    tunnel_active: true,
+                    openclaw_version: crate::maintenance::get_remote_openclaw_version(&remote)?,
+                })
+            },
+        )
+        .await
+        .map_err(|err| err.to_string())?;
+    }
+
+    if TcpStream::connect(("127.0.0.1", gateway_port)).is_err() {
+        start_gateway().await?;
+    }
+
+    Ok(GatewayChatBootstrap {
+        ws_url,
+        auth_token: get_local_gateway_token()?,
+        target_environment: "local".to_string(),
+        gateway_port,
+        tunnel_active: false,
+        openclaw_version: crate::maintenance::get_openclaw_version(),
+    })
+}
+
+pub fn verify_tunnel_connectivity(remote: &RemoteInfo, remote_gateway_port: u16) -> Result<bool, String> {
     let mut last_error = String::from("No attempts made");
 
     for i in 0..30 {
@@ -264,23 +455,37 @@ pub fn verify_tunnel_connectivity(remote: &RemoteInfo) -> Result<bool, String> {
             std::thread::sleep(Duration::from_secs(2));
         }
 
-        if let Err(e) = TcpStream::connect("127.0.0.1:18789") {
-            last_error = format!("Local tunnel port 18789 not reachable: {}", e);
+        if !crate::ssh::is_tunnel_listener_reachable(crate::ssh::REMOTE_TUNNEL_LOCAL_PORT) {
+            last_error = format!(
+                "Local tunnel port {} not reachable while forwarding to remote gateway port {}",
+                crate::ssh::REMOTE_TUNNEL_LOCAL_PORT,
+                remote_gateway_port
+            );
             continue;
         }
 
-        let sess = match connect_ssh(remote) {
-            Ok(s) => s,
+        let prefix = match get_remote_env_prefix_with_timeout(remote, REMOTE_SSH_COMMAND_TIMEOUT) {
+            Ok(prefix) => prefix,
             Err(e) => {
-                last_error = format!("SSH connection failed during verification: {}", e);
+                last_error = e;
                 continue;
             }
         };
 
-        let check_process = execute_ssh(&sess, "ps aux | grep openclaw | grep -v grep");
+        let check_process = execute_remote_ssh_command_with_timeout(
+            remote,
+            "ps aux | grep openclaw | grep -v grep",
+            REMOTE_SSH_COMMAND_TIMEOUT,
+            "checking remote OpenClaw processes",
+        );
         if let Ok(output) = check_process {
             if output.trim().is_empty() {
-                let status_cmd = execute_ssh(&sess, "openclaw gateway status");
+                let status_cmd = execute_remote_ssh_command_with_timeout(
+                    remote,
+                    &format!("{}openclaw gateway status", prefix),
+                    REMOTE_SSH_COMMAND_TIMEOUT,
+                    "checking remote gateway status",
+                );
                 if let Ok(status) = status_cmd {
                     if status.to_lowercase().contains("stopped")
                         || status.to_lowercase().contains("error")
@@ -294,48 +499,43 @@ pub fn verify_tunnel_connectivity(remote: &RemoteInfo) -> Result<bool, String> {
                     continue;
                 }
             }
+        } else if let Err(e) = check_process {
+            last_error = e;
+            continue;
         }
 
-        let content = match execute_ssh(&sess, "cat ~/.openclaw/openclaw.json") {
-            Ok(c) => c,
+        let token = match get_remote_gateway_token_with_timeout(remote, REMOTE_SSH_COMMAND_TIMEOUT)
+        {
+            Ok(token) => token,
             Err(e) => {
-                last_error = format!("Failed to read remote config: {}", e);
+                last_error = format!("Failed to read remote gateway token: {}", e);
                 continue;
             }
         };
 
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(token) = json
-                .get("gateway")
-                .and_then(|g| g.get("auth"))
-                .and_then(|a| a.get("token"))
-                .and_then(|t| t.as_str())
-            {
-                let client = reqwest::blocking::Client::builder()
-                    .timeout(Duration::from_secs(5))
-                    .no_proxy()
-                    .build()
-                    .unwrap_or_else(|_| reqwest::blocking::Client::new());
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .no_proxy()
+            .build()
+            .unwrap_or_else(|_| reqwest::blocking::Client::new());
 
-                let url = format!("http://127.0.0.1:18789/?token={}", token);
+        let url = format!(
+            "http://127.0.0.1:{}/?token={}",
+            crate::ssh::REMOTE_TUNNEL_LOCAL_PORT,
+            token
+        );
 
-                match client.head(&url).send() {
-                    Ok(resp) => {
-                        if resp.status().is_success() || resp.status().is_redirection() {
-                            return Ok(true);
-                        } else {
-                            last_error = format!("HTTP Error: Status {}", resp.status());
-                        }
-                    }
-                    Err(e) => {
-                        last_error = format!("HTTP Connection failed: {}", e);
-                    }
+        match client.head(&url).send() {
+            Ok(resp) => {
+                if resp.status().is_success() || resp.status().is_redirection() {
+                    return Ok(true);
+                } else {
+                    last_error = format!("HTTP Error: Status {}", resp.status());
                 }
-            } else {
-                last_error = "Could not find token in remote openclaw.json".to_string();
             }
-        } else {
-            last_error = "Failed to parse remote openclaw.json".to_string();
+            Err(e) => {
+                last_error = format!("HTTP Connection failed: {}", e);
+            }
         }
     }
 
@@ -373,6 +573,19 @@ mod tests {
     }
 
     #[test]
+    fn test_build_remote_tunnel_dashboard_url_uses_local_tunnel_port() {
+        assert_eq!(
+            build_remote_tunnel_dashboard_url("abc123"),
+            "http://127.0.0.1:28789/#token=abc123"
+        );
+    }
+
+    #[test]
+    fn test_build_remote_tunnel_ws_url_uses_local_tunnel_port() {
+        assert_eq!(build_remote_tunnel_ws_url(), "ws://127.0.0.1:28789");
+    }
+
+    #[test]
     fn test_parse_gateway_token_cli_output_empty() {
         assert_eq!(parse_gateway_token_cli_output(""), None);
     }
@@ -404,5 +617,12 @@ mod tests {
     fn test_extract_gateway_token_from_config_missing() {
         let config = r#"{"gateway":{}}"#;
         assert!(extract_gateway_token_from_config(config, "test").is_err());
+    }
+
+    #[test]
+    fn test_should_restart_remote_tunnel_only_for_stale_flag_state() {
+        assert!(should_restart_remote_tunnel(true, false));
+        assert!(!should_restart_remote_tunnel(true, true));
+        assert!(!should_restart_remote_tunnel(false, false));
     }
 }

@@ -100,10 +100,7 @@ pub fn check_remote_prerequisites(remote: &RemoteInfo) -> Result<PrereqCheck, St
     check_prerequisites_with(&executor).map_err(String::from)
 }
 
-fn install_skill_with<E: CommandExecutor>(
-    executor: &E,
-    name: &str,
-) -> Result<String, ClawError> {
+fn install_skill_with<E: CommandExecutor>(executor: &E, name: &str) -> Result<String, ClawError> {
     executor.run(&format!("npx clawhub install {}", name))
 }
 
@@ -147,7 +144,7 @@ mod tests {
     fn install_skill_with_runs_clawhub_install() {
         let executor = FakeExecutor {
             success_commands: std::collections::HashSet::from([
-                "npx clawhub install web-search".to_string(),
+                "npx clawhub install web-search".to_string()
             ]),
         };
 

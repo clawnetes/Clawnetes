@@ -3,6 +3,9 @@ import { invoke, openExternal } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
 import { shouldShowTelegramPairing, getTelegramPairingDisplayCode, shouldShowWhatsAppPairing } from "../../utils/messagingPairing";
 import type { DeferredOAuthItem } from "../../utils/providerAuth";
+import type { RemoteConfig } from "../../types";
+import { runWhatsAppPairingCommandFlow } from "../../utils/whatsappPairing";
+import { REMOTE_TUNNEL_ACCESS_PORT, resolveGatewayAccessPort } from "../../lib/gatewayPorts";
 
 interface StepCompleteProps {
   handleToggleTunnel: () => void;
@@ -10,9 +13,10 @@ interface StepCompleteProps {
   handleAdvancedTransition: () => void;
   runDeferredOAuthQueue: () => Promise<void>;
   deferredOAuthQueue: DeferredOAuthItem[];
+  onOpenWorkspace: () => void;
 }
 
-function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransition, runDeferredOAuthQueue, deferredOAuthQueue }: StepCompleteProps) {
+function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransition, runDeferredOAuthQueue, deferredOAuthQueue, onOpenWorkspace }: StepCompleteProps) {
   const { state, dispatch } = useWizard();
   const {
     targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
@@ -26,6 +30,47 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
 
   const setField = (field: string, value: unknown) =>
     dispatch({ type: "SET_FIELD", field: field as any, value });
+
+  function buildRemoteArg(): RemoteConfig | null {
+    if (targetEnvironment !== "cloud") {
+      return null;
+    }
+    return {
+      ip: remoteIp,
+      user: remoteUser,
+      password: remotePassword || null,
+      privateKeyPath: remotePrivateKeyPath || null,
+    };
+  }
+
+  const gatewayAccessPort = resolveGatewayAccessPort(targetEnvironment, gatewayPort);
+
+  async function waitForWhatsAppLinkedStatus(remote: RemoteConfig | null, timeoutMs = 120000) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const linked = await invoke<boolean>("check_messaging_link_status", {
+        channel: "whatsapp",
+        remote,
+      });
+      if (linked) {
+        return true;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    }
+    return false;
+  }
+
+  async function runWhatsAppPairing() {
+    const remoteArg = buildRemoteArg();
+    await runWhatsAppPairingCommandFlow({
+      gatewayPort: gatewayAccessPort,
+      remote: remoteArg,
+      invokeCommand: invoke,
+      onQrCode: (qrDataUrl) => setField("whatsappQrDataUrl", qrDataUrl),
+      onPaired: () => setField("whatsappPaired", true),
+      waitForLinkedStatus: waitForWhatsAppLinkedStatus,
+    });
+  }
 
   return (
     <div className="step-view" data-testid="step-complete">
@@ -45,11 +90,11 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
           <h4 style={{ margin: "0 0 0.5rem 0", color: "var(--primary)" }}>
             {tunnelActive ? "🔒 SSH Tunnel Active" : "⚠️ Tunnel Inactive"}
           </h4>
-          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: 0 }}>
-            {tunnelActive
-              ? `Remote gateway (${remoteIp}:18789) is forwarded to localhost:18789`
-              : "SSH tunnel is not active"}
-          </p>
+            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: 0 }}>
+              {tunnelActive
+                ? `Remote gateway (${remoteIp}:${gatewayPort}) is forwarded to localhost:${REMOTE_TUNNEL_ACCESS_PORT}`
+                : "SSH tunnel is not active"}
+            </p>
           {tunnelActive ? (
             <button
               className="secondary"
@@ -187,14 +232,7 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
                   setField("whatsappQrLoading", true);
                   setField("whatsappQrStep", true);
                   try {
-                    const remoteArg = targetEnvironment === "cloud" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null;
-                    const qrDataUrl: string = await invoke("start_whatsapp_login", { gatewayPort, remote: remoteArg });
-                    setField("whatsappQrDataUrl", qrDataUrl);
-                    await invoke("wait_whatsapp_login", { gatewayPort, remote: remoteArg });
-                    setField("whatsappQrDataUrl", "");
-                    setField("whatsappPaired", true);
-                    invoke("restart_openclaw_gateway", { remote: remoteArg })
-                      .catch(console.error);
+                    await runWhatsAppPairing();
                   } catch (err) {
                     console.error(err);
                     alert("WhatsApp pairing error: " + err);
@@ -223,14 +261,7 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
                       style={{ marginTop: "0.5rem" }}
                       onClick={async () => {
                         try {
-                          const remoteArg = targetEnvironment === "cloud" ? { ip: remoteIp, user: remoteUser, password: remotePassword || null, privateKeyPath: remotePrivateKeyPath || null } : null;
-                          const qrDataUrl: string = await invoke("start_whatsapp_login", { gatewayPort, remote: remoteArg });
-                          setField("whatsappQrDataUrl", qrDataUrl);
-                          await invoke("wait_whatsapp_login", { gatewayPort, remote: remoteArg });
-                          setField("whatsappQrDataUrl", "");
-                          setField("whatsappPaired", true);
-                          invoke("restart_openclaw_gateway", { remote: remoteArg })
-                            .catch(console.error);
+                          await runWhatsAppPairing();
                         } catch (err) {
                           console.error(err);
                           alert("WhatsApp pairing error: " + err);
@@ -274,6 +305,9 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
               <p style={{ marginBottom: "1.5rem" }}>Your agent is paired and ready.</p>
             )}
             <div className="button-group" style={{ gap: "1rem" }}>
+              <button className="primary" onClick={onOpenWorkspace}>
+                Open Clawnetes Workspace
+              </button>
               <button className="primary" data-testid="btn-open-dashboard" onClick={() => openExternal(dashboardUrl)}>
                 Open Web Dashboard
               </button>

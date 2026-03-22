@@ -76,9 +76,39 @@ export async function injectIpcMocks(page: Page): Promise<void> {
       close_app: null,
     };
 
-    // Intercept Tauri IPC before the app loads
+    let nextCallbackId = 1;
+
+    const invoke = async (cmd: string) => {
+      if (cmd in mockResponses) {
+        return mockResponses[cmd];
+      }
+      if (cmd === "tauri") {
+        return null;
+      }
+      return null;
+    };
+
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      value: {
+        invoke,
+        transformCallback(callback: (value: unknown) => void) {
+          const id = nextCallbackId++;
+          (window as Record<string, unknown>)[`__mock_callback_${id}`] = callback;
+          return id;
+        },
+        unregisterCallback(callbackId: number) {
+          delete (window as Record<string, unknown>)[`__mock_callback_${callbackId}`];
+        },
+        convertFileSrc(filePath: string) {
+          return filePath;
+        },
+      },
+      writable: true,
+      configurable: true,
+    });
+
     Object.defineProperty(window, "__TAURI_IPC__", {
-      value: (message: unknown) => {
+      value: async (message: unknown) => {
         let parsed: Record<string, unknown>;
         try {
           parsed = typeof message === "string" ? JSON.parse(message) : (message as Record<string, unknown>);
@@ -88,24 +118,21 @@ export async function injectIpcMocks(page: Page): Promise<void> {
 
         const cmd = parsed.cmd as string;
         const callback = parsed.callback as number | undefined;
+        const error = parsed.error as number | undefined;
 
-        if (cmd && cmd in mockResponses) {
-          const response = mockResponses[cmd];
+        try {
+          const result = await invoke(cmd);
           if (callback != null) {
             const callbackFn = (window as Record<string, unknown>)[`_${callback}`];
             if (typeof callbackFn === "function") {
-              (callbackFn as (v: unknown) => void)(response);
+              (callbackFn as (v: unknown) => void)(result);
             }
           }
-          return;
-        }
-
-        // Handle shell.open and other Tauri module calls
-        if (cmd === "tauri") {
-          if (callback != null) {
-            const callbackFn = (window as Record<string, unknown>)[`_${callback}`];
+        } catch (err) {
+          if (error != null) {
+            const callbackFn = (window as Record<string, unknown>)[`_${error}`];
             if (typeof callbackFn === "function") {
-              (callbackFn as (v: unknown) => void)(null);
+              (callbackFn as (v: unknown) => void)(String(err));
             }
           }
         }

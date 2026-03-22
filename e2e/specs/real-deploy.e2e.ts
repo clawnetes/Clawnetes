@@ -223,23 +223,37 @@ test.describe.serial("Real Deployment", () => {
     expect(gotResponse, "Expected assistant to respond to chat message within 2 minutes").toBeTruthy();
   });
 
-  test("shows maintenance screen on reopen", async ({ page }) => {
-    // Navigate to / again (simulates app reopen)
+  test("shows the Clawnetes chat workspace on reopen", async ({ page }) => {
     await page.goto("/");
+    await waitForText(page, "Agent Workspace", 30_000);
+    await expect(page.locator('[data-testid="chat-active-agent"]')).not.toHaveText(/No agents available|Connecting to gateway/i, {
+      timeout: 30_000,
+    });
+    await expect(page.locator('[data-testid="chat-new-session"]')).toBeEnabled({ timeout: 30_000 });
+    await expect(page.locator('[data-testid="chat-composer"]')).toBeEnabled({ timeout: 30_000 });
+  });
 
-    // App starts at Welcome page — navigate through to trigger maintenance redirect
-    await waitForTestId(page, "step-welcome");
-    await clickTestId(page, "btn-start-setup");
+  test("can create a new Clawnetes chat session and submit a message", async ({ page }) => {
+    await page.goto("/");
+    await waitForText(page, "Agent Workspace", 30_000);
+    await expect(page.locator('[data-testid="chat-active-agent"]')).not.toHaveText(/No agents available|Connecting to gateway/i, {
+      timeout: 30_000,
+    });
 
-    // Select Local environment — this triggers checkSystem(false) which
-    // detects openclaw is already installed and redirects to maintenance
-    await waitForTestId(page, "step-environment");
-    await selectModeCard(page, "Local");
-    await clickTestId(page, "btn-continue");
+    const newChatButton = page.locator('[data-testid="chat-new-session"]');
+    await expect(newChatButton).toBeEnabled({ timeout: 30_000 });
+    await newChatButton.click();
 
-    // Should redirect to maintenance screen instead of system check
-    await waitForText(page, "Welcome Back");
-    await waitForText(page, "Open Dashboard");
+    const composer = page.locator('[data-testid="chat-composer"]');
+    await expect(composer).toBeEnabled({ timeout: 30_000 });
+    await composer.fill("Hello from Clawnetes.");
+
+    const sendButton = page.locator('[data-testid="chat-send"]');
+    await expect(sendButton).toBeEnabled();
+    await sendButton.click();
+
+    await expect(page.getByText("Hello from Clawnetes.")).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('[data-testid="chat-error-state"]')).toHaveCount(0);
   });
 
   test.afterAll(async () => {

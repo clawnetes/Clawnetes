@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e/specs",
-  testMatch: "**/{real-deploy,remote-deploy}.e2e.ts",
+  testMatch: "**/{real-deploy,remote-deploy,chat-workspace}.e2e.ts",
   timeout: 300_000, // 5 minutes — real install takes time
   retries: 0,
   workers: 1,

@@ -64,10 +64,7 @@ pub fn get_lmstudio_models(
         let sess = connect_ssh(r).map_err(|e| format!("SSH connect failed: {}", e))?;
         let output = execute_ssh(
             &sess,
-            &format!(
-                "curl -sf {}/v1/models 2>/dev/null || echo '{{}}'",
-                url_base
-            ),
+            &format!("curl -sf {}/v1/models 2>/dev/null || echo '{{}}'", url_base),
         );
         match output {
             Ok(json_str) => {

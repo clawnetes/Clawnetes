@@ -119,7 +119,8 @@ impl CommandExecutor for SshExecutor {
 
     fn write_file(&self, path: &str, content: &str) -> Result<(), ClawError> {
         let escaped = content.replace('\'', "'\\''");
-        self.run(&format!("echo '{}' > \"{}\"", escaped, path)).map(|_| ())
+        self.run(&format!("echo '{}' > \"{}\"", escaped, path))
+            .map(|_| ())
     }
 
     fn mkdir_p(&self, path: &str) -> Result<(), ClawError> {
@@ -162,7 +163,9 @@ mod tests {
         };
 
         assert_eq!(
-            executor.read_file("/tmp/file.txt").expect("should read file"),
+            executor
+                .read_file("/tmp/file.txt")
+                .expect("should read file"),
             "hello"
         );
     }

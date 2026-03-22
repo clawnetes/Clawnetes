@@ -1,18 +1,20 @@
 import { memo } from "react";
 import { invoke, openExternal } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
+import { REMOTE_TUNNEL_ACCESS_PORT } from "../../lib/gatewayPorts";
 
 interface StepMaintenanceProps {
   handleMaintenanceAction: (action: string) => void;
+  onRequestConfirmation: (action: "repair" | "audit" | "update" | "uninstall") => void;
   loadExistingConfig: () => Promise<boolean>;
   formatSshError: (error: string) => string;
 }
 
-function StepMaintenance({ handleMaintenanceAction, loadExistingConfig, formatSshError }: StepMaintenanceProps) {
+function StepMaintenance({ handleMaintenanceAction, onRequestConfirmation, loadExistingConfig, formatSshError }: StepMaintenanceProps) {
   const { state, dispatch } = useWizard();
   const {
     targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
-    tunnelActive, sshStatus, selectedMaint, loading, logs,
+    tunnelActive, sshStatus, selectedMaint, loading, logs, gatewayPort,
     maintenanceStatus, maintCompleted,
   } = state;
 
@@ -35,6 +37,7 @@ function StepMaintenance({ handleMaintenanceAction, loadExistingConfig, formatSs
             try {
               const url: string = await invoke("get_dashboard_url", {
                 isRemote: targetEnvironment === "cloud",
+                gatewayPort,
                 remote: targetEnvironment === "cloud" ? {
                   ip: remoteIp,
                   user: remoteUser,
@@ -91,6 +94,7 @@ function StepMaintenance({ handleMaintenanceAction, loadExistingConfig, formatSs
                   // Establish tunnel
                   setField("maintenanceStatus", "Establishing SSH tunnel...");
                   await invoke("start_ssh_tunnel", {
+                    gatewayPort,
                     remote: {
                       ip: remoteIp,
                       user: remoteUser,
@@ -99,7 +103,7 @@ function StepMaintenance({ handleMaintenanceAction, loadExistingConfig, formatSs
                     }
                   });
                   setField("tunnelActive", true);
-                  setField("maintenanceStatus", "✅ SSH tunnel established successfully. Dashboard is now accessible.");
+                  setField("maintenanceStatus", `✅ SSH tunnel established successfully. Dashboard is now accessible on localhost:${REMOTE_TUNNEL_ACCESS_PORT}.`);
                 } catch (e) {
                   const friendlyError = formatSshError(String(e));
                   setField("maintenanceStatus", `❌ Failed to establish tunnel: ${friendlyError}`);
@@ -171,10 +175,8 @@ function StepMaintenance({ handleMaintenanceAction, loadExistingConfig, formatSs
                   setField("mode", "advanced");
                   setField("step", 6);
                 }
-              } else if (selectedMaint === "uninstall") {
-                if (confirm("Are you absolutely sure you want to completely remove OpenClaw and all its data?")) {
-                  handleMaintenanceAction("uninstall");
-                }
+              } else if (selectedMaint === "repair" || selectedMaint === "audit" || selectedMaint === "update" || selectedMaint === "uninstall") {
+                onRequestConfirmation(selectedMaint);
               } else if (selectedMaint) {
                 handleMaintenanceAction(selectedMaint);
               }
