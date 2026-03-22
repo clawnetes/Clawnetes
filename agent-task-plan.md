@@ -1,18 +1,20 @@
-# Commit And Push Pending Remote Config Changes
+# Fix Remote WhatsApp Pairing False Timeout
 
 ## Objective
-- Review the current uncommitted Rust changes on `add_ui`.
-- Validate that the pending changes are safe to ship.
-- Commit and push the changes that belong in this branch if validation succeeds.
+- Fix remote WhatsApp pairing when QR scanning succeeds but the UI still reports a timeout.
+- Preserve the existing gateway transport changes already present in `src-tauri/src/whatsapp.rs`.
+- Validate the fix, then commit and push the branch updates.
 
 ## Plan
-- [completed] Inspect the current diff to understand the scope and confirm what should be committed.
-- [completed] Run required validation commands, including tests and `npm run tauri dev`.
-- [completed] Stage the validated changes and create a commit with a focused message.
-- [completed] Push the commit to the remote branch and record the outcome here.
+- [completed] Inspect the existing WhatsApp pairing flow and confirm where the false timeout occurs.
+- [completed] Update the WhatsApp pairing flow to treat linked-session confirmation as the success source of truth.
+- [completed] Add regression tests for the recovered pairing path and retained failure path.
+- [completed] Run `npm test`, `cargo test`, and `npm run tauri dev`.
+- [in_progress] Commit and push the validated fix.
 
 ## Progress Notes
-- Replaced the stale plan file so it matches the current request.
-- Reviewed the pending Rust diff; the substantive branch work was already present and the visible changes are formatter-aligned edits.
-- Validation passed with `cargo test`, `npm test`, and a successful `npm run tauri dev` startup check.
-- Created commit `6f98cecf` with the validated changes and pushed `add_ui` to `origin`.
+- Confirmed the current false timeout comes from `runWhatsAppPairingCommandFlow` throwing immediately when `wait_whatsapp_login` returns `false`, before the linked-session poll can recover.
+- Found pre-existing uncommitted transport/auth changes in `src-tauri/src/whatsapp.rs`; those will be kept intact and included with this task if validation succeeds.
+- Updated the WhatsApp pairing flow to allow linked-session confirmation to recover from a `wait_whatsapp_login` false result.
+- Added frontend regression coverage for the recovered success path and the retained double-failure path.
+- Validation passed with `npm test`, `cargo test`, and a successful `npm run tauri dev` launch after clearing a stale local Vite listener on port `1420`.

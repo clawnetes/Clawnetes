@@ -57,18 +57,14 @@ export async function runWhatsAppPairingCommandFlow({
     "Timed out waiting for WhatsApp pairing to complete.",
   );
 
-  if (!connected) {
-    throw new Error("WhatsApp login did not complete before timeout");
-  }
-
   const linked = await withTimeout(
     waitForLinkedStatus(remote, 120000),
     125000,
     "Timed out confirming WhatsApp linked status.",
   );
 
-  if (!linked) {
-    throw new Error("WhatsApp login did not complete before timeout");
+  if (!connected && !linked) {
+    throw new Error("WhatsApp login did not complete before timeout or linked-session confirmation");
   }
 
   onQrCode("");
