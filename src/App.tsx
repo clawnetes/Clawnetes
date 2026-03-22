@@ -29,6 +29,7 @@ import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, G
 import { useWizardState, fieldSetter } from "./hooks/useWizardState";
 import { WizardContext } from "./context/WizardContext";
 import { clearAllChatShellStorage } from "./lib/chatShellStorage";
+import { saveLastRemoteConnection } from "./lib/remoteConnectionStorage";
 import StepWelcome from "./components/steps/StepWelcome";
 import StepSecurity from "./components/steps/StepSecurity";
 import StepIdentity from "./components/steps/StepIdentity";
@@ -870,6 +871,7 @@ function App() {
 
       setSshStatus("success");
       setSshError("");
+      saveLastRemoteConnection(remoteIp, remoteUser);
     } catch (e) {
       setSshStatus("idle"); // Reset to idle on error so user can retry
       const friendlyError = formatSshError(String(e));
