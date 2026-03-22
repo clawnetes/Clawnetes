@@ -16,7 +16,7 @@ const GATEWAY_CLIENT_ID: &str = "gateway-client";
 const GATEWAY_CLIENT_VERSION: &str = "clawnetes";
 const GATEWAY_CLIENT_MODE: &str = "backend";
 const GATEWAY_ROLE: &str = "operator";
-const GATEWAY_PAIRING_SCOPES: [&str; 1] = ["operator.pairing"];
+const GATEWAY_PAIRING_SCOPES: [&str; 2] = ["operator.admin", "operator.pairing"];
 
 fn build_connect_message(
     connect_req_id: &str,
@@ -439,6 +439,18 @@ mod tests {
         assert_eq!(params["role"], GATEWAY_ROLE);
         assert_eq!(params["scopes"], serde_json::json!(GATEWAY_PAIRING_SCOPES));
         assert_eq!(params["auth"]["token"], "test-token");
+    }
+
+    #[test]
+    fn gateway_pairing_scopes_include_admin() {
+        assert!(
+            GATEWAY_PAIRING_SCOPES.contains(&"operator.admin"),
+            "GATEWAY_PAIRING_SCOPES must include operator.admin for web.login.start/wait"
+        );
+        assert!(
+            GATEWAY_PAIRING_SCOPES.contains(&"operator.pairing"),
+            "GATEWAY_PAIRING_SCOPES must include operator.pairing for device pairing"
+        );
     }
 
     #[test]
