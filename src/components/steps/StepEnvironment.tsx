@@ -1,5 +1,6 @@
 import { openDialog } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
+import { loadLastRemoteConnection } from "../../lib/remoteConnectionStorage";
 
 interface StepEnvironmentProps {
   handleSshCheck: () => void;
@@ -29,7 +30,14 @@ export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemo
           <h3>💻 Local Machine</h3>
           <p>Run OpenClaw directly on your computer (macOS/Linux/Windows)</p>
         </div>
-        <div className={`mode-card ${targetEnvironment === "cloud" ? "active" : ""}`} onClick={() => setField("targetEnvironment", "cloud")}>
+        <div className={`mode-card ${targetEnvironment === "cloud" ? "active" : ""}`} onClick={() => {
+          setField("targetEnvironment", "cloud");
+          const last = loadLastRemoteConnection();
+          if (last) {
+            if (!remoteIp) setField("remoteIp", last.ip);
+            if (!remoteUser) setField("remoteUser", last.user);
+          }
+        }}>
           <h3>☁️ Cloud Server</h3>
           <p>Deploy to a cloud VM (AWS, GCP, Azure, etc.)</p>
         </div>
