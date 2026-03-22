@@ -25,6 +25,7 @@ let lastAuthProfilesContent: string | null = null;
 
 // SSH tunnel background process
 let tunnelProcess: ChildProcess | null = null;
+const REMOTE_TUNNEL_ACCESS_PORT = 28789;
 
 function extractRemoteConfig(args: Record<string, unknown>): RemoteConfig | null {
   const remote = args.remote as Record<string, unknown> | undefined;
@@ -586,6 +587,7 @@ function handleCommand(
 
     case "get_dashboard_url": {
       const isRemote = args.isRemote === true || args.is_remote === true;
+      const gatewayPort = Number((args.gatewayPort as number) || (args.gateway_port as number) || 18789);
       const rc = extractRemoteConfig(args);
 
       if (isRemote && rc) {
@@ -594,7 +596,7 @@ function handleCommand(
         if (remoteToken) {
           const token = remoteToken.trim().replace(/^"|"$/g, "");
           if (token && token !== "null" && token !== "undefined") {
-            return `http://127.0.0.1:18789/#token=${token}`;
+            return `http://127.0.0.1:${REMOTE_TUNNEL_ACCESS_PORT}/#token=${token}`;
           }
         }
         // Fallback: try openclaw config get on remote
@@ -602,10 +604,10 @@ function handleCommand(
         if (remoteTokenAlt) {
           const token = remoteTokenAlt.trim().replace(/^"|"$/g, "");
           if (token && token !== "null" && token !== "undefined") {
-            return `http://127.0.0.1:18789/#token=${token}`;
+            return `http://127.0.0.1:${REMOTE_TUNNEL_ACCESS_PORT}/#token=${token}`;
           }
         }
-        return "http://127.0.0.1:18789";
+        return `http://127.0.0.1:${REMOTE_TUNNEL_ACCESS_PORT}`;
       }
 
       // Local path
@@ -623,7 +625,7 @@ function handleCommand(
       if (tokenOutput) {
         const token = tokenOutput.trim().replace(/^"|"$/g, "");
         if (token && token !== "null" && token !== "undefined") {
-          return `http://127.0.0.1:18789/#token=${token}`;
+          return `http://127.0.0.1:${gatewayPort}/#token=${token}`;
         }
       }
       // Last resort: read from openclaw.json directly
@@ -632,10 +634,10 @@ function handleCommand(
         try {
           const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
           const token = cfg?.gateway?.auth?.token;
-          if (token) return `http://127.0.0.1:18789/#token=${token}`;
+          if (token) return `http://127.0.0.1:${gatewayPort}/#token=${token}`;
         } catch { /* ignore */ }
       }
-      return "http://127.0.0.1:18789";
+      return `http://127.0.0.1:${gatewayPort}`;
     }
 
     case "prepare_gateway_chat_connection": {
@@ -645,7 +647,7 @@ function handleCommand(
 
       if (isRemote && rc) {
         if (!tunnelProcess) {
-          startSshTunnel(rc);
+          tunnelProcess = startSshTunnel(rc, REMOTE_TUNNEL_ACCESS_PORT, gatewayPort);
         }
 
         const remoteToken =
@@ -660,10 +662,10 @@ function handleCommand(
         }
 
         return {
-          wsUrl: `ws://127.0.0.1:${gatewayPort}`,
+          wsUrl: `ws://127.0.0.1:${REMOTE_TUNNEL_ACCESS_PORT}`,
           authToken: normalizedRemoteToken,
           targetEnvironment: "cloud",
-          gatewayPort,
+          gatewayPort: REMOTE_TUNNEL_ACCESS_PORT,
           tunnelActive: true,
           openClawVersion: sshExecSafe(rc, "openclaw --version") || "0.0.0",
         };
@@ -770,16 +772,17 @@ function handleCommand(
     case "start_tunnel":
     case "start_ssh_tunnel": {
       const rc = extractRemoteConfig(args);
+      const gatewayPort = Number((args.gatewayPort as number) || (args.gateway_port as number) || 18789);
       if (!rc) return "Error: missing remote config";
       if (tunnelProcess) {
         // Already running
         return "SSH tunnel is already running";
       }
-      tunnelProcess = startSshTunnel(rc, 18789, 18789);
+      tunnelProcess = startSshTunnel(rc, REMOTE_TUNNEL_ACCESS_PORT, gatewayPort);
       // Wait a moment for tunnel to establish
       shellSafe("sleep 3");
       // Verify it's working
-      const check = shellSafe("curl -sf http://127.0.0.1:18789 > /dev/null");
+      const check = shellSafe(`curl -sf http://127.0.0.1:${REMOTE_TUNNEL_ACCESS_PORT} > /dev/null`);
       if (check === null) {
         console.log("[bridge] tunnel started but gateway not yet reachable — may need more time");
       }
@@ -792,14 +795,14 @@ function handleCommand(
         try { tunnelProcess.kill(); } catch { /* ignore */ }
         tunnelProcess = null;
       }
-      // Also kill any lingering SSH tunnel processes on port 18789
-      shellSafe("lsof -ti:18789 -sTCP:LISTEN | xargs kill 2>/dev/null || true");
+      // Also kill any lingering SSH tunnel processes on the local tunnel port.
+      shellSafe(`lsof -ti:${REMOTE_TUNNEL_ACCESS_PORT} -sTCP:LISTEN | xargs kill 2>/dev/null || true`);
       return null;
     }
 
     case "verify_tunnel_connectivity": {
       try {
-        shell("curl -sf http://127.0.0.1:18789 > /dev/null", 10_000);
+        shell(`curl -sf http://127.0.0.1:${REMOTE_TUNNEL_ACCESS_PORT} > /dev/null`, 10_000);
         return true;
       } catch {
         return false;

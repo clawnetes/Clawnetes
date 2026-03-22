@@ -1,4 +1,5 @@
 import { invoke } from "../lib/tauri";
+import { REMOTE_TUNNEL_ACCESS_PORT } from "../lib/gatewayPorts";
 
 import { getAgentSessionInitIds } from "./agentSessions";
 import { getAdvancedTransitionAction } from "./licenseGate";
@@ -129,6 +130,7 @@ export interface InstallController {
     | "telegramToken"
     | "whatsappDmPolicy"
     | "whatsappPhoneNumber"
+    | "gatewayPort"
     | "selectedSkills"
   >;
   configPayloadInput: ConfigPayloadInput;
@@ -249,7 +251,10 @@ export async function handleInstall(controller: InstallController) {
       controller.setProgress("Establishing SSH tunnel...");
       controller.setLogs("Creating SSH tunnel to remote gateway...");
       try {
-        await invoke("start_ssh_tunnel", { remote: remoteConfig });
+        await invoke("start_ssh_tunnel", {
+          gatewayPort: state.gatewayPort,
+          remote: remoteConfig,
+        });
       } catch (error) {
         if (String(error).includes("SSH tunnel is already running")) {
           controller.setLogs((prev) => `${prev}\nTunnel already active.`);
@@ -262,6 +267,7 @@ export async function handleInstall(controller: InstallController) {
       controller.setProgress("Verifying tunnel connectivity...");
       try {
         const tunnelWorking: boolean = await invoke("verify_tunnel_connectivity", {
+          gatewayPort: state.gatewayPort,
           remote: remoteConfig,
         });
         if (!tunnelWorking) {
@@ -288,6 +294,7 @@ export async function handleInstall(controller: InstallController) {
       }
 
       const url: string = await invoke("get_dashboard_url", {
+        gatewayPort: state.gatewayPort,
         isRemote: true,
         remote: remoteConfig,
       });
@@ -373,6 +380,7 @@ export interface MaintenanceController {
     | "remoteUser"
     | "remotePassword"
     | "remotePrivateKeyPath"
+    | "gatewayPort"
   >;
   setLoading: Setter<boolean>;
   setMaintenanceStatus: Setter<string>;
@@ -670,6 +678,7 @@ export async function handleToggleTunnel(controller: TunnelController) {
     controller.setMaintenanceStatus("Establishing SSH tunnel...");
     try {
       await invoke("start_ssh_tunnel", {
+        gatewayPort: controller.state.gatewayPort,
         remote: {
           ip: controller.state.remoteIp,
           user: controller.state.remoteUser,
@@ -678,7 +687,7 @@ export async function handleToggleTunnel(controller: TunnelController) {
         },
       });
       controller.setTunnelActive(true);
-      controller.setMaintenanceStatus("✅ SSH Tunnel established on port 18789.");
+      controller.setMaintenanceStatus(`✅ SSH Tunnel established on localhost:${REMOTE_TUNNEL_ACCESS_PORT}.`);
     } catch (error) {
       controller.setMaintenanceStatus(`❌ Failed to establish tunnel: ${error}`);
     }

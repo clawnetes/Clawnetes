@@ -5,6 +5,7 @@ import { shouldShowTelegramPairing, getTelegramPairingDisplayCode, shouldShowWha
 import type { DeferredOAuthItem } from "../../utils/providerAuth";
 import type { RemoteConfig } from "../../types";
 import { runWhatsAppPairingCommandFlow } from "../../utils/whatsappPairing";
+import { REMOTE_TUNNEL_ACCESS_PORT, resolveGatewayAccessPort } from "../../lib/gatewayPorts";
 
 interface StepCompleteProps {
   handleToggleTunnel: () => void;
@@ -42,6 +43,8 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
     };
   }
 
+  const gatewayAccessPort = resolveGatewayAccessPort(targetEnvironment, gatewayPort);
+
   async function waitForWhatsAppLinkedStatus(remote: RemoteConfig | null, timeoutMs = 120000) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
@@ -60,7 +63,7 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
   async function runWhatsAppPairing() {
     const remoteArg = buildRemoteArg();
     await runWhatsAppPairingCommandFlow({
-      gatewayPort,
+      gatewayPort: gatewayAccessPort,
       remote: remoteArg,
       invokeCommand: invoke,
       onQrCode: (qrDataUrl) => setField("whatsappQrDataUrl", qrDataUrl),
@@ -87,11 +90,11 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
           <h4 style={{ margin: "0 0 0.5rem 0", color: "var(--primary)" }}>
             {tunnelActive ? "🔒 SSH Tunnel Active" : "⚠️ Tunnel Inactive"}
           </h4>
-          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: 0 }}>
-            {tunnelActive
-              ? `Remote gateway (${remoteIp}:18789) is forwarded to localhost:18789`
-              : "SSH tunnel is not active"}
-          </p>
+            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: 0 }}>
+              {tunnelActive
+                ? `Remote gateway (${remoteIp}:${gatewayPort}) is forwarded to localhost:${REMOTE_TUNNEL_ACCESS_PORT}`
+                : "SSH tunnel is not active"}
+            </p>
           {tunnelActive ? (
             <button
               className="secondary"

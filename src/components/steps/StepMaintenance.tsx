@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { invoke, openExternal } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
+import { REMOTE_TUNNEL_ACCESS_PORT } from "../../lib/gatewayPorts";
 
 interface StepMaintenanceProps {
   handleMaintenanceAction: (action: string) => void;
@@ -13,7 +14,7 @@ function StepMaintenance({ handleMaintenanceAction, onRequestConfirmation, loadE
   const { state, dispatch } = useWizard();
   const {
     targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
-    tunnelActive, sshStatus, selectedMaint, loading, logs,
+    tunnelActive, sshStatus, selectedMaint, loading, logs, gatewayPort,
     maintenanceStatus, maintCompleted,
   } = state;
 
@@ -36,6 +37,7 @@ function StepMaintenance({ handleMaintenanceAction, onRequestConfirmation, loadE
             try {
               const url: string = await invoke("get_dashboard_url", {
                 isRemote: targetEnvironment === "cloud",
+                gatewayPort,
                 remote: targetEnvironment === "cloud" ? {
                   ip: remoteIp,
                   user: remoteUser,
@@ -92,6 +94,7 @@ function StepMaintenance({ handleMaintenanceAction, onRequestConfirmation, loadE
                   // Establish tunnel
                   setField("maintenanceStatus", "Establishing SSH tunnel...");
                   await invoke("start_ssh_tunnel", {
+                    gatewayPort,
                     remote: {
                       ip: remoteIp,
                       user: remoteUser,
@@ -100,7 +103,7 @@ function StepMaintenance({ handleMaintenanceAction, onRequestConfirmation, loadE
                     }
                   });
                   setField("tunnelActive", true);
-                  setField("maintenanceStatus", "✅ SSH tunnel established successfully. Dashboard is now accessible.");
+                  setField("maintenanceStatus", `✅ SSH tunnel established successfully. Dashboard is now accessible on localhost:${REMOTE_TUNNEL_ACCESS_PORT}.`);
                 } catch (e) {
                   const friendlyError = formatSshError(String(e));
                   setField("maintenanceStatus", `❌ Failed to establish tunnel: ${friendlyError}`);

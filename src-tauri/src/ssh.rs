@@ -14,7 +14,8 @@ lazy_static! {
     pub static ref TUNNEL_RUNNING: AtomicBool = AtomicBool::new(false);
 }
 
-pub const GATEWAY_TUNNEL_PORT: u16 = 18789;
+pub const DEFAULT_GATEWAY_PORT: u16 = 18789;
+pub const REMOTE_TUNNEL_LOCAL_PORT: u16 = 28789;
 
 pub fn get_env_prefix(os_type: &str) -> String {
     if os_type == "Darwin" {
@@ -157,10 +158,10 @@ fn should_reset_stale_tunnel_state(tunnel_running: bool, listener_reachable: boo
     tunnel_running && !listener_reachable
 }
 
-pub fn start_ssh_tunnel(remote: &RemoteInfo) -> Result<String, String> {
+pub fn start_ssh_tunnel(remote: &RemoteInfo, remote_gateway_port: u16) -> Result<String, String> {
     if should_reset_stale_tunnel_state(
         TUNNEL_RUNNING.load(Ordering::Relaxed),
-        is_tunnel_listener_reachable(GATEWAY_TUNNEL_PORT),
+        is_tunnel_listener_reachable(REMOTE_TUNNEL_LOCAL_PORT),
     ) {
         TUNNEL_RUNNING.store(false, Ordering::Relaxed);
         thread::sleep(Duration::from_millis(100));
@@ -174,10 +175,13 @@ pub fn start_ssh_tunnel(remote: &RemoteInfo) -> Result<String, String> {
     let remote_info = remote.clone();
 
     thread::spawn(move || {
-        let listener = match TcpListener::bind(("127.0.0.1", GATEWAY_TUNNEL_PORT)) {
+        let listener = match TcpListener::bind(("127.0.0.1", REMOTE_TUNNEL_LOCAL_PORT)) {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("Failed to bind local port {}: {}", GATEWAY_TUNNEL_PORT, e);
+                eprintln!(
+                    "Failed to bind local port {}: {}",
+                    REMOTE_TUNNEL_LOCAL_PORT, e
+                );
                 TUNNEL_RUNNING.store(false, Ordering::Relaxed);
                 return;
             }
@@ -199,8 +203,11 @@ pub fn start_ssh_tunnel(remote: &RemoteInfo) -> Result<String, String> {
                         };
 
                         let mut remote_channel =
-                            match sess.channel_direct_tcpip("127.0.0.1", GATEWAY_TUNNEL_PORT, None)
-                            {
+                            match sess.channel_direct_tcpip(
+                                "127.0.0.1",
+                                remote_gateway_port,
+                                None,
+                            ) {
                                 Ok(c) => c,
                                 Err(e) => {
                                     eprintln!("Failed to open SSH channel for tunnel: {}", e);

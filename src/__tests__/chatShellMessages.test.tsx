@@ -316,6 +316,22 @@ function setupInvokeMock() {
   });
 }
 
+async function openInstalledLocalChat(user: ReturnType<typeof userEvent.setup> = userEvent.setup()) {
+  render(<App />);
+
+  await waitFor(() => {
+    expect(screen.getByTestId("step-environment")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByTestId("btn-continue"));
+
+  await waitFor(() => {
+    expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
+  });
+
+  return user;
+}
+
 describe("ChatShell message display", () => {
   beforeEach(() => {
     invokeMock.mockReset();
@@ -355,7 +371,7 @@ describe("ChatShell message display", () => {
     });
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getByText("You")).toBeInTheDocument();
@@ -376,7 +392,7 @@ describe("ChatShell message display", () => {
     });
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getAllByText("Here is the answer.").length).toBeGreaterThan(0);
@@ -394,7 +410,7 @@ describe("ChatShell message display", () => {
     });
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getAllByText("Visible answer.").length).toBeGreaterThan(0);
@@ -436,7 +452,7 @@ describe("ChatShell message display", () => {
     });
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getAllByText("Fresh start.").length).toBeGreaterThan(0);
@@ -476,7 +492,7 @@ metadata: { "openclaw": { "emoji": "☔" } }
     });
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getAllByText("Tomorrow looks dry and mild.").length).toBeGreaterThan(0);
@@ -508,7 +524,7 @@ Tomorrow in London is looking nice:
     });
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getAllByText(/Tomorrow in London is looking nice:/).length).toBeGreaterThan(0);
@@ -534,7 +550,7 @@ Tomorrow in London is looking nice:
     });
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getAllByText(/Right now, the useful signal is mostly around/i).length).toBeGreaterThan(0);
@@ -574,7 +590,7 @@ Tomorrow in London is looking nice:
     });
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getAllByText(/I need a configured search key before I can browse\./).length).toBeGreaterThan(0);
@@ -622,7 +638,7 @@ Based on the latest data I could pull, Trump's approval looks roughly in the low
     });
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getAllByText(/Based on the latest data I could pull/i).length).toBeGreaterThan(0);
@@ -638,7 +654,7 @@ Based on the latest data I could pull, Trump's approval looks roughly in the low
     const { WebSocket } = createMockWebSocket({ sendErrorMessage: "Request failed." });
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
@@ -666,7 +682,7 @@ Based on the latest data I could pull, Trump's approval looks roughly in the low
     });
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
@@ -722,7 +738,7 @@ describe("ChatShell fresh chat flow", () => {
     });
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getAllByText("Older transcript").length).toBeGreaterThan(0);
@@ -754,7 +770,7 @@ describe("ChatShell fresh chat flow", () => {
     const { WebSocket } = createMockWebSocket();
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
@@ -773,7 +789,7 @@ describe("ChatShell fresh chat flow", () => {
     });
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getAllByText("Older transcript").length).toBeGreaterThan(0);
@@ -796,7 +812,7 @@ describe("ChatShell fresh chat flow", () => {
     const { WebSocket } = createMockWebSocket();
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
@@ -813,7 +829,7 @@ describe("ChatShell fresh chat flow", () => {
     const { WebSocket, sentMethods } = createMockWebSocket({ hangAfterSend: true });
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
@@ -846,7 +862,7 @@ describe("ChatShell fresh chat flow", () => {
     localStorage.setItem("clawnetes.chat.selection.v1", JSON.stringify({ test: "a" }));
     localStorage.setItem("clawnetes.chat.theme.v1", "dark");
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
@@ -886,7 +902,7 @@ describe("ChatShell fresh chat flow", () => {
     const { WebSocket } = createMockWebSocket();
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
@@ -941,7 +957,7 @@ describe("ChatShell fresh chat flow", () => {
       return Promise.resolve(null);
     });
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
@@ -987,7 +1003,7 @@ describe("ChatShell fresh chat flow", () => {
     const { WebSocket } = createMockWebSocket();
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
@@ -1025,7 +1041,7 @@ describe("ChatShell fresh chat flow", () => {
     const { WebSocket } = createMockWebSocket();
     vi.stubGlobal("WebSocket", WebSocket);
 
-    render(<App />);
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();

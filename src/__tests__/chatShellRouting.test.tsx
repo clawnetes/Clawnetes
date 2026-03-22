@@ -253,16 +253,32 @@ function setupRemoteInstalledInvokeMock() {
     }
     if (cmd === "prepare_gateway_chat_connection") {
       return Promise.resolve({
-        wsUrl: "ws://10.0.0.8:18789",
+        wsUrl: "ws://127.0.0.1:28789",
         authToken: "token-123",
         targetEnvironment: "cloud",
-        gatewayPort: 18789,
-        tunnelActive: false,
+        gatewayPort: 28789,
+        tunnelActive: true,
         openClawVersion: "2.0.0",
       });
     }
     return Promise.resolve(null);
   });
+}
+
+async function openInstalledLocalChat(user: ReturnType<typeof userEvent.setup> = userEvent.setup()) {
+  render(<App />);
+
+  await waitFor(() => {
+    expect(screen.getByTestId("step-environment")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByTestId("btn-continue"));
+
+  await waitFor(() => {
+    expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
+  });
+
+  return user;
 }
 
 async function openRemoteInstalledChat(user: ReturnType<typeof userEvent.setup>) {
@@ -350,12 +366,18 @@ describe("Installed-state chat shell", () => {
     });
   });
 
-  it("opens the native chat workspace when OpenClaw is already installed", async () => {
+  it("shows Target Environment on startup when local OpenClaw is already installed", async () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
+      expect(screen.getByTestId("step-environment")).toBeInTheDocument();
     });
+
+    expect(screen.queryByText("Agent Workspace")).not.toBeInTheDocument();
+  });
+
+  it("opens the native chat workspace after the local environment is confirmed", async () => {
+    await openInstalledLocalChat();
 
     await waitFor(() => {
       expect(screen.getAllByText("Main Agent").length).toBeGreaterThan(0);
@@ -366,11 +388,7 @@ describe("Installed-state chat shell", () => {
 
   it("keeps the fresh conversation selected after reconnect", async () => {
     const user = userEvent.setup();
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getAllByText("Welcome back.").length).toBeGreaterThan(0);
-    });
+    await openInstalledLocalChat(user);
 
     await user.click(screen.getByTestId("chat-new-session"));
 
@@ -387,11 +405,7 @@ describe("Installed-state chat shell", () => {
 
   it("opens the Command Center as a separate screen and returns to chat", async () => {
     const user = userEvent.setup();
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
-    });
+    await openInstalledLocalChat(user);
 
     await user.click(screen.getByRole("button", { name: "Configure" }));
 
@@ -424,11 +438,7 @@ Tomorrow looks clear and cool.`,
     vi.stubGlobal("WebSocket", createReconnectMockWebSocket({ historyMessages: noisyTranscript }));
 
     const user = userEvent.setup();
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getAllByText("Tomorrow looks clear and cool.").length).toBeGreaterThan(0);
-    });
+    await openInstalledLocalChat(user);
 
     expect(screen.queryByText(/Weather report for:/i)).not.toBeInTheDocument();
 
@@ -473,11 +483,7 @@ Tomorrow looks clear and cool.`,
       onChatSend: (sessionKey) => sentSessionKeys.push(sessionKey),
     }));
 
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getAllByText("Welcome back.").length).toBeGreaterThan(0);
-    });
+    await openInstalledLocalChat(user);
 
     await user.selectOptions(screen.getByTestId("chat-active-agent"), "ops");
 

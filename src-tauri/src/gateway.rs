@@ -37,6 +37,18 @@ pub fn parse_dashboard_url_cli_output(output: &str) -> Option<String> {
     })
 }
 
+fn build_remote_tunnel_dashboard_url(token: &str) -> String {
+    format!(
+        "http://127.0.0.1:{}/#token={}",
+        crate::ssh::REMOTE_TUNNEL_LOCAL_PORT,
+        token
+    )
+}
+
+fn build_remote_tunnel_ws_url() -> String {
+    format!("ws://127.0.0.1:{}", crate::ssh::REMOTE_TUNNEL_LOCAL_PORT)
+}
+
 pub fn extract_gateway_token_from_config(
     config_str: &str,
     context: &str,
@@ -141,9 +153,9 @@ fn get_remote_gateway_token_with_timeout(
     extract_gateway_token_from_config(&content, "remote config")
 }
 
-fn ensure_remote_gateway_tunnel(remote: &RemoteInfo) -> Result<(), String> {
+fn ensure_remote_gateway_tunnel(remote: &RemoteInfo, remote_gateway_port: u16) -> Result<(), String> {
     let local_port_ready =
-        crate::ssh::is_tunnel_listener_reachable(crate::ssh::GATEWAY_TUNNEL_PORT);
+        crate::ssh::is_tunnel_listener_reachable(crate::ssh::REMOTE_TUNNEL_LOCAL_PORT);
     let tunnel_flag_running = crate::ssh::TUNNEL_RUNNING.load(std::sync::atomic::Ordering::Relaxed);
 
     if should_restart_remote_tunnel(tunnel_flag_running, local_port_ready) {
@@ -151,15 +163,15 @@ fn ensure_remote_gateway_tunnel(remote: &RemoteInfo) -> Result<(), String> {
         std::thread::sleep(REMOTE_TUNNEL_RESTART_SETTLE_TIME);
     }
 
-    if crate::ssh::is_tunnel_listener_reachable(crate::ssh::GATEWAY_TUNNEL_PORT) {
+    if crate::ssh::is_tunnel_listener_reachable(crate::ssh::REMOTE_TUNNEL_LOCAL_PORT) {
         return Ok(());
     }
 
-    match crate::ssh::start_ssh_tunnel(remote) {
+    match crate::ssh::start_ssh_tunnel(remote, remote_gateway_port) {
         Ok(_) => Ok(()),
         Err(err)
             if err.contains("already running")
-                && crate::ssh::is_tunnel_listener_reachable(crate::ssh::GATEWAY_TUNNEL_PORT) =>
+                && crate::ssh::is_tunnel_listener_reachable(crate::ssh::REMOTE_TUNNEL_LOCAL_PORT) =>
         {
             Ok(())
         }
@@ -321,19 +333,17 @@ pub fn approve_pairing(code: &str, remote: Option<&RemoteInfo>) -> Result<String
     }
 }
 
-pub fn get_dashboard_url(is_remote: bool, remote: Option<&RemoteInfo>) -> Result<String, String> {
+pub fn get_dashboard_url(
+    is_remote: bool,
+    remote: Option<&RemoteInfo>,
+    gateway_port: Option<u16>,
+) -> Result<String, String> {
+    let gateway_port = gateway_port.unwrap_or(crate::ssh::DEFAULT_GATEWAY_PORT);
     let token = if is_remote && remote.is_some() {
         let r = remote.unwrap();
         let sess = connect_ssh(r)?;
         let os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
         let prefix = get_env_prefix(&os_type);
-
-        if let Some(url) = execute_ssh(&sess, &format!("{}openclaw dashboard --no-open", prefix))
-            .ok()
-            .and_then(|output| parse_dashboard_url_cli_output(&output))
-        {
-            return Ok(url);
-        }
 
         if let Some(token) = execute_ssh(
             &sess,
@@ -384,7 +394,11 @@ pub fn get_dashboard_url(is_remote: bool, remote: Option<&RemoteInfo>) -> Result
         }
     };
 
-    Ok(format!("http://127.0.0.1:18789/#token={}", token))
+    if is_remote && remote.is_some() {
+        return Ok(build_remote_tunnel_dashboard_url(&token));
+    }
+
+    Ok(format!("http://127.0.0.1:{}/#token={}", gateway_port, token))
 }
 
 pub async fn prepare_gateway_chat_connection(
@@ -395,21 +409,21 @@ pub async fn prepare_gateway_chat_connection(
 
     if let Some(remote) = remote {
         let remote = remote.clone();
-        let ws_url = ws_url.clone();
+        let remote_gateway_port = gateway_port;
 
         return tauri::async_runtime::spawn_blocking(
             move || -> Result<GatewayChatBootstrap, String> {
-                ensure_remote_gateway_tunnel(&remote)?;
-                verify_tunnel_connectivity(&remote)?;
+                ensure_remote_gateway_tunnel(&remote, remote_gateway_port)?;
+                verify_tunnel_connectivity(&remote, remote_gateway_port)?;
 
                 Ok(GatewayChatBootstrap {
-                    ws_url,
+                    ws_url: build_remote_tunnel_ws_url(),
                     auth_token: get_remote_gateway_token_with_timeout(
                         &remote,
                         REMOTE_SSH_COMMAND_TIMEOUT,
                     )?,
                     target_environment: "cloud".to_string(),
-                    gateway_port,
+                    gateway_port: crate::ssh::REMOTE_TUNNEL_LOCAL_PORT,
                     tunnel_active: true,
                     openclaw_version: crate::maintenance::get_remote_openclaw_version(&remote)?,
                 })
@@ -433,7 +447,7 @@ pub async fn prepare_gateway_chat_connection(
     })
 }
 
-pub fn verify_tunnel_connectivity(remote: &RemoteInfo) -> Result<bool, String> {
+pub fn verify_tunnel_connectivity(remote: &RemoteInfo, remote_gateway_port: u16) -> Result<bool, String> {
     let mut last_error = String::from("No attempts made");
 
     for i in 0..30 {
@@ -441,10 +455,11 @@ pub fn verify_tunnel_connectivity(remote: &RemoteInfo) -> Result<bool, String> {
             std::thread::sleep(Duration::from_secs(2));
         }
 
-        if !crate::ssh::is_tunnel_listener_reachable(crate::ssh::GATEWAY_TUNNEL_PORT) {
+        if !crate::ssh::is_tunnel_listener_reachable(crate::ssh::REMOTE_TUNNEL_LOCAL_PORT) {
             last_error = format!(
-                "Local tunnel port {} not reachable",
-                crate::ssh::GATEWAY_TUNNEL_PORT
+                "Local tunnel port {} not reachable while forwarding to remote gateway port {}",
+                crate::ssh::REMOTE_TUNNEL_LOCAL_PORT,
+                remote_gateway_port
             );
             continue;
         }
@@ -506,7 +521,7 @@ pub fn verify_tunnel_connectivity(remote: &RemoteInfo) -> Result<bool, String> {
 
         let url = format!(
             "http://127.0.0.1:{}/?token={}",
-            crate::ssh::GATEWAY_TUNNEL_PORT,
+            crate::ssh::REMOTE_TUNNEL_LOCAL_PORT,
             token
         );
 
@@ -555,6 +570,19 @@ mod tests {
     #[test]
     fn test_parse_gateway_token_cli_output_null() {
         assert_eq!(parse_gateway_token_cli_output("null\n"), None);
+    }
+
+    #[test]
+    fn test_build_remote_tunnel_dashboard_url_uses_local_tunnel_port() {
+        assert_eq!(
+            build_remote_tunnel_dashboard_url("abc123"),
+            "http://127.0.0.1:28789/#token=abc123"
+        );
+    }
+
+    #[test]
+    fn test_build_remote_tunnel_ws_url_uses_local_tunnel_port() {
+        assert_eq!(build_remote_tunnel_ws_url(), "ws://127.0.0.1:28789");
     }
 
     #[test]

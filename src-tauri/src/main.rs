@@ -103,8 +103,8 @@ async fn setup_remote_openclaw(remote: RemoteInfo, config: AgentConfig) -> Resul
 }
 
 #[command]
-fn start_ssh_tunnel(remote: RemoteInfo) -> Result<String, String> {
-    ssh::start_ssh_tunnel(&remote)
+fn start_ssh_tunnel(remote: RemoteInfo, gateway_port: Option<u16>) -> Result<String, String> {
+    ssh::start_ssh_tunnel(&remote, gateway_port.unwrap_or(ssh::DEFAULT_GATEWAY_PORT))
 }
 
 #[command]
@@ -237,13 +237,20 @@ async fn approve_pairing(code: String, remote: Option<RemoteInfo>) -> Result<Str
 }
 
 #[command]
-fn get_dashboard_url(is_remote: bool, remote: Option<RemoteInfo>) -> Result<String, String> {
-    gateway::get_dashboard_url(is_remote, remote.as_ref())
+fn get_dashboard_url(
+    is_remote: bool,
+    remote: Option<RemoteInfo>,
+    gateway_port: Option<u16>,
+) -> Result<String, String> {
+    gateway::get_dashboard_url(is_remote, remote.as_ref(), gateway_port)
 }
 
 #[command]
-fn verify_tunnel_connectivity(remote: RemoteInfo) -> Result<bool, String> {
-    gateway::verify_tunnel_connectivity(&remote)
+fn verify_tunnel_connectivity(remote: RemoteInfo, gateway_port: Option<u16>) -> Result<bool, String> {
+    gateway::verify_tunnel_connectivity(
+        &remote,
+        gateway_port.unwrap_or(ssh::DEFAULT_GATEWAY_PORT),
+    )
 }
 
 #[command]

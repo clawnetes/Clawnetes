@@ -333,7 +333,7 @@ function App() {
     }
   }, [buildActiveRemoteConfig, gatewayPort]);
 
-  useEffect(() => { checkSystem(true); }, []);
+  useEffect(() => { void checkSystem(true, false); }, []);
 
   useEffect(() => {
     if (appScreen !== "chat") return;
@@ -718,7 +718,7 @@ function App() {
     setNodeInstallError("");
     try {
       await invoke("install_local_nodejs");
-      await checkSystem(false);
+      await checkSystem(true, false);
     } catch (e: any) {
       setNodeInstallError("Failed to install: " + e);
     } finally {
@@ -726,7 +726,7 @@ function App() {
     }
   }
 
-  async function checkSystem(skipRedirect = false) {
+  async function checkSystem(skipRedirect = false, allowInstalledChat = true) {
     // Always check local system on initial load
     const res: any = await invoke("check_prerequisites");
     setChecks({
@@ -738,7 +738,12 @@ function App() {
     setOpenClawVersion(version);
 
     if (res.openclaw_installed) {
-      setAppScreen("chat");
+      if (allowInstalledChat) {
+        setAppScreen("chat");
+      } else {
+        setStep(1);
+        setAppScreen("setup");
+      }
       return true;
     } else if (!skipRedirect) {
       setStep(0.5);
@@ -1124,6 +1129,7 @@ Managed by Clawnetes.`,
         telegramToken,
         whatsappDmPolicy,
         whatsappPhoneNumber,
+        gatewayPort,
         selectedSkills,
       },
       configPayloadInput,
@@ -1171,6 +1177,7 @@ Managed by Clawnetes.`,
     setTunnelActive,
     setWhatsappPaired,
     setWhatsappPhoneSubmitted,
+    gatewayPort,
     targetEnvironment,
     telegramToken,
     transformInitialToPayload,
@@ -1219,6 +1226,7 @@ Managed by Clawnetes.`,
       setMaintCompleted,
     }, action);
   }, [
+    gatewayPort,
     remoteIp,
     remotePassword,
     remotePrivateKeyPath,
@@ -1362,6 +1370,7 @@ Managed by Clawnetes.`,
         remoteUser,
         remotePassword,
         remotePrivateKeyPath,
+        gatewayPort,
       },
       setLoading,
       setTunnelActive,
