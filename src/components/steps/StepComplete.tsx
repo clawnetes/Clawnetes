@@ -3,24 +3,8 @@ import { invoke, openExternal } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
 import { shouldShowTelegramPairing, getTelegramPairingDisplayCode, shouldShowWhatsAppPairing } from "../../utils/messagingPairing";
 import type { DeferredOAuthItem } from "../../utils/providerAuth";
-import type { GatewayChatBootstrap, RemoteConfig } from "../../types";
-import { GatewayChatClient } from "../../lib/gatewayChat";
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
-    promise.then(
-      (value) => {
-        window.clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        window.clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
+import type { RemoteConfig } from "../../types";
+import { runWhatsAppPairingCommandFlow } from "../../utils/whatsappPairing";
 
 interface StepCompleteProps {
   handleToggleTunnel: () => void;
@@ -73,58 +57,16 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
     return false;
   }
 
-  async function runWhatsAppPairing(force = true) {
+  async function runWhatsAppPairing() {
     const remoteArg = buildRemoteArg();
-    const bootstrap = await invoke<GatewayChatBootstrap>("prepare_gateway_chat_connection", {
+    await runWhatsAppPairingCommandFlow({
       gatewayPort,
       remote: remoteArg,
+      invokeCommand: invoke,
+      onQrCode: (qrDataUrl) => setField("whatsappQrDataUrl", qrDataUrl),
+      onPaired: () => setField("whatsappPaired", true),
+      waitForLinkedStatus: waitForWhatsAppLinkedStatus,
     });
-    const client = new GatewayChatClient(bootstrap);
-
-    try {
-      await withTimeout(
-        client.connect(),
-        20000,
-        "Timed out connecting to the OpenClaw gateway for WhatsApp pairing.",
-      );
-      const startPayload = await withTimeout(
-        client.rpc<{ qrDataUrl?: string }>("web.login.start", {
-          timeoutMs: 30000,
-          force,
-        }),
-        35000,
-        "Timed out waiting for the gateway to return a WhatsApp QR code.",
-      );
-      const qrDataUrl = typeof startPayload?.qrDataUrl === "string" ? startPayload.qrDataUrl : "";
-      if (!qrDataUrl) {
-        throw new Error("Gateway returned ok but no QR code (already linked?)");
-      }
-
-      setField("whatsappQrDataUrl", qrDataUrl);
-
-      await withTimeout(
-        client.rpc("web.login.wait", {
-          timeoutMs: 120000,
-        }),
-        130000,
-        "Timed out waiting for WhatsApp pairing to complete.",
-      );
-
-      const linked = await withTimeout(
-        waitForWhatsAppLinkedStatus(remoteArg, 120000),
-        125000,
-        "Timed out confirming WhatsApp linked status.",
-      );
-      if (!linked) {
-        throw new Error("WhatsApp login did not complete before timeout");
-      }
-
-      setField("whatsappQrDataUrl", "");
-      setField("whatsappPaired", true);
-      await invoke("restart_openclaw_gateway", { remote: remoteArg });
-    } finally {
-      client.disconnect();
-    }
   }
 
   return (
