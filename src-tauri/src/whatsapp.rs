@@ -7,7 +7,7 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
-use crate::ssh::{connect_ssh, execute_ssh};
+use crate::gateway::{get_local_gateway_token, get_remote_gateway_token};
 use crate::types::RemoteInfo;
 
 type GatewaySocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -111,10 +111,6 @@ fn local_openclaw_home_dir() -> Result<String, String> {
     }
 }
 
-fn openclaw_config_path(home_dir: &str) -> String {
-    format!("{}/.openclaw/openclaw.json", home_dir.trim_end_matches('/'))
-}
-
 fn whatsapp_session_dir(home_dir: &str) -> String {
     format!(
         "{}/.openclaw/credentials/whatsapp/default",
@@ -122,44 +118,11 @@ fn whatsapp_session_dir(home_dir: &str) -> String {
     )
 }
 
-fn read_gateway_auth_token(remote: Option<&RemoteInfo>) -> Result<Option<String>, String> {
+fn read_gateway_auth_token(remote: Option<&RemoteInfo>) -> Result<String, String> {
     if let Some(remote) = remote {
-        let sess = connect_ssh(remote)?;
-        let home = execute_ssh(&sess, "echo $HOME").unwrap_or_default();
-        let json_str = execute_ssh(
-            &sess,
-            &format!("cat {}/.openclaw/openclaw.json", home.trim()),
-        )
-        .unwrap_or_default();
-        Ok(serde_json::from_str::<serde_json::Value>(&json_str)
-            .ok()
-            .and_then(|config| {
-                config
-                    .get("gateway")
-                    .and_then(|gateway| gateway.get("auth"))
-                    .and_then(|auth| auth.get("token"))
-                    .and_then(|token| token.as_str())
-                    .map(|token| token.to_string())
-            }))
+        get_remote_gateway_token(remote)
     } else {
-        let home_dir = local_openclaw_home_dir()?;
-        #[cfg(target_os = "windows")]
-        let json_str =
-            crate::system::wsl_read_file(&openclaw_config_path(&home_dir)).unwrap_or_default();
-
-        #[cfg(not(target_os = "windows"))]
-        let json_str = std::fs::read_to_string(openclaw_config_path(&home_dir)).unwrap_or_default();
-
-        Ok(serde_json::from_str::<serde_json::Value>(&json_str)
-            .ok()
-            .and_then(|config| {
-                config
-                    .get("gateway")
-                    .and_then(|gateway| gateway.get("auth"))
-                    .and_then(|auth| auth.get("token"))
-                    .and_then(|token| token.as_str())
-                    .map(|token| token.to_string())
-            }))
+        get_local_gateway_token()
     }
 }
 
@@ -243,7 +206,7 @@ pub async fn start_whatsapp_login(
     remote: Option<&RemoteInfo>,
 ) -> Result<String, String> {
     let auth_token = read_gateway_auth_token(remote)?;
-    let mut ws_stream = connect_gateway(gateway_port, auth_token.as_deref(), 5).await?;
+    let mut ws_stream = connect_gateway(gateway_port, Some(auth_token.as_str()), 5).await?;
 
     let request_id = uuid::Uuid::new_v4().to_string();
     let rpc_msg = serde_json::json!({
@@ -293,7 +256,7 @@ pub async fn wait_whatsapp_login(
     remote: Option<&RemoteInfo>,
 ) -> Result<bool, String> {
     let auth_token = read_gateway_auth_token(remote)?;
-    let mut ws_stream = connect_gateway(gateway_port, auth_token.as_deref(), 5).await?;
+    let mut ws_stream = connect_gateway(gateway_port, Some(auth_token.as_str()), 5).await?;
 
     let request_id = uuid::Uuid::new_v4().to_string();
     let rpc_msg = serde_json::json!({
@@ -357,7 +320,7 @@ pub fn wipe_whatsapp_session() -> Result<(), String> {
 
 pub async fn check_whatsapp_linked(gateway_port: u16) -> Result<bool, String> {
     let auth_token = read_gateway_auth_token(None)?;
-    let mut ws_stream = match connect_gateway(gateway_port, auth_token.as_deref(), 1).await {
+    let mut ws_stream = match connect_gateway(gateway_port, Some(auth_token.as_str()), 1).await {
         Ok(stream) => stream,
         Err(err) if err.contains("NOT_PAIRED") || err.contains("DEVICE_IDENTITY_REQUIRED") => {
             return Ok(false)
@@ -417,18 +380,10 @@ pub async fn check_whatsapp_linked(gateway_port: u16) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_connect_message, openclaw_config_path, parse_connected, parse_qr_data_url,
-        whatsapp_session_dir, GATEWAY_CLIENT_ID, GATEWAY_CLIENT_MODE, GATEWAY_CLIENT_VERSION,
-        GATEWAY_ROLE, GATEWAY_SCOPES,
+        build_connect_message, parse_connected, parse_qr_data_url, whatsapp_session_dir,
+        GATEWAY_CLIENT_ID, GATEWAY_CLIENT_MODE, GATEWAY_CLIENT_VERSION, GATEWAY_ROLE,
+        GATEWAY_SCOPES,
     };
-
-    #[test]
-    fn test_openclaw_config_path_uses_unix_style_openclaw_location() {
-        assert_eq!(
-            openclaw_config_path("/home/testuser"),
-            "/home/testuser/.openclaw/openclaw.json"
-        );
-    }
 
     #[test]
     fn test_whatsapp_session_dir_uses_unix_style_credentials_location() {
