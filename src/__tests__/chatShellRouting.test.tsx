@@ -231,10 +231,73 @@ vi.mock("../lib/tauri", () => ({
 
 import App from "../App";
 
+function setupRemoteInstalledInvokeMock() {
+  invokeMock.mockImplementation((cmd: string) => {
+    if (cmd === "check_prerequisites") {
+      return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: false });
+    }
+    if (cmd === "get_openclaw_version") {
+      return Promise.resolve("2.0.0");
+    }
+    if (cmd === "has_saved_license") {
+      return Promise.resolve(false);
+    }
+    if (cmd === "test_ssh_connection") {
+      return Promise.resolve(true);
+    }
+    if (cmd === "check_remote_prerequisites") {
+      return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: true });
+    }
+    if (cmd === "get_remote_openclaw_version") {
+      return Promise.resolve("2.0.0");
+    }
+    if (cmd === "prepare_gateway_chat_connection") {
+      return Promise.resolve({
+        wsUrl: "ws://10.0.0.8:18789",
+        authToken: "token-123",
+        targetEnvironment: "cloud",
+        gatewayPort: 18789,
+        tunnelActive: false,
+        openClawVersion: "2.0.0",
+      });
+    }
+    return Promise.resolve(null);
+  });
+}
+
+async function openRemoteInstalledChat(user: ReturnType<typeof userEvent.setup>) {
+  render(<App />);
+
+  await waitFor(() => {
+    expect(screen.getByText("Start Setup")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByText("Start Setup"));
+  await waitFor(() => {
+    expect(screen.getByTestId("step-environment")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByText(/Cloud Server/i));
+  await user.type(screen.getByTestId("input-remote-ip"), "10.0.0.8");
+  await user.type(screen.getByTestId("input-remote-user"), "ubuntu");
+  await user.click(screen.getByTestId("btn-test-connection"));
+
+  await waitFor(() => {
+    expect(screen.getByText(/SSH connection established successfully!/i)).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByTestId("btn-continue"));
+
+  await waitFor(() => {
+    expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
+  });
+}
+
 describe("Installed-state chat shell", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
     vi.stubGlobal("WebSocket", createReconnectMockWebSocket());
     let uuidCounter = 0;
     vi.stubGlobal("crypto", { randomUUID: () => `uuid-${++uuidCounter}` });
@@ -430,5 +493,32 @@ Tomorrow looks clear and cool.`,
     });
 
     expect(sentSessionKeys[sentSessionKeys.length - 1]).toBe("ops");
+  });
+
+  it("keeps the dark startup theme when remote chat opens without a saved preference", async () => {
+    const user = userEvent.setup();
+    setupRemoteInstalledInvokeMock();
+
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+
+    await openRemoteInstalledChat(user);
+
+    await waitFor(() => {
+      expect(document.documentElement.dataset.theme).toBe("dark");
+    });
+    expect(localStorage.getItem("clawnetes.chat.theme.v1")).toBe("dark");
+  });
+
+  it("uses an explicit light preference when remote chat opens", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("clawnetes.chat.theme.v1", "light");
+    setupRemoteInstalledInvokeMock();
+
+    await openRemoteInstalledChat(user);
+
+    await waitFor(() => {
+      expect(document.documentElement.dataset.theme).toBe("light");
+    });
+    expect(localStorage.getItem("clawnetes.chat.theme.v1")).toBe("light");
   });
 });

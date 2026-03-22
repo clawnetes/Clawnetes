@@ -30,6 +30,10 @@ const THEME_KEY = "clawnetes.chat.theme.v1";
 const MAX_THREADS_PER_SCOPE = 30;
 const MAX_MESSAGES_PER_THREAD = 80;
 
+function parseThemePreference(raw: string | null | undefined): ChatThemePreference | null {
+  return raw === "light" || raw === "dark" || raw === "system" ? raw : null;
+}
+
 function readJson<T>(key: string): T | null {
   const storage = getSafeLocalStorage();
   if (!storage) {
@@ -108,8 +112,12 @@ export function saveStoredSelection(scopeKey: string, agentId: string, threadId:
 
 export function loadThemePreference(): ChatThemePreference {
   const storage = getSafeLocalStorage();
-  const raw = storage?.getItem(THEME_KEY);
-  return raw === "light" || raw === "dark" || raw === "system" ? raw : "system";
+  return parseThemePreference(storage?.getItem(THEME_KEY)) ?? "system";
+}
+
+export function loadSavedThemePreference(): ChatThemePreference | null {
+  const storage = getSafeLocalStorage();
+  return parseThemePreference(storage?.getItem(THEME_KEY));
 }
 
 export function saveThemePreference(theme: ChatThemePreference) {
@@ -126,6 +134,15 @@ export function resolveThemePreference(theme: ChatThemePreference, prefersDark: 
     return prefersDark ? "dark" : "light";
   }
   return theme;
+}
+
+export function inferDocumentTheme(defaultTheme: ChatResolvedTheme = "dark"): ChatResolvedTheme {
+  if (typeof document === "undefined") {
+    return defaultTheme;
+  }
+
+  const activeTheme = document.documentElement.dataset.theme;
+  return activeTheme === "light" || activeTheme === "dark" ? activeTheme : defaultTheme;
 }
 
 export function clearAllChatShellStorage() {

@@ -12,9 +12,10 @@ import {
 import { generateUUID } from "../../lib/gatewayUuid";
 import {
   buildChatScopeKey,
+  inferDocumentTheme,
+  loadSavedThemePreference,
   loadStoredSelection,
   loadStoredThreads,
-  loadThemePreference,
   resolveThemePreference,
   saveStoredSelection,
   saveStoredThreads,
@@ -563,6 +564,25 @@ function readPrefersDark() {
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
+function getInitialThemeState(): {
+  themePreference: ChatThemePreference;
+  resolvedTheme: ChatResolvedTheme;
+} {
+  const savedThemePreference = loadSavedThemePreference();
+  if (savedThemePreference) {
+    return {
+      themePreference: savedThemePreference,
+      resolvedTheme: resolveThemePreference(savedThemePreference, readPrefersDark()),
+    };
+  }
+
+  const inheritedTheme = inferDocumentTheme();
+  return {
+    themePreference: inheritedTheme,
+    resolvedTheme: inheritedTheme,
+  };
+}
+
 function isNearBottom(element: HTMLDivElement, threshold = 96) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
@@ -724,10 +744,16 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   const [sending, setSending] = useState(false);
   const [activeRunId, setActiveRunId] = useState("");
   const [shellError, setShellError] = useState("");
-  const [themePreference, setThemePreference] = useState<ChatThemePreference>(() => loadThemePreference());
-  const [resolvedTheme, setResolvedTheme] = useState<ChatResolvedTheme>(() =>
-    resolveThemePreference(loadThemePreference(), readPrefersDark()),
-  );
+  const initialThemeStateRef = useRef<{
+    themePreference: ChatThemePreference;
+    resolvedTheme: ChatResolvedTheme;
+  } | null>(null);
+  if (!initialThemeStateRef.current) {
+    initialThemeStateRef.current = getInitialThemeState();
+  }
+  const initialThemeState = initialThemeStateRef.current!;
+  const [themePreference, setThemePreference] = useState<ChatThemePreference>(initialThemeState.themePreference);
+  const [resolvedTheme, setResolvedTheme] = useState<ChatResolvedTheme>(initialThemeState.resolvedTheme);
 
   const scopeKey = bootstrap ? buildChatScopeKey(bootstrap) : "";
   const activeThread = threads.find((thread) => thread.id === activeThreadId) || null;
