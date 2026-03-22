@@ -19,3 +19,5 @@
 - Added frontend regression coverage for the recovered success path and the retained double-failure path.
 - Validation passed with `npm test`, `cargo test`, and a successful `npm run tauri dev` launch after clearing a stale local Vite listener on port `1420`.
 - Created commit `34fc9bb8` and pushed the fix to `origin/add_ui`.
+- Follow-up regression diagnosis: the WhatsApp gateway handshake was incorrectly identifying as `openclaw-control-ui` in `ui` mode, which triggered `CONTROL_UI_DEVICE_IDENTITY_REQUIRED`.
+- Restored the backend gateway client identity (`gateway-client` / `backend`) and added a Rust regression test to lock that behavior.

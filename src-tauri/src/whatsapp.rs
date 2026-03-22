@@ -12,9 +12,9 @@ use crate::types::RemoteInfo;
 
 type GatewaySocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-const GATEWAY_CLIENT_ID: &str = "openclaw-control-ui";
+const GATEWAY_CLIENT_ID: &str = "gateway-client";
 const GATEWAY_CLIENT_VERSION: &str = "clawnetes";
-const GATEWAY_CLIENT_MODE: &str = "ui";
+const GATEWAY_CLIENT_MODE: &str = "backend";
 const GATEWAY_ROLE: &str = "operator";
 const GATEWAY_PAIRING_SCOPES: [&str; 2] = ["operator.admin", "operator.pairing"];
 
@@ -448,6 +448,15 @@ mod tests {
         assert_eq!(params["role"], GATEWAY_ROLE);
         assert_eq!(params["scopes"], serde_json::json!(GATEWAY_PAIRING_SCOPES));
         assert_eq!(params["auth"]["token"], "test-token");
+    }
+
+    #[test]
+    fn build_connect_message_uses_backend_gateway_client_identity() {
+        let message = build_connect_message("req-1", Some("test-token"), &GATEWAY_PAIRING_SCOPES);
+        let client = &message["params"]["client"];
+
+        assert_eq!(client["id"], "gateway-client");
+        assert_eq!(client["mode"], "backend");
     }
 
     #[test]
