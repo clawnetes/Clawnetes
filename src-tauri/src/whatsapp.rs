@@ -16,9 +16,13 @@ const GATEWAY_CLIENT_ID: &str = "gateway-client";
 const GATEWAY_CLIENT_VERSION: &str = "clawnetes";
 const GATEWAY_CLIENT_MODE: &str = "backend";
 const GATEWAY_ROLE: &str = "operator";
-const GATEWAY_SCOPES: [&str; 3] = ["operator.admin", "operator.approvals", "operator.pairing"];
+const GATEWAY_PAIRING_SCOPES: [&str; 1] = ["operator.pairing"];
 
-fn build_connect_message(connect_req_id: &str, auth_token: Option<&str>) -> serde_json::Value {
+fn build_connect_message(
+    connect_req_id: &str,
+    auth_token: Option<&str>,
+    scopes: &[&str],
+) -> serde_json::Value {
     let mut connect_msg = serde_json::json!({
         "type": "req",
         "id": connect_req_id,
@@ -33,7 +37,7 @@ fn build_connect_message(connect_req_id: &str, auth_token: Option<&str>) -> serd
             "minProtocol": 3,
             "maxProtocol": 3,
             "role": GATEWAY_ROLE,
-            "scopes": GATEWAY_SCOPES
+            "scopes": scopes
         }
     });
 
@@ -129,6 +133,7 @@ fn read_gateway_auth_token(remote: Option<&RemoteInfo>) -> Result<String, String
 async fn connect_gateway(
     gateway_port: u16,
     auth_token: Option<&str>,
+    scopes: &[&str],
     max_attempts: u8,
 ) -> Result<GatewaySocket, String> {
     let url = format!("ws://127.0.0.1:{}", gateway_port);
@@ -143,7 +148,7 @@ async fn connect_gateway(
             .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
         let connect_req_id = uuid::Uuid::new_v4().to_string();
-        let connect_msg = build_connect_message(&connect_req_id, auth_token);
+        let connect_msg = build_connect_message(&connect_req_id, auth_token, scopes);
 
         ws_stream
             .send(Message::Text(connect_msg.to_string()))
@@ -206,7 +211,13 @@ pub async fn start_whatsapp_login(
     remote: Option<&RemoteInfo>,
 ) -> Result<String, String> {
     let auth_token = read_gateway_auth_token(remote)?;
-    let mut ws_stream = connect_gateway(gateway_port, Some(auth_token.as_str()), 5).await?;
+    let mut ws_stream = connect_gateway(
+        gateway_port,
+        Some(auth_token.as_str()),
+        &GATEWAY_PAIRING_SCOPES,
+        5,
+    )
+    .await?;
 
     let request_id = uuid::Uuid::new_v4().to_string();
     let rpc_msg = serde_json::json!({
@@ -256,7 +267,13 @@ pub async fn wait_whatsapp_login(
     remote: Option<&RemoteInfo>,
 ) -> Result<bool, String> {
     let auth_token = read_gateway_auth_token(remote)?;
-    let mut ws_stream = connect_gateway(gateway_port, Some(auth_token.as_str()), 5).await?;
+    let mut ws_stream = connect_gateway(
+        gateway_port,
+        Some(auth_token.as_str()),
+        &GATEWAY_PAIRING_SCOPES,
+        5,
+    )
+    .await?;
 
     let request_id = uuid::Uuid::new_v4().to_string();
     let rpc_msg = serde_json::json!({
@@ -320,7 +337,14 @@ pub fn wipe_whatsapp_session() -> Result<(), String> {
 
 pub async fn check_whatsapp_linked(gateway_port: u16) -> Result<bool, String> {
     let auth_token = read_gateway_auth_token(None)?;
-    let mut ws_stream = match connect_gateway(gateway_port, Some(auth_token.as_str()), 1).await {
+    let mut ws_stream = match connect_gateway(
+        gateway_port,
+        Some(auth_token.as_str()),
+        &GATEWAY_PAIRING_SCOPES,
+        1,
+    )
+    .await
+    {
         Ok(stream) => stream,
         Err(err) if err.contains("NOT_PAIRED") || err.contains("DEVICE_IDENTITY_REQUIRED") => {
             return Ok(false)
@@ -381,8 +405,8 @@ pub async fn check_whatsapp_linked(gateway_port: u16) -> Result<bool, String> {
 mod tests {
     use super::{
         build_connect_message, parse_connected, parse_qr_data_url, whatsapp_session_dir,
-        GATEWAY_CLIENT_ID, GATEWAY_CLIENT_MODE, GATEWAY_CLIENT_VERSION, GATEWAY_ROLE,
-        GATEWAY_SCOPES,
+        GATEWAY_CLIENT_ID, GATEWAY_CLIENT_MODE, GATEWAY_CLIENT_VERSION, GATEWAY_PAIRING_SCOPES,
+        GATEWAY_ROLE,
     };
 
     #[test]
@@ -402,8 +426,8 @@ mod tests {
     }
 
     #[test]
-    fn build_connect_message_includes_operator_scopes_and_auth_token() {
-        let message = build_connect_message("req-1", Some("test-token"));
+    fn build_connect_message_uses_pairing_scope_and_auth_token() {
+        let message = build_connect_message("req-1", Some("test-token"), &GATEWAY_PAIRING_SCOPES);
         let params = &message["params"];
 
         assert_eq!(message["type"], "req");
@@ -413,7 +437,7 @@ mod tests {
         assert_eq!(params["client"]["version"], GATEWAY_CLIENT_VERSION);
         assert_eq!(params["client"]["mode"], GATEWAY_CLIENT_MODE);
         assert_eq!(params["role"], GATEWAY_ROLE);
-        assert_eq!(params["scopes"], serde_json::json!(GATEWAY_SCOPES));
+        assert_eq!(params["scopes"], serde_json::json!(GATEWAY_PAIRING_SCOPES));
         assert_eq!(params["auth"]["token"], "test-token");
     }
 

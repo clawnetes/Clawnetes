@@ -1,17 +1,16 @@
-# Fix Uninstall Success Gating
+# Fix Remote WhatsApp Pairing Scope Failure
 
 ## Summary
-- Fix the maintenance confirmation flow so uninstall only resets the app after the backend uninstall actually succeeds.
-- Preserve visible error state when uninstall fails instead of falsely returning to setup as if removal completed.
-- Add a regression for the failed uninstall confirmation path.
+- Restore remote WhatsApp pairing when the remote gateway token does not include `operator.admin`.
+- Keep the WhatsApp websocket handshake scoped to the pairing flow instead of reusing the broader chat UI scope bundle.
+- Add a regression so the backend WhatsApp pairing path no longer depends on `operator.admin`.
 
 ## Implementation Changes
-- Update `src/utils/wizardControllers.ts` so `handleMaintenanceAction(...)` returns an explicit success flag.
-- Update `src/App.tsx` so `confirmMaintenanceAction()` only calls the uninstall completion/reset path on success.
-- Extend `src/__tests__/chatShellMessages.test.tsx` with a failing-uninstall regression.
+- Update `src-tauri/src/whatsapp.rs` so the gateway connect payload for WhatsApp login uses only the scopes required for pairing.
+- Extend the Rust unit tests in `src-tauri/src/whatsapp.rs` to assert the reduced scope set and preserve gateway error parsing coverage.
 
 ## Validation
-- Run targeted uninstall/maintenance tests.
+- Run targeted Rust WhatsApp tests.
 - Run `npm test`.
 - Run `npm run tauri dev`.
 - Commit and push if validation succeeds.
