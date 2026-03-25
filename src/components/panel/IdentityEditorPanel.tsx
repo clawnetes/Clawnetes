@@ -149,20 +149,38 @@ function IdentityEditorPanel({
         data-testid="identity-editor-textarea"
       />
 
-      {/* Save button */}
+      {/* Status and buttons */}
       <div className="flex items-center justify-between mt-2">
         <span className="text-[0.6rem] text-[var(--text-muted)]">
           {isDirty ? "Unsaved changes" : "No changes"}
         </span>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={!isDirty || saving || !onSave}
-          className="px-3 py-2 text-xs font-medium rounded-md bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-          data-testid="identity-save-button"
-        >
-          {saving ? "Saving..." : "Save"}
-        </button>
+        {isDirty && (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setDrafts((prev) => {
+                  const next = { ...prev };
+                  delete next[activeTab];
+                  return next;
+                });
+              }}
+              className="px-3 py-2 rounded-md bg-[var(--surface-hover)] text-xs font-medium text-[var(--text-main)] hover:bg-[var(--surface-active)] transition-colors"
+              data-testid="identity-cancel-button"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || !onSave}
+              className="px-3 py-2 text-xs font-medium rounded-md bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+              data-testid="identity-save-button"
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
