@@ -32,6 +32,60 @@ pub fn apply_agent_overrides(agent_obj: &mut serde_json::Value, agent: &AgentDat
             }
         }
     }
+
+    // Add per-agent heartbeat if specified
+    if let Some(heartbeat_mode) = &agent.heartbeat_mode {
+        let heartbeat_value = match heartbeat_mode.as_str() {
+            "never" => serde_json::json!({ "enabled": false }),
+            "idle" => {
+                let timeout = agent.idle_timeout_ms.unwrap_or(300000); // 5 minutes default
+                serde_json::json!({ "mode": "idle", "timeout": timeout })
+            }
+            interval => serde_json::json!({ "every": interval }),
+        };
+
+        if let Some(agent_obj_map) = agent_obj.as_object_mut() {
+            agent_obj_map.insert("heartbeat".to_string(), heartbeat_value);
+        }
+    }
+}
+
+fn sync_agent_skills(
+    agent_id: &str,
+    enabled_skills: Option<&Vec<String>>,
+    home: &str,
+) -> Result<(), String> {
+    let agent_skills_dir = format!("{}/.openclaw/agents/{}/workspace/skills", home, agent_id);
+
+    // Create skills directory if it doesn't exist
+    let _ = fs::create_dir_all(&agent_skills_dir);
+
+    // Get list of currently installed skill directories
+    let installed_skills = match fs::read_dir(&agent_skills_dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect::<Vec<_>>(),
+        Err(_) => vec![],
+    };
+
+    let enabled = enabled_skills.cloned().unwrap_or_default();
+
+    // Remove skills that are no longer enabled
+    for skill in &installed_skills {
+        if !enabled.contains(skill) {
+            let skill_path = format!("{}/{}", agent_skills_dir, skill);
+            let _ = fs::remove_dir_all(&skill_path);
+        }
+    }
+
+    // For now, skills installation would be handled by openclaw CLI
+    // Future: integrate with skill registry to copy/install skill files
+    // For each enabled skill not yet installed:
+    // let _ = shell_command(&format!("openclaw skills install --agent {} {}", agent_id, skill));
+
+    Ok(())
 }
 
 pub fn build_agent_session_init_command(agent_id: &str) -> String {
@@ -882,6 +936,9 @@ Serve {}."#,
                 &format!("{}/auth-profiles.json", agent_config_dir),
                 &agent_auth_json,
             )?;
+
+            // Sync agent skills
+            sync_agent_skills(&agent.id, agent.skills.as_ref(), &home)?;
         }
     }
 
@@ -1309,6 +1366,31 @@ pub fn get_current_config(
                 Some(a_memory_md_s)
             };
 
+            // Extract per-agent heartbeat settings
+            let (a_heartbeat_mode, a_idle_timeout_ms) = if let Some(heartbeat) = agent_val.get("heartbeat") {
+                let mode = if let Some(enabled) = heartbeat.get("enabled") {
+                    if enabled.as_bool() == Some(false) {
+                        Some("never".to_string())
+                    } else {
+                        None
+                    }
+                } else if let Some(hb_mode) = heartbeat.get("mode").and_then(|m| m.as_str()) {
+                    Some(hb_mode.to_string())
+                } else if let Some(every) = heartbeat.get("every").and_then(|e| e.as_str()) {
+                    Some(every.to_string())
+                } else {
+                    None
+                };
+
+                let timeout = heartbeat
+                    .get("timeout")
+                    .and_then(|t| t.as_u64());
+
+                (mode, timeout)
+            } else {
+                (None, None)
+            };
+
             agent_configs.push(AgentData {
                 id: aid,
                 name,
@@ -1324,6 +1406,8 @@ pub fn get_current_config(
                 agents_md: a_agents_md,
                 heartbeat_md: a_heartbeat_md,
                 memory_md: a_memory_md,
+                heartbeat_mode: a_heartbeat_mode,
+                idle_timeout_ms: a_idle_timeout_ms,
                 subagents: None,
                 tools: agent_val
                     .get("tools")

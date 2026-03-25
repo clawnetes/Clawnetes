@@ -740,3 +740,64 @@ pub async fn setup_remote_openclaw(
 
     Ok(gateway_token)
 }
+
+pub async fn apply_agent_config(
+    remote: &crate::types::RemoteInfo,
+    config: AgentConfig,
+) -> Result<String, ClawError> {
+    let executor = SshExecutor::connect(remote)?;
+    let home = executor.run("echo $HOME")?.trim().to_string();
+    let openclaw_root = format!("{}/.openclaw", home);
+
+    // Read existing openclaw.json
+    let mut config_json = read_remote_json(&executor, &openclaw_root);
+
+    // If config has agents, update agents list in openclaw.json
+    if let Some(agents) = &config.agents {
+        if let Some(obj) = config_json.as_object_mut() {
+            if let Some(agents_entry) = obj.get_mut("agents") {
+                if let Some(agents_obj) = agents_entry.as_object_mut() {
+                    let mut agents_list = Vec::new();
+
+                    for agent in agents {
+                        let mut agent_obj = serde_json::json!({
+                            "id": agent.id,
+                            "name": agent.name,
+                            "workspace": format!("{}/.openclaw/agents/{}/workspace", home, agent.id),
+                            "agentDir": format!("{}/.openclaw/agents/{}/agent", home, agent.id),
+                            "model": {
+                                "primary": agent.model
+                            }
+                        });
+
+                        if let Some(fb) = &agent.fallback_models {
+                            if !fb.is_empty() {
+                                if let Some(model_obj) =
+                                    agent_obj.get_mut("model").and_then(|m| m.as_object_mut())
+                                {
+                                    model_obj.insert(
+                                        "fallbacks".to_string(),
+                                        serde_json::to_value(fb).unwrap(),
+                                    );
+                                }
+                            }
+                        }
+
+                        // Apply per-agent overrides (tools, heartbeat, subagents)
+                        apply_agent_overrides(&mut agent_obj, agent);
+                        agents_list.push(agent_obj);
+                    }
+
+                    agents_obj.insert("list".to_string(), serde_json::json!(agents_list));
+                }
+            }
+        }
+    }
+
+    // Write updated openclaw.json back to remote
+    let config_json_str = serde_json::to_string_pretty(&config_json)
+        .map_err(|e| ClawError::System(format!("Failed to serialize config: {}", e)))?;
+    executor.write_file(&format!("{}/openclaw.json", openclaw_root), &config_json_str)?;
+
+    Ok("Agent configuration updated on remote.".into())
+}

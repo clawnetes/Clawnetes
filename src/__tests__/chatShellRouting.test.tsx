@@ -281,6 +281,25 @@ async function openInstalledLocalChat(user: ReturnType<typeof userEvent.setup> =
   return user;
 }
 
+async function openSettingsPanel(user: ReturnType<typeof userEvent.setup>) {
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByRole("button", { name: "Settings" }));
+
+  // Click the Advanced tab to render the settings panel
+  await waitFor(() => {
+    expect(screen.getByText("Advanced")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByText("Advanced"));
+
+  await waitFor(() => {
+    expect(screen.getByTestId("settings-panel")).toBeInTheDocument();
+  });
+}
+
 async function openRemoteInstalledChat(user: ReturnType<typeof userEvent.setup>) {
   render(<App />);
 
@@ -403,24 +422,19 @@ describe("Installed-state chat shell", () => {
     });
   });
 
-  it("opens the Command Center as a separate screen and returns to chat", async () => {
+  it("opens the Settings panel from the sidebar and closes back to chat", async () => {
     const user = userEvent.setup();
     await openInstalledLocalChat(user);
 
-    await user.click(screen.getByRole("button", { name: "Configure" }));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByRole("button", { name: "← Back to app" }));
+    await openSettingsPanel(user);
+    await user.click(screen.getByTestId("right-panel-close"));
 
     await waitFor(() => {
       expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
     });
   });
 
-  it("keeps internal weather transcript noise hidden after returning from Command Center", async () => {
+  it("keeps internal weather transcript noise hidden after opening and closing Settings", async () => {
     const noisyTranscript = [
       {
         role: "assistant",
@@ -442,13 +456,8 @@ Tomorrow looks clear and cool.`,
 
     expect(screen.queryByText(/Weather report for:/i)).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Configure" }));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByRole("button", { name: "← Back to app" }));
+    await openSettingsPanel(user);
+    await user.click(screen.getByTestId("right-panel-close"));
 
     await waitFor(() => {
       expect(screen.getAllByText("Tomorrow looks clear and cool.").length).toBeGreaterThan(0);

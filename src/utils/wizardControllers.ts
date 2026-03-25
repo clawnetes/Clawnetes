@@ -510,7 +510,16 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
   try {
     const remoteConfig = buildRemoteConfig(controller.state);
     const config: any = await invoke("get_current_config", { remote: remoteConfig });
+    if (!config || typeof config !== "object") {
+      controller.initialConfigRef.current = null;
+      controller.setMaintenanceStatus("No existing configuration found.");
+      return false;
+    }
+
     controller.initialConfigRef.current = config;
+
+    const fallbackModelRefs = Array.isArray(config.fallback_models) ? config.fallback_models : [];
+    const loadedAgentConfigs = Array.isArray(config.agent_configs) ? config.agent_configs : [];
 
     const normalizedProvider = getBaseProvider(config.provider);
     const normalizedProviderAuths = normalizeProviderAuths(
@@ -542,13 +551,13 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
       controller.availableSkillIds,
     );
     controller.setSelectedSkills(normalizedTopLevelSelection.skills);
-    controller.setServiceKeys(config.service_keys);
+    controller.setServiceKeys(config.service_keys || {});
     controller.setSandboxMode(toUiSandboxMode(config.sandbox_mode));
     controller.setToolPolicy(controller.getLoadedTopLevelToolPolicy(config));
     controller.setFallbackModels(
-      config.fallback_models.map((modelRef: string) => normalizeModelRefForUi(modelRef, normalizedProviderAuths)),
+      fallbackModelRefs.map((modelRef: string) => normalizeModelRefForUi(modelRef, normalizedProviderAuths)),
     );
-    controller.setEnableFallbacks(config.fallback_models.length > 0);
+    controller.setEnableFallbacks(fallbackModelRefs.length > 0);
     controller.setHeartbeatMode(config.heartbeat_mode);
     controller.setIdleTimeoutMs(config.idle_timeout_ms);
     controller.setIdentityMd(config.identity_md);
@@ -565,7 +574,7 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
     if (config.heartbeat_md) controller.setHeartbeatMd(config.heartbeat_md);
     if (config.memory_md) controller.setMemoryMd(config.memory_md);
     if (config.memory_enabled !== undefined) controller.setMemoryEnabled(config.memory_enabled);
-    if (config.cron_jobs) controller.setCronJobs(config.cron_jobs);
+    if (Array.isArray(config.cron_jobs)) controller.setCronJobs(config.cron_jobs);
 
     const loadedMessagingChannel = getMessagingChannelFromConfig(config);
     controller.setMessagingChannel(loadedMessagingChannel);
@@ -585,10 +594,10 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
     }
 
     controller.setEnableMultiAgent(config.enable_multi_agent);
-    if (config.enable_multi_agent && config.agent_configs) {
-      controller.setNumAgents(config.agent_configs.length);
+    if (config.enable_multi_agent && loadedAgentConfigs.length > 0) {
+      controller.setNumAgents(loadedAgentConfigs.length);
       controller.setAgentConfigs(
-        config.agent_configs.map((agent: any) => {
+        loadedAgentConfigs.map((agent: any) => {
           const normalizedAgentSelection = normalizeSkillAndToolSelection(
             agent.skills,
             agent.tools?.allow || agent.allowed_tools,

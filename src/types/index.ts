@@ -69,9 +69,16 @@ export interface AgentConfigData {
   soulMd: string;
   toolsMd: string;
   agentsMd: string;
+  heartbeatMd?: string;
+  memoryMd?: string;
+  heartbeatMode?: string;
+  idleTimeoutMs?: number;
+  memoryEnabled?: boolean;
+  sandboxMode?: string;
   toolPolicy: ToolPolicy;
   cronJobs: CronJobConfig[];
   persona?: string;
+  provider?: string;
 }
 
 export interface StepDef {
@@ -240,6 +247,11 @@ export interface AgentPayloadData {
   agents_md?: string | null;
   heartbeat_md?: string | null;
   memory_md?: string | null;
+  heartbeat_mode?: string | null;
+  idle_timeout_ms?: number | null;
+  memory_enabled?: boolean;
+  sandbox_mode?: string | null;
+  provider?: string | null;
   subagents?: {
     allowAgents: string[];
   } | null;
