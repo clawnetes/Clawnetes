@@ -54,6 +54,7 @@ interface ChatShellProps {
   activeEnvironmentId?: string | null;
   onSwitchEnvironment?: (envId: string) => void;
   onAddEnvironment?: () => void;
+  agents?: AgentConfigData[];
   activeAgentId?: string;
   agentModelRef?: string;
   agentFallbackCount?: number;
@@ -152,6 +153,7 @@ function mergeAssistantStreamText(current: string, incoming: string) {
 function ChatShell({
   bootstrap, bootstrapping, bootstrapError, onRetryConnection, onOpenConfigure,
   environments, activeEnvironmentId, onSwitchEnvironment, onAddEnvironment,
+  agents: propAgents,
   activeAgentId: chatActiveAgentId,
   agentModelRef, agentFallbackCount, agentFallbackModels, agentSkills, serviceKeys,
   onModelChange, onFallbacksChange, providerAuths, onProviderAuthChange, onStartOAuth, onDetectLocalModels, onSaveSkillsConfig, skillsSaving, onSetupIntegration, onAddAgent,
@@ -175,6 +177,11 @@ function ChatShell({
   const [connectionLabel, setConnectionLabel] = useState("Connecting to gateway...");
   const [connectionState, setConnectionState] = useState<GatewayConnectState["status"]>("connecting");
   const [agents, setAgents] = useState<GatewayChatAgent[]>([]);
+
+  // Use propAgents if available (from app state), otherwise use gateway agents
+  const displayAgents = propAgents && propAgents.length > 0
+    ? propAgents.map(a => ({ id: a.id, name: a.name, emoji: a.emoji }))
+    : agents;
   const [liveSessions, setLiveSessions] = useState<GatewayChatSession[]>([]);
   const [threads, setThreads] = useState<StoredChatThread[]>([]);
   const [activeAgentId, setActiveAgentId] = useState("");
@@ -894,7 +901,7 @@ function ChatShell({
       <ChatPanelContext.Provider value={panelContextValue}>
         <div className="chat-shell-fullpanel" data-theme={resolvedTheme}>
           <RightPanel
-            agents={agents}
+            agents={displayAgents}
             activeAgentId={activeAgentId}
             onAgentSwitch={(agentId) => void handleAgentSwitch(agentId)}
             modelRef={agentModelRef}
@@ -968,7 +975,7 @@ function ChatShell({
 
         <section className="chat-main-panel">
           <ChatHeader
-            agents={agents}
+            agents={displayAgents}
             activeAgentId={activeAgentId}
             activeAgentName={activeAgentName}
             activeSessionKey={activeSessionKey}

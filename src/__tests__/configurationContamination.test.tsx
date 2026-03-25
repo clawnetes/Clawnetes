@@ -43,7 +43,7 @@ describe("Configuration Contamination Prevention", () => {
     });
 
     // Simulate a configure_agent call without remote parameter (local)
-    const remoteInfo = targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null;
+    const remoteInfo = (targetEnvironment as "cloud" | "local") === "cloud" ? buildActiveRemoteConfig() : null;
 
     expect(remoteInfo).toBeNull();
   });
@@ -66,12 +66,12 @@ describe("Configuration Contamination Prevention", () => {
     });
 
     // Cloud case
-    const remoteCloud = targetEnvironmentCloud === "cloud" ? buildActiveRemoteConfig() : null;
+    const remoteCloud = (targetEnvironmentCloud as "cloud" | "local") === "cloud" ? buildActiveRemoteConfig() : null;
     expect(remoteCloud).not.toBeNull();
     expect(remoteCloud?.ip).toBe("10.0.0.1");
 
     // Local case
-    const remoteLocal = targetEnvironmentLocal === "cloud" ? buildActiveRemoteConfig() : null;
+    const remoteLocal = (targetEnvironmentLocal as "cloud" | "local") === "cloud" ? buildActiveRemoteConfig() : null;
     expect(remoteLocal).toBeNull();
   });
 

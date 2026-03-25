@@ -1856,6 +1856,7 @@ Managed by Clawnetes.`,
             )?.id || null : null}
             onSwitchEnvironment={handleSwitchEnvironment}
             onAddEnvironment={handleAddEnvironment}
+            agents={agentConfigs}
             activeAgentId={activeAgentId}
             agentModelRef={model}
             agentFallbackCount={fallbackModels.length}
