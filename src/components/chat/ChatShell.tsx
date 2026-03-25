@@ -984,6 +984,7 @@ function ChatShell({
             chatReady={chatReady}
             showEmptyAgentState={showEmptyAgentState}
             onAgentSwitch={(agentId) => void handleAgentSwitch(agentId)}
+            onAddAgent={onAddAgent}
             onResetChat={() => void handleResetChat()}
             onRetryConnection={onRetryConnection}
             modelRef={agentModelRef}

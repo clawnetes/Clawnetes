@@ -494,7 +494,16 @@ Tomorrow looks clear and cool.`,
 
     await openInstalledLocalChat(user);
 
-    await user.selectOptions(screen.getByTestId("chat-active-agent"), "ops");
+    // Open dropdown and select ops agent
+    await user.click(screen.getByTestId("chat-active-agent"));
+    // Find the Ops agent button in the dropdown menu
+    const opsButtons = screen.getAllByRole("button").filter(btn =>
+      btn.textContent && btn.textContent.includes("Ops")
+    );
+    const opsOption = opsButtons.find(btn => btn.textContent?.includes("Ops Agent")) || opsButtons.find(btn => btn.textContent?.includes("Ops"));
+    if (opsOption) {
+      await user.click(opsOption);
+    }
 
     await waitFor(() => {
       expect(screen.getAllByText("Ops ready.").length).toBeGreaterThan(0);

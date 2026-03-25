@@ -181,8 +181,8 @@ describe("ChatHeader", () => {
       { id: "sub", name: "Bot B" },
     ];
     render(<ChatHeader {...baseProps} agents={agents} />);
-    const select = screen.getByTestId("chat-active-agent");
-    expect(select.tagName).toBe("SELECT");
+    const button = screen.getByTestId("chat-active-agent");
+    expect(button.tagName).toBe("BUTTON");
   });
 
   it("shows session key in metadata", () => {
