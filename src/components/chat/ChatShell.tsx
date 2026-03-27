@@ -166,7 +166,10 @@ function asSessionLifecycleSnapshot(
   if (!payload) {
     return null;
   }
-  return payload.session ?? payload;
+  if ("session" in payload) {
+    return payload.session ?? payload;
+  }
+  return payload;
 }
 
 function sessionMatchesActiveContext(params: {
