@@ -1,6 +1,7 @@
 import { openDialog } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
 import { loadLastRemoteConnection } from "../../lib/remoteConnectionStorage";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 interface StepEnvironmentProps {
   handleSshCheck: () => void;
@@ -49,36 +50,33 @@ export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemo
           <div className="form-group">
             <label>Server IP Address</label>
             <input
+              {...TEXT_ENTRY_PROPS}
               data-testid="input-remote-ip"
               placeholder="192.168.1.100"
               value={remoteIp}
               onChange={(e) => setField("remoteIp", e.target.value)}
-              autoComplete="off"
             />
           </div>
           <div className="form-group">
             <label>SSH Username</label>
             <input
+              {...TEXT_ENTRY_PROPS}
               data-testid="input-remote-user"
               placeholder="ubuntu"
               value={remoteUser}
               onChange={(e) => setField("remoteUser", e.target.value)}
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck="false"
-              autoComplete="off"
             />
           </div>
           <div className="form-group">
             <label>SSH Private Key (Optional)</label>
             <div style={{ display: "flex", gap: "0.5rem" }}>
               <input
+                {...TEXT_ENTRY_PROPS}
                 data-testid="input-remote-key"
                 placeholder="/Users/you/.ssh/id_rsa"
                 value={remotePrivateKeyPath}
                 onChange={(e) => setField("remotePrivateKeyPath", e.target.value)}
                 style={{ flex: 1 }}
-                autoComplete="off"
               />
               <button
                 className="secondary"
@@ -102,12 +100,12 @@ export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemo
           <div className="form-group">
             <label>SSH Password (if not using key)</label>
             <input
+              {...TEXT_ENTRY_PROPS}
               data-testid="input-remote-password"
               type="password"
               placeholder="Password"
               value={remotePassword}
               onChange={(e) => setField("remotePassword", e.target.value)}
-              autoComplete="off"
             />
           </div>
 

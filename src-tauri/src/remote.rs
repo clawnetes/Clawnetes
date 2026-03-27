@@ -799,5 +799,57 @@ pub async fn apply_agent_config(
         .map_err(|e| ClawError::System(format!("Failed to serialize config: {}", e)))?;
     executor.write_file(&format!("{}/openclaw.json", openclaw_root), &config_json_str)?;
 
+    // Create agent workspace directories and write workspace files
+    if let Some(agents) = &config.agents {
+        let main_agent_dir = format!("{}/agents/main/agent", openclaw_root);
+        for agent in agents {
+            if agent.id == "main" {
+                continue;
+            }
+            let agent_workspace =
+                format!("{}/agents/{}/workspace", openclaw_root, agent.id);
+            let agent_config_dir =
+                format!("{}/agents/{}/agent", openclaw_root, agent.id);
+
+            executor.mkdir_p(&agent_workspace)?;
+            executor.mkdir_p(&agent_config_dir)?;
+
+            write_markdown_file(
+                &executor,
+                &format!("{}/IDENTITY.md", agent_workspace),
+                agent.identity_md.as_ref(),
+                || {
+                    format!(
+                        "# IDENTITY.md - Who Am I?\n- **Name:** {}\n- **Emoji:** 🦞\n---\nManaged by Clawnetes.",
+                        agent.name
+                    )
+                },
+            )?;
+            write_markdown_file(
+                &executor,
+                &format!("{}/USER.md", agent_workspace),
+                agent.user_md.as_ref(),
+                || {
+                    format!(
+                        "# USER.md - About Your Human\n- **Name:** {}\n---",
+                        config.user_name
+                    )
+                },
+            )?;
+            write_markdown_file(
+                &executor,
+                &format!("{}/SOUL.md", agent_workspace),
+                agent.soul_md.as_ref(),
+                || format!("# SOUL.md\n## Mission\nServe {}.", config.user_name),
+            )?;
+
+            // Copy auth-profiles from main agent dir if it exists
+            let _ = executor.run(&format!(
+                "cp {}/auth-profiles.json {}/auth-profiles.json 2>/dev/null || true",
+                main_agent_dir, agent_config_dir
+            ));
+        }
+    }
+
     Ok("Agent configuration updated on remote.".into())
 }

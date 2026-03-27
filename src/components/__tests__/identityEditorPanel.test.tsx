@@ -35,6 +35,15 @@ describe("IdentityEditorPanel", () => {
     expect(textarea.value).toBe("# Identity\nI am Test Agent");
   });
 
+  it("disables browser text assistance on the editor textarea", () => {
+    render(<IdentityEditorPanel {...DEFAULT_PROPS} />);
+    const textarea = screen.getByTestId("identity-editor-textarea");
+    expect(textarea).toHaveAttribute("autocomplete", "off");
+    expect(textarea).toHaveAttribute("autocapitalize", "none");
+    expect(textarea).toHaveAttribute("autocorrect", "off");
+    expect(textarea).toHaveAttribute("spellcheck", "false");
+  });
+
   it("switches content when clicking a different tab", async () => {
     const user = userEvent.setup();
     render(<IdentityEditorPanel {...DEFAULT_PROPS} />);

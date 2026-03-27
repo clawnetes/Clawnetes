@@ -118,6 +118,13 @@ export interface GatewayChatBootstrap {
   openClawVersion: string;
 }
 
+export interface ChatTranscriptScrollSnapshot {
+  agentId: string;
+  sessionKey: string;
+  threadId: string;
+  scrollTop: number;
+}
+
 // Agent Type Presets
 export type AgentTypeId = "coding-assistant" | "office-assistant" | "travel-planner" | "custom";
 

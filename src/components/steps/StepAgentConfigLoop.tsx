@@ -7,6 +7,7 @@ import { buildReferencedProviders, getBaseProviderFromModel } from "../../utils/
 import { createInheritedToolPolicy } from "../../utils/toolSelection";
 import ToolPolicyEditor from "../ToolPolicyEditor";
 import Dropdown from "../Dropdown";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 import type { AgentConfigData } from "../../types";
 import type { ReactNode } from "react";
 
@@ -56,6 +57,7 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
       <div className="form-group">
         <label>Agent Name</label>
         <input
+          {...TEXT_ENTRY_PROPS}
           value={currentAgent.name}
           onChange={(e) => {
             const val = e.target.value;
@@ -67,7 +69,6 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
             });
           }}
           placeholder="e.g., CodeBot"
-          autoComplete="off"
         />
       </div>
 
@@ -156,6 +157,7 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
       <div className="workspace-editor" style={{ marginBottom: "2rem" }}>
         {activeWorkspaceTab === "identity" && (
           <textarea
+            {...TEXT_ENTRY_PROPS}
             className="markdown-editor"
             rows={8}
             value={currentAgent.identityMd}
@@ -165,12 +167,12 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
               });
             }}
             placeholder={`# IDENTITY.md\n- **Name:** ${currentAgent.name}\n- **Emoji:** ${currentAgent.emoji}`}
-            autoComplete="off"
           />
         )}
 
         {activeWorkspaceTab === "soul" && (
           <textarea
+            {...TEXT_ENTRY_PROPS}
             className="markdown-editor"
             rows={8}
             value={currentAgent.soulMd}
@@ -180,12 +182,12 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
               });
             }}
             placeholder={`# SOUL.md\n## Mission\nServe ${userName}.`}
-            autoComplete="off"
           />
         )}
 
         {activeWorkspaceTab === "tools" && (
           <textarea
+            {...TEXT_ENTRY_PROPS}
             className="markdown-editor"
             rows={8}
             value={currentAgent.toolsMd}
@@ -195,12 +197,12 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
               });
             }}
             placeholder={`# TOOLS.md\nDefine tool usage policies for this agent...`}
-            autoComplete="off"
           />
         )}
 
         {activeWorkspaceTab === "agents" && (
           <textarea
+            {...TEXT_ENTRY_PROPS}
             className="markdown-editor"
             rows={8}
             value={currentAgent.agentsMd}
@@ -210,7 +212,6 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
               });
             }}
             placeholder={`# AGENTS.md\nDefine sub-agent routing for this agent...`}
-            autoComplete="off"
           />
         )}
       </div>
@@ -257,13 +258,13 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
         {currentAgentProvider === "lmstudio" && (
           <div style={{ marginTop: "0.75rem" }}>
             <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>LM Studio Base URL</label>
-            <input type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} autoComplete="off" />
+            <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} />
           </div>
         )}
         {currentAgentProvider === "local" && (
           <div style={{ marginTop: "0.75rem" }}>
             <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Custom Base URL</label>
-            <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} autoComplete="off" />
+            <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} />
           </div>
         )}
       </div>
@@ -326,13 +327,13 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
               {currentFallbackProvider === "lmstudio" && (
                 <div style={{ marginTop: "0.75rem" }}>
                   <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>LM Studio Base URL</label>
-                  <input type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} autoComplete="off" />
+                  <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} />
                 </div>
               )}
               {currentFallbackProvider === "local" && (
                 <div style={{ marginTop: "0.75rem" }}>
                   <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Custom Base URL</label>
-                  <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} autoComplete="off" />
+                  <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} />
                 </div>
               )}
             </>
@@ -421,6 +422,7 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
           <div key={cronIdx} style={{ padding: "0.75rem", border: "1px solid var(--border)", borderRadius: "8px", marginTop: "0.5rem" }}>
             <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.5rem" }}>
               <input
+                {...TEXT_ENTRY_PROPS}
                 placeholder="Job name"
                 value={cron.name}
                 onChange={e => {
@@ -429,7 +431,6 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
                   });
                 }}
                 style={{ flex: 1 }}
-                autoComplete="off"
               />
               <button className="secondary" style={{ padding: "2px 8px", fontSize: "0.75rem", height: "auto", color: "var(--error)" }} onClick={() => {
                 updateAgentConfigs((updated) => {
@@ -438,6 +439,7 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
               }}>Remove</button>
             </div>
             <input
+              {...TEXT_ENTRY_PROPS}
               placeholder="Schedule (e.g. 0 9 * * *)"
               value={cron.schedule}
               onChange={e => {
@@ -446,9 +448,9 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
                 });
               }}
               style={{ marginBottom: "0.5rem" }}
-              autoComplete="off"
             />
             <input
+              {...TEXT_ENTRY_PROPS}
               placeholder="Command"
               value={cron.command}
               onChange={e => {
@@ -456,7 +458,6 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
                   updated[currentAgentConfigIdx].cronJobs[cronIdx].command = e.target.value;
                 });
               }}
-              autoComplete="off"
             />
           </div>
         ))}

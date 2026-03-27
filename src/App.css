@@ -557,13 +557,15 @@ button:disabled {
 }
 
 .chat-agent-dropdown {
-  min-width: 220px;
-  padding: 0.42rem 0.7rem;
+  min-width: 140px;
+  padding: 0.3rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface-2);
   color: var(--text-main);
   font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 
 .chat-agent-dropdown:focus,
@@ -571,6 +573,61 @@ button:disabled {
   outline: none;
   border-color: var(--primary);
   box-shadow: 0 0 0 4px var(--input-ring);
+}
+
+.chat-agent-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 180px;
+  background: var(--surface-sidebar);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  z-index: 50;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.chat-agent-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.65rem;
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.82rem;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  box-shadow: none;
+  text-align: left;
+}
+
+.chat-agent-option:hover {
+  background: var(--surface-hover);
+}
+
+.chat-agent-option.active {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.chat-agent-option.add {
+  color: var(--text-subtle);
+  font-size: 0.8rem;
+}
+
+.chat-agent-option.remove {
+  color: var(--danger, #dc2626);
+}
+
+.chat-agent-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0.2rem 0;
 }
 
 .chat-transcript {
@@ -586,10 +643,17 @@ button:disabled {
 .chat-transcript-scroll {
   height: 100%;
   overflow-y: auto;
+  overflow-anchor: none;
   padding: 1.25rem clamp(1.25rem, 3vw, 2.8rem) 1rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.chat-transcript-end {
+  flex: 0 0 1px;
+  width: 100%;
+  overflow-anchor: auto;
 }
 
 .chat-config-banner {

@@ -1,5 +1,5 @@
-import { memo, useState } from "react";
-import type { AgentConfigData, ProviderAuthConfig, ToolPolicy } from "../../types";
+import { memo } from "react";
+import type { ProviderAuthConfig, ToolPolicy } from "../../types";
 import { useChatPanel, type PanelView } from "../../context/ChatPanelContext";
 import TabBar from "../ui/TabBar";
 import ModelSwitcherPanel from "./ModelSwitcherPanel";
@@ -7,7 +7,6 @@ import SkillsPanel from "./SkillsPanel";
 import IdentityEditorPanel, { type IdentityTab } from "./IdentityEditorPanel";
 import SettingsPanel from "./SettingsPanel";
 import ToolsPanel from "./ToolsPanel";
-import AddAgentModal from "./AddAgentModal";
 
 const PANEL_TABS: { id: PanelView; label: string }[] = [
   { id: "model", label: "Model" },
@@ -26,9 +25,8 @@ const PANEL_PLACEHOLDERS: Record<PanelView, string> = {
 };
 
 interface RightPanelProps {
-  agents: { id: string; name?: string; emoji?: string }[];
-  activeAgentId: string;
-  onAgentSwitch: (agentId: string) => void;
+  activeAgentName?: string;
+  activeAgentEmoji?: string;
   modelRef?: string;
   fallbackModels?: string[];
   skills?: string[];
@@ -43,7 +41,6 @@ interface RightPanelProps {
   onSaveSkillsConfig?: (skills: string[], serviceKeys: Record<string, string>) => void;
   skillsSaving?: boolean;
   onSetupIntegration?: (skillId: string) => void;
-  onAddAgent?: (agent: AgentConfigData) => void | Promise<void>;
   // Identity editor props
   identityMd?: string;
   soulMd?: string;
@@ -76,9 +73,8 @@ interface RightPanelProps {
 }
 
 function RightPanel({
-  agents,
-  activeAgentId,
-  onAgentSwitch,
+  activeAgentName,
+  activeAgentEmoji,
   modelRef,
   fallbackModels = [],
   skills = [],
@@ -93,7 +89,6 @@ function RightPanel({
   onSaveSkillsConfig,
   skillsSaving,
   onSetupIntegration,
-  onAddAgent,
   identityMd,
   soulMd,
   toolsMd,
@@ -123,14 +118,6 @@ function RightPanel({
   onUninstall,
 }: RightPanelProps) {
   const { panelOpen, panelView, setPanelView, closePanel } = useChatPanel();
-  const [isAddAgentModalOpen, setIsAddAgentModalOpen] = useState(false);
-
-  const handleAddAgent = async (newAgent: AgentConfigData) => {
-    if (onAddAgent) {
-      await onAddAgent(newAgent);
-    }
-    setIsAddAgentModalOpen(false);
-  };
 
   function renderPanelContent() {
     switch (panelView) {
@@ -227,7 +214,7 @@ function RightPanel({
       className="right-panel-fullpage flex flex-col bg-[var(--surface-panel)] overflow-hidden"
       data-testid="right-panel"
     >
-      {/* Panel header with back button and agent switcher */}
+      {/* Panel header with back button and active agent badge */}
       <div className="flex items-center gap-3 px-4 pt-4 pb-0">
         <button
           type="button"
@@ -244,33 +231,13 @@ function RightPanel({
         <h3 className="text-xs font-semibold text-[var(--text-subtle)] uppercase tracking-wider">
           Configuration
         </h3>
-        {/* Agent Switcher Dropdown */}
-        <div className="ml-auto">
-          <select
-            value={activeAgentId}
-            onChange={(e) => {
-              const value = e.target.value;
-              if (value === "add-agent") {
-                setIsAddAgentModalOpen(true);
-              } else {
-                onAgentSwitch(value);
-              }
-            }}
-            className="px-3 py-1.5 rounded-md bg-[var(--surface-hover)] text-[var(--text-main)] text-sm font-medium border border-[var(--surface-border)] hover:bg-[var(--surface-active)] transition-colors"
-            data-testid="agent-switcher"
-          >
-            {agents.map((agent) => {
-              const emoji = agent.emoji || "🤖";
-              const displayName = agent.name || agent.id || "Agent";
-              return (
-                <option key={agent.id} value={agent.id}>
-                  {emoji} {displayName}
-                </option>
-              );
-            })}
-            <option value="add-agent">+ Add Agent</option>
-          </select>
-        </div>
+        {/* Read-only active agent badge */}
+        <span
+          className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[var(--surface-hover)] text-[var(--text-main)] text-sm font-medium"
+          data-testid="agent-badge"
+        >
+          {activeAgentEmoji || "🤖"} {activeAgentName || "Agent"}
+        </span>
       </div>
 
       {/* Tab navigation */}
@@ -287,14 +254,6 @@ function RightPanel({
           {renderPanelContent()}
         </div>
       </div>
-
-      {/* Add Agent Modal */}
-      {isAddAgentModalOpen && (
-        <AddAgentModal
-          onClose={() => setIsAddAgentModalOpen(false)}
-          onSubmit={handleAddAgent}
-        />
-      )}
     </div>
   );
 }

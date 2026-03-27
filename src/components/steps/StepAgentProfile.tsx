@@ -1,6 +1,7 @@
 import { useWizard } from "../../context/WizardContext";
 import { EMOJI_OPTIONS } from "../../presets/modelsByProvider";
 import { updateIdentityField } from "../../utils/markdownHelpers";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 export default function StepAgentProfile() {
   const { state, dispatch } = useWizard();
@@ -15,7 +16,7 @@ export default function StepAgentProfile() {
       <p className="step-description">Give your agent a name and a personality.</p>
       <div className="form-group">
         <label>Agent Name</label>
-        <input autoFocus placeholder="e.g. Jeeves" data-testid="input-agent-name" autoComplete="off" value={agentName} onChange={(e) => {
+        <input {...TEXT_ENTRY_PROPS} autoFocus placeholder="e.g. Jeeves" data-testid="input-agent-name" value={agentName} onChange={(e) => {
           const val = e.target.value;
           setField("agentName", val);
           if (identityMd) {

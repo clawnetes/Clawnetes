@@ -5,6 +5,7 @@ import { EMOJI_OPTIONS } from "../../presets/modelsByProvider";
 import { updateIdentityField, updateSoulMission } from "../../utils/markdownHelpers";
 import { Badge, ProviderLogo } from "../ui";
 import { getBaseProviderFromModel } from "../../utils/providerAuth";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 interface AgentOverviewPanelProps {
   agents: { id: string; name?: string }[];
@@ -258,6 +259,7 @@ function AgentOverviewPanel({
               Name
             </label>
             <input
+              {...TEXT_ENTRY_PROPS}
               id="agent-name"
               value={draftName}
               onChange={(event) => setDraftName(event.target.value)}

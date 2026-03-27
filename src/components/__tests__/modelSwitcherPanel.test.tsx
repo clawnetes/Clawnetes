@@ -167,6 +167,23 @@ describe("ModelSwitcherPanel", () => {
     expect(screen.getByText("Authentication")).toBeInTheDocument();
   });
 
+  it("disables browser text assistance on auth token inputs", () => {
+    render(
+      <ModelSwitcherPanel
+        currentModel="anthropic/claude-opus-4-6"
+        fallbackModels={[]}
+        onModelChange={vi.fn()}
+        providerAuths={{}}
+      />,
+    );
+
+    const input = screen.getByTestId("auth-token-input");
+    expect(input).toHaveAttribute("autocomplete", "off");
+    expect(input).toHaveAttribute("autocapitalize", "none");
+    expect(input).toHaveAttribute("autocorrect", "off");
+    expect(input).toHaveAttribute("spellcheck", "false");
+  });
+
   it("shows masked credentials for providers with existing auth", () => {
     render(
       <ModelSwitcherPanel
@@ -310,6 +327,31 @@ describe("ModelSwitcherPanel", () => {
     await waitFor(() => {
       expect(onDetectLocalModels).toHaveBeenCalledWith("lmstudio", "http://127.0.0.1:1235/v1");
     });
+  });
+
+  it("disables browser text assistance on local model configuration inputs", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSwitcherPanel
+        currentModel="anthropic/claude-opus-4-6"
+        fallbackModels={[]}
+        onModelChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByTestId("provider-dropdown").querySelector("button")!);
+    await user.click(screen.getByTestId("dropdown-option-local"));
+
+    const baseUrlInput = screen.getByTestId("local-base-url");
+    const modelNameInput = screen.getByTestId("local-model-name");
+
+    for (const input of [baseUrlInput, modelNameInput]) {
+      expect(input).toHaveAttribute("autocomplete", "off");
+      expect(input).toHaveAttribute("autocapitalize", "none");
+      expect(input).toHaveAttribute("autocorrect", "off");
+      expect(input).toHaveAttribute("spellcheck", "false");
+    }
   });
 
   it("lets users enter a custom local endpoint model name before saving", async () => {

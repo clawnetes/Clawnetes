@@ -1,3 +1,5 @@
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
+
 interface ChatComposerProps {
   composerValue: string;
   onComposerChange: (value: string) => void;
@@ -29,6 +31,7 @@ export default function ChatComposer({
     <div className="chat-composer">
       <div className="chat-composer-input-wrap">
         <textarea
+          {...TEXT_ENTRY_PROPS}
           value={composerValue}
           onChange={(event) => onComposerChange(event.target.value)}
           onKeyDown={(event) => {
@@ -45,7 +48,6 @@ export default function ChatComposer({
           rows={1}
           data-testid="chat-composer"
           disabled={!chatReady || !activeAgentId || activeThreadIsArchived}
-          autoComplete="off"
         />
         {sending ? (
           <button

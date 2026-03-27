@@ -675,7 +675,7 @@ export function createThread(params: {
 }
 
 export function defaultSessionKeyForAgent(agentId: string) {
-  return agentId === "main" ? "main" : agentId;
+  return `agent:${agentId}:main`;
 }
 
 export function resolveSessionKeyForAgent(params: {
@@ -688,11 +688,16 @@ export function resolveSessionKeyForAgent(params: {
   }
 
   if (params.agentId === "main") {
-    return params.liveSessions.find((session) => session.key === "main")?.key || params.liveSessions[0]?.key || "main";
+    return (
+      params.liveSessions.find((session) => session.key === "agent:main:main")?.key ||
+      params.liveSessions.find((session) => session.key === "main")?.key ||
+      params.liveSessions[0]?.key ||
+      defaultSessionKeyForAgent(params.agentId)
+    );
   }
 
   return (
-    params.liveSessions.find((session) => session.key === params.agentId)?.key ||
+    params.liveSessions.find((session) => session.key === `agent:${params.agentId}:main`)?.key ||
     params.liveSessions.find((session) => session.key !== "main")?.key ||
     defaultSessionKeyForAgent(params.agentId)
   );

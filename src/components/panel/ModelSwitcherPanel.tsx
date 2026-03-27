@@ -13,6 +13,7 @@ import {
   OAUTH_METHODS_BY_PROVIDER,
 } from "../../utils/providerAuth";
 import type { ProviderAuthConfig } from "../../types";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 interface ModelSwitcherPanelProps {
   currentModel: string;
@@ -216,6 +217,7 @@ function AuthSection({
 
       {(draftAuth.auth_method === "token" || draftAuth.auth_method === "setup-token") && (
         <input
+          {...TEXT_ENTRY_PROPS}
           type="password"
           placeholder={
             draftAuth.auth_method === "setup-token"
@@ -226,7 +228,6 @@ function AuthSection({
           }
           value={draftAuth.token}
           onChange={(e) => onDraftAuthChange({ ...draftAuth, token: e.target.value })}
-          autoComplete="off"
           className="w-full px-3 py-2 rounded-md bg-[var(--surface-1)] border border-[var(--sidebar-border)] text-sm text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)]/50"
           data-testid="auth-token-input"
         />
@@ -278,6 +279,7 @@ function LocalModelSection({
         <div className="flex flex-col gap-1.5">
           <span className="text-xs font-medium text-[var(--text-subtle)]">Base URL</span>
           <input
+            {...TEXT_ENTRY_PROPS}
             type="text"
             placeholder="http://localhost:8080/v1"
             value={baseUrl || ""}
@@ -289,6 +291,7 @@ function LocalModelSection({
         <div className="flex flex-col gap-1.5">
           <span className="text-xs font-medium text-[var(--text-subtle)]">Model Name</span>
           <input
+            {...TEXT_ENTRY_PROPS}
             type="text"
             placeholder="e.g. my-model"
             value={customModelName || ""}
@@ -349,6 +352,7 @@ function LocalModelSection({
         <div className="flex flex-col gap-1.5">
           <span className="text-xs font-medium text-[var(--text-subtle)]">Base URL</span>
           <input
+            {...TEXT_ENTRY_PROPS}
             type="text"
             placeholder="http://localhost:1234/v1"
             value={baseUrl || ""}

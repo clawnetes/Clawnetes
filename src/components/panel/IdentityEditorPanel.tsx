@@ -1,5 +1,6 @@
 import { memo, useState, useCallback } from "react";
 import { PERSONA_TEMPLATES } from "../../presets/personaTemplates";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 export type IdentityTab = "identity" | "soul" | "tools" | "agents" | "heartbeat" | "memory";
 
@@ -141,11 +142,11 @@ function IdentityEditorPanel({
 
       {/* Editor textarea */}
       <textarea
+        {...TEXT_ENTRY_PROPS}
         className="w-full h-64 rounded-lg border border-[var(--border)] bg-[var(--surface-0)] text-[var(--text-main)] text-xs font-mono p-3 resize-y focus:outline-none focus:ring-1 focus:ring-[var(--accent)] leading-relaxed"
         value={currentContent}
         onChange={(e) => handleChange(e.target.value)}
         placeholder={`Enter ${activeTab}.md content...`}
-        spellCheck={false}
         data-testid="identity-editor-textarea"
       />
 

@@ -1,6 +1,7 @@
 import { useWizard } from "../../context/WizardContext";
 import { updateIdentityField } from "../../utils/markdownHelpers";
 import { updateSoulMission } from "../../utils/markdownHelpers";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 export default function StepIdentity() {
   const { state, dispatch } = useWizard();
@@ -16,11 +17,8 @@ export default function StepIdentity() {
       <div className="form-group">
         <label>Your Name</label>
         <input
+          {...TEXT_ENTRY_PROPS}
           autoFocus
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck="false"
-          autoComplete="off"
           placeholder="e.g. David"
           data-testid="input-user-name"
           value={userName}

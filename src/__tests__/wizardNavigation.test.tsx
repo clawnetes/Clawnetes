@@ -93,6 +93,26 @@ describe("Wizard Step List", () => {
       expect(invoke).toHaveBeenCalledWith("has_saved_license");
     });
   });
+
+  it("disables browser text assistance on remote environment fields", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Start Setup")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("Start Setup"));
+    await user.click(screen.getByText("☁️ Cloud Server"));
+
+    for (const testId of ["input-remote-ip", "input-remote-user", "input-remote-key", "input-remote-password"]) {
+      const input = screen.getByTestId(testId);
+      expect(input).toHaveAttribute("autocomplete", "off");
+      expect(input).toHaveAttribute("autocapitalize", "none");
+      expect(input).toHaveAttribute("autocorrect", "off");
+      expect(input).toHaveAttribute("spellcheck", "false");
+    }
+  });
 });
 
 describe("Step ordering and renamed steps", () => {
@@ -120,6 +140,52 @@ describe("Step ordering and renamed steps", () => {
     // Step 7 (Gateway) and Step 10 (Runtime) should not appear as dots
     // They are removed from stepsList entirely
     expect(container).toBeTruthy();
+  });
+});
+
+describe("Wizard text-entry behavior", () => {
+  it("disables browser text assistance on identity and agent profile fields", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Start Setup")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("Start Setup"));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("System Check")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("Security Baseline")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "I Understand" }));
+    await waitFor(() => {
+      expect(screen.getByText("Your Identity")).toBeInTheDocument();
+    });
+
+    const userNameInput = screen.getByTestId("input-user-name");
+    expect(userNameInput).toHaveAttribute("autocomplete", "off");
+    expect(userNameInput).toHaveAttribute("autocapitalize", "none");
+    expect(userNameInput).toHaveAttribute("autocorrect", "off");
+    expect(userNameInput).toHaveAttribute("spellcheck", "false");
+
+    await user.type(userNameInput, "Mulu");
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Agent Profile")).toBeInTheDocument();
+    });
+
+    const agentNameInput = screen.getByTestId("input-agent-name");
+    expect(agentNameInput).toHaveAttribute("autocomplete", "off");
+    expect(agentNameInput).toHaveAttribute("autocapitalize", "none");
+    expect(agentNameInput).toHaveAttribute("autocorrect", "off");
+    expect(agentNameInput).toHaveAttribute("spellcheck", "false");
   });
 });
 

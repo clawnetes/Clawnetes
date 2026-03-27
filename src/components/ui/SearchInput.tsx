@@ -1,4 +1,5 @@
 import { memo, useRef } from "react";
+import { TEXT_ENTRY_PROPS } from "./textEntryProps";
 
 interface SearchInputProps {
   value: string;
@@ -25,6 +26,7 @@ function SearchInput({ value, onChange, placeholder = "Search...", className = "
         <path d="M10.5 10.5L14 14" />
       </svg>
       <input
+        {...TEXT_ENTRY_PROPS}
         ref={inputRef}
         type="text"
         value={value}

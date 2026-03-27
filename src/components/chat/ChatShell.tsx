@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
-import type { AgentConfigData, GatewayChatBootstrap, ProviderAuthConfig, ToolPolicy } from "../../types";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { AgentConfigData, ChatTranscriptScrollSnapshot, GatewayChatBootstrap, ProviderAuthConfig, ToolPolicy } from "../../types";
 import {
   GatewayChatClient,
   type GatewayAgentEventPayload,
@@ -7,6 +7,7 @@ import {
   type GatewayConnectState,
   type GatewayChatEventPayload,
   type GatewayChatSession,
+  type GatewaySessionsChangedPayload,
 } from "../../lib/gatewayChat";
 import {
   buildChatScopeKey,
@@ -33,6 +34,7 @@ import {
   toChatMessages,
   toStoredMessages,
 } from "../../lib/chatMessageFilters";
+import { isTerminalSessionSnapshot, preferCanonicalSessionKey, sessionKeysMatch } from "../../lib/chatSessionKeys";
 
 import ChatPanelContext, { type PanelView } from "../../context/ChatPanelContext";
 import ChatSidebar from "./ChatSidebar";
@@ -49,11 +51,12 @@ interface ChatShellProps {
   bootstrapping: boolean;
   bootstrapError: string;
   onRetryConnection: () => void;
-  onOpenConfigure: () => void;
+  onOpenConfigure: (snapshot: ChatTranscriptScrollSnapshot | null) => void;
   environments?: StoredEnvironment[];
   activeEnvironmentId?: string | null;
   onSwitchEnvironment?: (envId: string) => void;
   onAddEnvironment?: () => void;
+  onAgentSwitch?: (agentId: string) => void;
   agents?: AgentConfigData[];
   activeAgentId?: string;
   agentModelRef?: string;
@@ -64,13 +67,14 @@ interface ChatShellProps {
   onModelChange?: (model: string) => void;
   onFallbacksChange?: (models: string[]) => void;
   providerAuths?: Record<string, ProviderAuthConfig>;
-  onProviderAuthChange?: (provider: string, auth: ProviderAuthConfig) => void;
+  onProviderAuthChange?: (provider: string, auth: ProviderAuthConfig) => void | Promise<void>;
   onStartOAuth?: (provider: string, authMethod: string, oauthProviderId: string) => Promise<ProviderAuthConfig>;
   onDetectLocalModels?: (provider: "ollama" | "lmstudio" | "local", baseUrl?: string) => Promise<string[]>;
   onSaveSkillsConfig?: (skills: string[], serviceKeys: Record<string, string>) => void;
   skillsSaving?: boolean;
   onSetupIntegration?: (skillId: string) => void;
   onAddAgent?: (agent: AgentConfigData) => void | Promise<void>;
+  onRemoveAgent?: (agentId: string) => void | Promise<void>;
   // Identity editor
   identityMd?: string;
   soulMd?: string;
@@ -101,6 +105,8 @@ interface ChatShellProps {
   onReconfigure?: () => void;
   onUninstall?: () => void;
   isConfigUpdating?: boolean;
+  returnScrollSnapshot?: ChatTranscriptScrollSnapshot | null;
+  onConsumeReturnScrollSnapshot?: () => void;
 }
 
 function readPrefersDark() {
@@ -133,6 +139,10 @@ function isNearBottom(element: HTMLDivElement, threshold = 96) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
 
+function isAssistantStreaming(messages: ChatMessage[]) {
+  return messages.some((message) => message.role === "assistant" && message.pending);
+}
+
 function mergeAssistantStreamText(current: string, incoming: string) {
   if (!current) return incoming;
   if (!incoming) return current;
@@ -150,21 +160,45 @@ function mergeAssistantStreamText(current: string, incoming: string) {
   return `${current}${incoming}`;
 }
 
+function asSessionLifecycleSnapshot(
+  payload?: GatewayChatSession | GatewaySessionsChangedPayload | null,
+): GatewayChatSession | GatewaySessionsChangedPayload | null {
+  if (!payload) {
+    return null;
+  }
+  return payload.session ?? payload;
+}
+
+function sessionMatchesActiveContext(params: {
+  sessionKey?: string | null;
+  activeSessionKey?: string | null;
+  agentId?: string | null;
+}) {
+  return sessionKeysMatch({
+    left: params.sessionKey,
+    right: params.activeSessionKey,
+    agentId: params.agentId,
+  });
+}
+
 function ChatShell({
   bootstrap, bootstrapping, bootstrapError, onRetryConnection, onOpenConfigure,
-  environments, activeEnvironmentId, onSwitchEnvironment, onAddEnvironment,
+  environments, activeEnvironmentId, onSwitchEnvironment, onAddEnvironment, onAgentSwitch,
   agents: propAgents,
   activeAgentId: chatActiveAgentId,
   agentModelRef, agentFallbackCount, agentFallbackModels, agentSkills, serviceKeys,
-  onModelChange, onFallbacksChange, providerAuths, onProviderAuthChange, onStartOAuth, onDetectLocalModels, onSaveSkillsConfig, skillsSaving, onSetupIntegration, onAddAgent,
+  onModelChange, onFallbacksChange, providerAuths, onProviderAuthChange, onStartOAuth, onDetectLocalModels, onSaveSkillsConfig, skillsSaving, onSetupIntegration, onAddAgent, onRemoveAgent,
   identityMd, soulMd, toolsMd, agentsMd, heartbeatMd, memoryMd,
   onIdentitySave, identitySaving,
   targetEnvironment, remoteSummary, gatewayPort, gatewayBind, gatewayAuthMode,
   heartbeatMode, sandboxMode, toolPolicy, toolsSaving, idleTimeoutMs, onSaveToolPolicy, onSaveAdvancedSettings, settingsBusy, maintenanceStatus,
   onRepair, onAudit, onUpgrade, onReconfigure, onUninstall, isConfigUpdating = false,
+  returnScrollSnapshot = null,
+  onConsumeReturnScrollSnapshot,
 }: ChatShellProps) {
   const clientRef = useRef<GatewayChatClient | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const activeAgentIdRef = useRef("");
   const activeSessionKeyRef = useRef("");
   const activeThreadIdRef = useRef("");
@@ -172,16 +206,23 @@ function ChatShell({
   const threadsRef = useRef<StoredChatThread[]>([]);
   const shouldAutoScrollRef = useRef(true);
   const pendingScrollBehaviorRef = useRef<ScrollBehavior | null>("auto");
-  const previousMessageCountRef = useRef(0);
+  const streamFollowEnabledRef = useRef(false);
+  const streamFollowRunIdRef = useRef("");
+  const userPausedStreamFollowRef = useRef(false);
+  const internalReturnScrollSnapshotRef = useRef<ChatTranscriptScrollSnapshot | null>(null);
+  const consumedExternalReturnScrollSnapshotRef = useRef<ChatTranscriptScrollSnapshot | null>(null);
 
   const [connectionLabel, setConnectionLabel] = useState("Connecting to gateway...");
   const [connectionState, setConnectionState] = useState<GatewayConnectState["status"]>("connecting");
   const [agents, setAgents] = useState<GatewayChatAgent[]>([]);
 
-  // Use propAgents if available (from app state), otherwise use gateway agents
-  const displayAgents = propAgents && propAgents.length > 0
-    ? propAgents.map(a => ({ id: a.id, name: a.name, emoji: a.emoji }))
-    : agents;
+  // Prefer gateway-reported agents (always correct for the current environment).
+  // Only fall back to propAgents (from App state) when the gateway hasn't reported agents yet.
+  const displayAgents = agents.length > 0
+    ? agents
+    : propAgents && propAgents.length > 0
+      ? propAgents.map(a => ({ id: a.id, name: a.name, emoji: a.emoji }))
+      : [];
   const [liveSessions, setLiveSessions] = useState<GatewayChatSession[]>([]);
   const [threads, setThreads] = useState<StoredChatThread[]>([]);
   const [activeAgentId, setActiveAgentId] = useState("");
@@ -207,10 +248,41 @@ function ChatShell({
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelView, setPanelView] = useState<PanelView>("model");
 
+  const captureTranscriptScrollSnapshot = useCallback((): ChatTranscriptScrollSnapshot | null => {
+    const transcript = transcriptRef.current;
+    if (!transcript || !activeAgentId || !activeSessionKey || !activeThreadId) {
+      return null;
+    }
+
+    return {
+      agentId: activeAgentId,
+      sessionKey: activeSessionKey,
+      threadId: activeThreadId,
+      scrollTop: transcript.scrollTop,
+    };
+  }, [activeAgentId, activeSessionKey, activeThreadId]);
+
+  const clearReturnScrollSnapshots = useCallback((consumeExternal = false) => {
+    internalReturnScrollSnapshotRef.current = null;
+    if (consumeExternal) {
+      if (returnScrollSnapshot) {
+        consumedExternalReturnScrollSnapshotRef.current = returnScrollSnapshot;
+      }
+      onConsumeReturnScrollSnapshot?.();
+    }
+  }, [onConsumeReturnScrollSnapshot, returnScrollSnapshot]);
+
+  useEffect(() => {
+    if (!returnScrollSnapshot) {
+      consumedExternalReturnScrollSnapshotRef.current = null;
+    }
+  }, [returnScrollSnapshot]);
+
   const openPanel = useCallback((view?: PanelView) => {
+    internalReturnScrollSnapshotRef.current = captureTranscriptScrollSnapshot();
     if (view) setPanelView(view);
     setPanelOpen(true);
-  }, []);
+  }, [captureTranscriptScrollSnapshot]);
 
   const closePanel = useCallback(() => {
     setPanelOpen(false);
@@ -230,7 +302,21 @@ function ChatShell({
     if (!transcript) return;
 
     const updatePosition = () => {
-      shouldAutoScrollRef.current = isNearBottom(transcript);
+      const nearBottom = isNearBottom(transcript);
+      shouldAutoScrollRef.current = nearBottom;
+
+      if (!activeRunIdRef.current) {
+        return;
+      }
+
+      if (nearBottom) {
+        userPausedStreamFollowRef.current = false;
+        streamFollowEnabledRef.current = true;
+        return;
+      }
+
+      userPausedStreamFollowRef.current = true;
+      streamFollowEnabledRef.current = false;
     };
 
     updatePosition();
@@ -238,31 +324,118 @@ function ChatShell({
     return () => transcript.removeEventListener("scroll", updatePosition);
   }, [bootstrap]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const transcript = transcriptRef.current;
     if (!transcript) {
-      previousMessageCountRef.current = messages.length;
       pendingScrollBehaviorRef.current = null;
       return;
     }
 
-    const shouldScroll =
-      pendingScrollBehaviorRef.current !== null &&
-      (shouldAutoScrollRef.current || messages.length > previousMessageCountRef.current);
+    const followingStream =
+      activeRunIdRef.current &&
+      streamFollowEnabledRef.current &&
+      !userPausedStreamFollowRef.current &&
+      isAssistantStreaming(messages);
+    const scrollBehavior = followingStream ? "auto" : pendingScrollBehaviorRef.current;
+    const shouldScroll = !!scrollBehavior;
 
     if (shouldScroll) {
-      const scrollBehavior = pendingScrollBehaviorRef.current ?? undefined;
-      if (typeof transcript.scrollTo === "function") {
+      if (transcriptEndRef.current && typeof transcriptEndRef.current.scrollIntoView === "function") {
+        transcriptEndRef.current.scrollIntoView({ behavior: scrollBehavior, block: "end" });
+      } else if (typeof transcript.scrollTo === "function") {
         transcript.scrollTo({ top: transcript.scrollHeight, behavior: scrollBehavior });
       } else {
         transcript.scrollTop = transcript.scrollHeight;
       }
+
+      if (followingStream) {
+        shouldAutoScrollRef.current = true;
+      }
+    }
+
+    pendingScrollBehaviorRef.current = null;
+  }, [messages]);
+
+  useLayoutEffect(() => {
+    if (panelOpen) {
+      return;
+    }
+
+    const transcript = transcriptRef.current;
+    const externalSnapshot = returnScrollSnapshot && consumedExternalReturnScrollSnapshotRef.current !== returnScrollSnapshot
+      ? returnScrollSnapshot
+      : null;
+    const snapshot = internalReturnScrollSnapshotRef.current ?? externalSnapshot;
+    if (!transcript || !snapshot) {
+      return;
+    }
+
+    if (!activeAgentId || !activeSessionKey || !activeThreadId) {
+      return;
+    }
+
+    const sameThread = snapshot.threadId === activeThreadId;
+    const sameSession = sessionMatchesActiveContext({
+      sessionKey: snapshot.sessionKey,
+      activeSessionKey,
+      agentId: snapshot.agentId,
+    });
+    const sameAgent = snapshot.agentId === activeAgentId;
+
+    if (!sameThread || !sameSession || !sameAgent) {
+      clearReturnScrollSnapshots(Boolean(returnScrollSnapshot));
+      return;
+    }
+
+    pendingScrollBehaviorRef.current = null;
+    transcript.scrollTop = snapshot.scrollTop;
+    shouldAutoScrollRef.current = isNearBottom(transcript);
+    clearReturnScrollSnapshots(Boolean(returnScrollSnapshot));
+  }, [
+    activeAgentId,
+    activeSessionKey,
+    activeThreadId,
+    bootstrap,
+    clearReturnScrollSnapshots,
+    panelOpen,
+    returnScrollSnapshot,
+  ]);
+
+  function queueScrollToBottom(behavior: ScrollBehavior = "auto") {
+    pendingScrollBehaviorRef.current = behavior;
+  }
+
+  function prepareNextRunAutoFollow(scrollBehavior: ScrollBehavior = "auto") {
+    streamFollowEnabledRef.current = true;
+    streamFollowRunIdRef.current = "";
+    userPausedStreamFollowRef.current = false;
+    shouldAutoScrollRef.current = true;
+    queueScrollToBottom(scrollBehavior);
+  }
+
+  function beginStreamAutoFollow(runId: string, scrollBehavior: ScrollBehavior = "auto") {
+    const nextRunId = runId.trim();
+    const isNewRun = streamFollowRunIdRef.current !== nextRunId;
+
+    streamFollowRunIdRef.current = nextRunId;
+    if (isNewRun) {
+      userPausedStreamFollowRef.current = false;
       shouldAutoScrollRef.current = true;
     }
 
-    previousMessageCountRef.current = messages.length;
-    pendingScrollBehaviorRef.current = null;
-  }, [messages]);
+    if (userPausedStreamFollowRef.current) {
+      return;
+    }
+
+    streamFollowEnabledRef.current = true;
+    queueScrollToBottom(scrollBehavior);
+  }
+
+  function endStreamAutoFollow() {
+    streamFollowEnabledRef.current = false;
+    streamFollowRunIdRef.current = "";
+    userPausedStreamFollowRef.current = false;
+  }
 
   useEffect(() => {
     activeAgentIdRef.current = activeAgentId;
@@ -302,6 +475,15 @@ function ChatShell({
     if (!scopeKey || !activeAgentId || !activeThreadId) return;
     saveStoredSelection(scopeKey, activeAgentId, activeThreadId);
   }, [activeAgentId, activeThreadId, scopeKey]);
+
+  // Re-fetch agent list from the gateway after a config update completes
+  const prevConfigUpdating = useRef(false);
+  useEffect(() => {
+    if (prevConfigUpdating.current && !isConfigUpdating && clientRef.current) {
+      void bootstrapShell(clientRef.current);
+    }
+    prevConfigUpdating.current = isConfigUpdating;
+  }, [isConfigUpdating]);
 
   useEffect(() => {
     const nextMessages = toStoredMessages(messages);
@@ -374,25 +556,49 @@ function ChatShell({
     const existing = threadsRef.current.find(
       (thread) =>
         thread.agentId === params.agentId &&
-        thread.sessionKey === params.sessionKey &&
+        sessionMatchesActiveContext({
+          sessionKey: thread.sessionKey,
+          activeSessionKey: params.sessionKey,
+          agentId: params.agentId,
+        }) &&
         thread.status !== "archived" &&
         (!params.preferredThreadId || thread.id === params.preferredThreadId),
     );
 
     if (existing) {
       updateThreads((current) =>
-        current.map((thread) =>
-          thread.id !== existing.id
-            ? thread
-            : {
-                ...thread,
-                status: "live",
-                sessionId: params.sessionId || params.session?.sessionId || thread.sessionId,
-                title: deriveThreadTitle({ session: params.session, messages: thread.messages, fallback: thread.title }),
-                preview: deriveThreadPreview({ session: params.session, messages: thread.messages, fallback: thread.preview }),
-                updatedAt: params.session?.updatedAt || thread.updatedAt || Date.now(),
-              },
-        ),
+        current.flatMap((thread) => {
+          const isDuplicate =
+            thread.id !== existing.id &&
+            thread.agentId === params.agentId &&
+            thread.status !== "archived" &&
+            sessionMatchesActiveContext({
+              sessionKey: thread.sessionKey,
+              activeSessionKey: params.sessionKey,
+              agentId: params.agentId,
+            });
+
+          if (isDuplicate) {
+            return [];
+          }
+
+          if (thread.id !== existing.id) {
+            return [thread];
+          }
+
+          return [{
+            ...thread,
+            status: "live",
+            sessionKey: preferCanonicalSessionKey({
+              sessionKey: thread.sessionKey,
+              matchedSessionKey: params.sessionKey,
+            }),
+            sessionId: params.sessionId || params.session?.sessionId || thread.sessionId,
+            title: deriveThreadTitle({ session: params.session, messages: thread.messages, fallback: thread.title }),
+            preview: deriveThreadPreview({ session: params.session, messages: thread.messages, fallback: thread.preview }),
+            updatedAt: params.session?.updatedAt || thread.updatedAt || Date.now(),
+          }];
+        }),
       );
       return existing.id;
     }
@@ -406,7 +612,22 @@ function ChatShell({
       title: params.session ? formatSessionTitle(params.session) : "New chat",
       preview: params.session?.lastMessagePreview || "Fresh conversation",
     });
-    updateThreads((current) => [nextThread, ...current.filter((thread) => thread.id !== nextThread.id)]);
+    updateThreads((current) => [
+      nextThread,
+      ...current.filter(
+        (thread) =>
+          thread.id !== nextThread.id &&
+          !(
+            thread.agentId === params.agentId &&
+            thread.status !== "archived" &&
+            sessionMatchesActiveContext({
+              sessionKey: thread.sessionKey,
+              activeSessionKey: params.sessionKey,
+              agentId: params.agentId,
+            })
+          ),
+      ),
+    ]);
     return nextThread.id;
   }
 
@@ -456,9 +677,9 @@ function ChatShell({
       handleAgentEvent(event);
     };
 
-    client.onSessionsChanged = () => {
+    client.onSessionsChanged = (payload) => {
       if (activeAgentIdRef.current) {
-        void refreshSessions(activeAgentIdRef.current, client, activeThreadIdRef.current || undefined);
+        void refreshSessions(activeAgentIdRef.current, client, activeThreadIdRef.current || undefined, payload);
       }
     };
 
@@ -492,6 +713,7 @@ function ChatShell({
       setActiveAgentId(nextAgentId);
       setMessages([]);
       setActiveRunId("");
+      endStreamAutoFollow();
 
       if (!nextAgentId) {
         setLiveSessions([]);
@@ -507,11 +729,17 @@ function ChatShell({
     }
   }
 
-  async function refreshSessions(agentId: string, client = clientRef.current, preferredThreadId?: string) {
+  async function refreshSessions(
+    agentId: string,
+    client = clientRef.current,
+    preferredThreadId?: string,
+    sessionChange?: GatewaySessionsChangedPayload,
+  ) {
     if (!client || !agentId) {
       setLiveSessions([]);
       setActiveSessionKey("");
       setMessages([]);
+      endStreamAutoFollow();
       return;
     }
 
@@ -526,28 +754,53 @@ function ChatShell({
       liveSessions: nextSessions,
       preferredSessionKey: desiredThread?.status !== "archived" ? desiredThread?.sessionKey : undefined,
     });
-    const matchedSession = nextSessions.find((session) => session.key === desiredSessionKey);
+    const matchedSession =
+      nextSessions.find((session) =>
+        sessionMatchesActiveContext({
+          sessionKey: session.key,
+          activeSessionKey: desiredSessionKey,
+          agentId,
+        }),
+      ) || null;
+    const resolvedSessionKey = preferCanonicalSessionKey({
+      sessionKey: desiredSessionKey,
+      matchedSessionKey: matchedSession?.key,
+    });
+    const matchedSessionChange =
+      sessionChange &&
+      sessionMatchesActiveContext({
+        sessionKey: sessionChange.sessionKey ?? sessionChange.session?.key,
+        activeSessionKey: resolvedSessionKey,
+        agentId,
+      })
+        ? sessionChange
+        : null;
     const nextThreadId = ensureLiveThread({
       agentId,
-      sessionKey: desiredSessionKey,
-      session: matchedSession,
+      sessionKey: resolvedSessionKey,
+      session: matchedSession || undefined,
       preferredThreadId: desiredThread?.status === "archived" ? undefined : desiredThread?.id,
-      sessionId: matchedSession?.sessionId || desiredThread?.sessionId,
+      sessionId: matchedSession?.sessionId || matchedSessionChange?.sessionId || desiredThread?.sessionId,
     });
 
     setActiveThreadId(nextThreadId);
-    setActiveSessionKey(desiredSessionKey);
+    setActiveSessionKey(resolvedSessionKey);
 
     const selectedThread =
       threadsRef.current.find((thread) => thread.id === nextThreadId) ||
-      createThread({ agentId, sessionKey: desiredSessionKey, status: matchedSession ? "live" : "draft" });
+      createThread({ agentId, sessionKey: resolvedSessionKey, status: matchedSession ? "live" : "draft" });
 
     if (matchedSession) {
-      await loadHistory(desiredSessionKey, nextThreadId, client);
+      await loadHistory(resolvedSessionKey, nextThreadId, client, matchedSessionChange || matchedSession);
       return;
     }
 
-    pendingScrollBehaviorRef.current = "auto";
+    if (matchedSessionChange && isTerminalSessionSnapshot(asSessionLifecycleSnapshot(matchedSessionChange))) {
+      await loadHistory(resolvedSessionKey, nextThreadId, client, matchedSessionChange);
+      return;
+    }
+
+    queueScrollToBottom("auto");
     setMessages(
       selectedThread.messages.map((message) => ({
         ...message,
@@ -555,23 +808,34 @@ function ChatShell({
     );
   }
 
-  async function loadHistory(sessionKey: string, threadId: string, client = clientRef.current) {
+  async function loadHistory(
+    sessionKey: string,
+    threadId: string,
+    client = clientRef.current,
+    sessionSnapshot?: GatewayChatSession | GatewaySessionsChangedPayload | null,
+  ) {
     if (!client || !sessionKey) return;
     setLoadingHistory(true);
     try {
       const payload = await client.loadHistory(sessionKey);
       const nextMessages = toChatMessages(payload.messages);
       const latestMessage = nextMessages[nextMessages.length - 1];
+      const terminalSnapshot = asSessionLifecycleSnapshot(sessionSnapshot);
       const shouldFinalizeActiveRun =
-        sessionKey === activeSessionKeyRef.current &&
+        sessionMatchesActiveContext({
+          sessionKey,
+          activeSessionKey: activeSessionKeyRef.current,
+          agentId: activeAgentIdRef.current,
+        }) &&
         !!activeRunIdRef.current &&
-        latestMessage?.role === "assistant";
+        (latestMessage?.role === "assistant" || isTerminalSessionSnapshot(terminalSnapshot));
 
-      pendingScrollBehaviorRef.current = "auto";
+      queueScrollToBottom("auto");
       setMessages(nextMessages);
       if (shouldFinalizeActiveRun) {
         setActiveRunId("");
         setSending(false);
+        endStreamAutoFollow();
       }
       updateThreads((current) =>
         current.map((thread) =>
@@ -592,7 +856,7 @@ function ChatShell({
       const message = error instanceof Error ? error.message : String(error);
       const missingSession = /not found|unknown session|key required/i.test(message);
       if (missingSession) {
-        pendingScrollBehaviorRef.current = "auto";
+        queueScrollToBottom("auto");
         setMessages([]);
         updateThreads((current) =>
           current.map((thread) =>
@@ -616,16 +880,23 @@ function ChatShell({
   }
 
   function handleChatEvent(event: GatewayChatEventPayload) {
-    if (!event.sessionKey || event.sessionKey !== activeSessionKeyRef.current) return;
+    if (!sessionMatchesActiveContext({
+      sessionKey: event.sessionKey,
+      activeSessionKey: activeSessionKeyRef.current,
+      agentId: activeAgentIdRef.current,
+    })) {
+      return;
+    }
 
     if (event.errorMessage) {
-      pendingScrollBehaviorRef.current = "smooth";
+      queueScrollToBottom("auto");
       setMessages((current) => [
         ...current,
         { id: `error-${Date.now()}`, role: "system", text: event.errorMessage || "Gateway error.", error: true },
       ]);
       setActiveRunId("");
       setSending(false);
+      endStreamAutoFollow();
       return;
     }
 
@@ -649,6 +920,7 @@ function ChatShell({
       );
       setActiveRunId("");
       setSending(false);
+      endStreamAutoFollow();
       void refreshSessions(activeAgentIdRef.current, clientRef.current || undefined, activeThreadIdRef.current || undefined);
     }
   }
@@ -657,6 +929,7 @@ function ChatShell({
     if (!event.runId || event.stream !== "assistant") return;
     const delta = typeof event.data.text === "string" ? event.data.text : "";
     if (!delta) return;
+    beginStreamAutoFollow(event.runId, "auto");
 
     setMessages((current) => {
       const existingIndex = current.findIndex((message) => message.runId === event.runId);
@@ -677,7 +950,6 @@ function ChatShell({
       }
 
       const rawText = delta;
-      pendingScrollBehaviorRef.current = "smooth";
       return [
         ...current,
         {
@@ -695,12 +967,28 @@ function ChatShell({
   async function handleAgentSwitch(agentId: string) {
     if (!agentId || agentId === activeAgentId) return;
     setActiveAgentId(agentId);
+    onAgentSwitch?.(agentId);
     setLiveSessions([]);
     setActiveSessionKey("");
     setActiveThreadId("");
     setMessages([]);
     setActiveRunId("");
+    endStreamAutoFollow();
     await refreshSessions(agentId);
+  }
+
+  async function handleAgentRemove(agentId: string) {
+    if (!agentId || agentId === "main") return;
+    setActiveAgentId("main");
+    onAgentSwitch?.("main");
+    setLiveSessions([]);
+    setActiveSessionKey("");
+    setActiveThreadId("");
+    setMessages([]);
+    setActiveRunId("");
+    endStreamAutoFollow();
+    await onRemoveAgent?.(agentId);
+    await refreshSessions("main");
   }
 
   async function handleThreadSwitch(threadId: string) {
@@ -711,7 +999,8 @@ function ChatShell({
     setShellError("");
 
     if (thread.status === "archived") {
-      pendingScrollBehaviorRef.current = "auto";
+      endStreamAutoFollow();
+      queueScrollToBottom("auto");
       setMessages(
         thread.messages.map((message) => ({
           ...message,
@@ -752,15 +1041,17 @@ function ChatShell({
       }),
     );
 
+    activeThreadIdRef.current = freshThread.id;
     setActiveThreadId(freshThread.id);
-    pendingScrollBehaviorRef.current = "auto";
+    prepareNextRunAutoFollow("auto");
     setMessages([]);
     setShellError("");
     setSending(true);
 
     try {
-      const result = await clientRef.current.sendChat(activeSessionKey, "/new");
+      const result = await clientRef.current.sendChat(activeSessionKey, "/new", "adaptive");
       setActiveRunId(result.runId);
+      beginStreamAutoFollow(result.runId, "auto");
       setMessages([{
         id: `assistant-${result.runId}`,
         role: "assistant",
@@ -772,6 +1063,7 @@ function ChatShell({
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setSending(false);
+      endStreamAutoFollow();
       setShellError(`Failed to start a fresh chat: ${message}`);
     }
   }
@@ -794,16 +1086,16 @@ function ChatShell({
 
     setComposerValue("");
     setSending(true);
-    pendingScrollBehaviorRef.current = "smooth";
+    prepareNextRunAutoFollow("auto");
     setMessages((current) => [
       ...current,
       { id: `user-${Date.now()}`, role: "user", text, timestamp: Date.now() },
     ]);
 
     try {
-      const result = await clientRef.current.sendChat(activeSessionKey, text);
+      const result = await clientRef.current.sendChat(activeSessionKey, text, "adaptive");
       setActiveRunId(result.runId);
-      pendingScrollBehaviorRef.current = "smooth";
+      beginStreamAutoFollow(result.runId, "auto");
       setMessages((current) => [
         ...current,
         {
@@ -817,7 +1109,8 @@ function ChatShell({
       ]);
     } catch (error) {
       setSending(false);
-      pendingScrollBehaviorRef.current = "smooth";
+      endStreamAutoFollow();
+      queueScrollToBottom("auto");
       setMessages((current) => [
         ...current,
         { id: `error-${Date.now()}`, role: "system", text: String(error), error: true },
@@ -831,6 +1124,7 @@ function ChatShell({
 
     setSending(false);
     setActiveRunId("");
+    endStreamAutoFollow();
     setMessages((current) =>
       current.map((message) => (message.runId === runId ? { ...message, pending: false } : message)),
     );
@@ -844,13 +1138,14 @@ function ChatShell({
 
   async function handleResetChat() {
     if (!clientRef.current || !activeSessionKey || connectionState !== "connected" || activeThreadIsArchived) return;
-    pendingScrollBehaviorRef.current = "auto";
+    prepareNextRunAutoFollow("auto");
     setMessages([]);
     setSending(true);
     setShellError("");
     try {
-      const result = await clientRef.current.sendChat(activeSessionKey, "/reset");
+      const result = await clientRef.current.sendChat(activeSessionKey, "/reset", "adaptive");
       setActiveRunId(result.runId);
+      beginStreamAutoFollow(result.runId, "auto");
       setMessages([{
         id: `assistant-${result.runId}`,
         role: "assistant",
@@ -896,35 +1191,55 @@ function ChatShell({
     closePanel,
   };
 
+  const activeDisplayAgent = displayAgents.find((a) => a.id === activeAgentId) || null;
+
+  // Resolve per-agent config: when a non-main agent is selected, use its config from propAgents
+  const activeAgentConfig = activeAgentId && activeAgentId !== "main" && propAgents
+    ? propAgents.find(a => a.id === activeAgentId) ?? null
+    : null;
+
+  // Per-agent overrides (fall back to top-level props when no agent-specific config exists)
+  const resolvedModelRef = activeAgentConfig?.model ?? agentModelRef;
+  const resolvedFallbackModels = activeAgentConfig?.fallbackModels ?? agentFallbackModels;
+  const resolvedSkills = activeAgentConfig?.skills ?? agentSkills;
+  const resolvedIdentityMd = activeAgentConfig?.identityMd ?? identityMd;
+  const resolvedSoulMd = activeAgentConfig?.soulMd ?? soulMd;
+  const resolvedToolsMd = activeAgentConfig?.toolsMd ?? toolsMd;
+  const resolvedAgentsMd = activeAgentConfig?.agentsMd ?? agentsMd;
+  const resolvedHeartbeatMd = activeAgentConfig?.heartbeatMd ?? heartbeatMd;
+  const resolvedMemoryMd = activeAgentConfig?.memoryMd ?? memoryMd;
+  const resolvedToolPolicy = activeAgentConfig?.toolPolicy ?? toolPolicy;
+  const resolvedSandboxMode = activeAgentConfig?.sandboxMode ?? sandboxMode;
+  const resolvedHeartbeatMode = activeAgentConfig?.heartbeatMode ?? heartbeatMode;
+  const resolvedIdleTimeoutMs = activeAgentConfig?.idleTimeoutMs ?? idleTimeoutMs;
+
   if (panelOpen) {
     return (
       <ChatPanelContext.Provider value={panelContextValue}>
         <div className="chat-shell-fullpanel" data-theme={resolvedTheme}>
           <RightPanel
-            agents={displayAgents}
-            activeAgentId={activeAgentId}
-            onAgentSwitch={(agentId) => void handleAgentSwitch(agentId)}
-            modelRef={agentModelRef}
-            fallbackModels={agentFallbackModels}
-            skills={agentSkills}
+            activeAgentName={activeDisplayAgent?.name || activeAgentId}
+            activeAgentEmoji={activeDisplayAgent && "emoji" in activeDisplayAgent ? String(activeDisplayAgent.emoji || "") || undefined : undefined}
+            modelRef={resolvedModelRef}
+            fallbackModels={resolvedFallbackModels}
+            skills={resolvedSkills}
             onModelChange={onModelChange}
             onFallbacksChange={onFallbacksChange}
             providerAuths={providerAuths}
             onProviderAuthChange={onProviderAuthChange}
             onStartOAuth={onStartOAuth}
             onDetectLocalModels={onDetectLocalModels}
-            activeSkills={agentSkills}
+            activeSkills={resolvedSkills}
             serviceKeys={serviceKeys}
             onSaveSkillsConfig={onSaveSkillsConfig}
             skillsSaving={skillsSaving}
             onSetupIntegration={onSetupIntegration}
-            onAddAgent={onAddAgent}
-            identityMd={identityMd}
-            soulMd={soulMd}
-            toolsMd={toolsMd}
-            agentsMd={agentsMd}
-            heartbeatMd={heartbeatMd}
-            memoryMd={memoryMd}
+            identityMd={resolvedIdentityMd}
+            soulMd={resolvedSoulMd}
+            toolsMd={resolvedToolsMd}
+            agentsMd={resolvedAgentsMd}
+            heartbeatMd={resolvedHeartbeatMd}
+            memoryMd={resolvedMemoryMd}
             onIdentitySave={onIdentitySave}
             identitySaving={identitySaving}
             targetEnvironment={targetEnvironment}
@@ -932,11 +1247,11 @@ function ChatShell({
             gatewayPort={gatewayPort}
             gatewayBind={gatewayBind}
             gatewayAuthMode={gatewayAuthMode}
-            heartbeatMode={heartbeatMode}
-            sandboxMode={sandboxMode}
-            toolPolicy={toolPolicy}
+            heartbeatMode={resolvedHeartbeatMode}
+            sandboxMode={resolvedSandboxMode}
+            toolPolicy={resolvedToolPolicy}
             toolsSaving={toolsSaving}
-            idleTimeoutMs={idleTimeoutMs}
+            idleTimeoutMs={resolvedIdleTimeoutMs}
             onSaveToolPolicy={onSaveToolPolicy}
             onSaveAdvancedSettings={onSaveAdvancedSettings}
             settingsBusy={settingsBusy}
@@ -968,7 +1283,7 @@ function ChatShell({
           onThreadSwitch={(threadId) => void handleThreadSwitch(threadId)}
           themePreference={themePreference}
           onThemeChange={setThemePreference}
-          onOpenConfigure={onOpenConfigure}
+          onOpenConfigure={() => onOpenConfigure(captureTranscriptScrollSnapshot())}
           onOpenPanel={(view) => openPanel(view as PanelView)}
           connectionLabel={connectionLabel}
         />
@@ -985,10 +1300,15 @@ function ChatShell({
             showEmptyAgentState={showEmptyAgentState}
             onAgentSwitch={(agentId) => void handleAgentSwitch(agentId)}
             onAddAgent={onAddAgent}
+            onRemoveAgent={(agentId) => void handleAgentRemove(agentId)}
+            providerAuths={providerAuths}
+            onProviderAuthChange={onProviderAuthChange}
+            onStartOAuth={onStartOAuth}
+            onDetectLocalModels={onDetectLocalModels}
             onResetChat={() => void handleResetChat()}
             onRetryConnection={onRetryConnection}
-            modelRef={agentModelRef}
-            fallbackCount={agentFallbackCount}
+            modelRef={resolvedModelRef}
+            fallbackCount={resolvedFallbackModels?.length ?? agentFallbackCount}
             onOpenModelPanel={() => openPanel("model")}
           />
 
@@ -1004,6 +1324,7 @@ function ChatShell({
             <>
               <ChatTranscript
                 transcriptRef={transcriptRef}
+                transcriptEndRef={transcriptEndRef}
                 showConnectingState={showConnectingState}
                 isConfigUpdating={isConfigUpdating && connectionState !== "connected"}
                 connectionLabel={connectionLabel}

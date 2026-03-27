@@ -46,6 +46,15 @@ describe("SearchInput", () => {
     expect(onChange).toHaveBeenCalledWith("a");
   });
 
+  it("disables browser text assistance", () => {
+    render(<SearchInput value="" onChange={() => {}} />);
+    const input = screen.getByRole("textbox");
+    expect(input).toHaveAttribute("autocomplete", "off");
+    expect(input).toHaveAttribute("autocapitalize", "none");
+    expect(input).toHaveAttribute("autocorrect", "off");
+    expect(input).toHaveAttribute("spellcheck", "false");
+  });
+
   it("shows clear button when value is non-empty", () => {
     render(<SearchInput value="test" onChange={() => {}} />);
     expect(screen.getByRole("button")).toBeInTheDocument();

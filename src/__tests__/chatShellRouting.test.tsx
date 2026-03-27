@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import ChatShell from "../components/chat/ChatShell";
 
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
@@ -23,7 +24,7 @@ function createReconnectMockWebSocket(options?: {
   const initialSessions = options?.sessions || [
     {
       agentId: "main",
-      key: "main",
+      key: "agent:main:main",
       sessionId: "sess-1",
       displayName: "Main Session",
       derivedTitle: "Main Session",
@@ -141,7 +142,7 @@ function createReconnectMockWebSocket(options?: {
             payload: { runId: `run-${runCounter}`, status: "started" },
           });
           if (parsed.params.message === "/new") {
-            const mainSession = sessions.get("main");
+            const mainSession = sessions.get("agent:main:main");
             if (!mainSession) break;
             mainSession.sessionId = `sess-${runCounter + 1}`;
             mainSession.messages = [
@@ -151,7 +152,7 @@ function createReconnectMockWebSocket(options?: {
                 timestamp: Date.now(),
               },
             ];
-            sessions.set("main", mainSession);
+            sessions.set("agent:main:main", mainSession);
             queueMicrotask(() => {
               this.emit("message", {
                 data: JSON.stringify({
@@ -178,7 +179,9 @@ function createReconnectMockWebSocket(options?: {
           } else {
             const session = sessions.get(parsed.params.sessionKey);
             if (!session) break;
-            const replyText = parsed.params.sessionKey === "ops" ? "Ops Agent handled it." : "Main Agent handled it.";
+            const replyText = parsed.params.sessionKey === "agent:ops:main"
+              ? "Ops Agent handled it."
+              : "Main Agent handled it.";
             session.messages = [
               ...session.messages,
               { role: "user", text: parsed.params.message, timestamp: Date.now() },
@@ -299,6 +302,52 @@ async function openSettingsPanel(user: ReturnType<typeof userEvent.setup>) {
     expect(screen.getByTestId("settings-panel")).toBeInTheDocument();
   });
 }
+
+function mockTranscriptScrollState(initialTop: number, initialHeight = 1600, initialClientHeight = 500) {
+  let scrollTop = initialTop;
+  let scrollHeight = initialHeight;
+  let clientHeight = initialClientHeight;
+
+  Object.defineProperty(HTMLDivElement.prototype, "scrollTop", {
+    configurable: true,
+    get() {
+      return scrollTop;
+    },
+    set(value: number) {
+      scrollTop = value;
+    },
+  });
+
+  Object.defineProperty(HTMLDivElement.prototype, "scrollHeight", {
+    configurable: true,
+    get() {
+      return scrollHeight;
+    },
+  });
+
+  Object.defineProperty(HTMLDivElement.prototype, "clientHeight", {
+    configurable: true,
+    get() {
+      return clientHeight;
+    },
+  });
+
+  return {
+    getTop: () => scrollTop,
+    setTop: (value: number) => { scrollTop = value; },
+    setHeight: (value: number) => { scrollHeight = value; },
+    setClientHeight: (value: number) => { clientHeight = value; },
+  };
+}
+
+const DIRECT_CHAT_BOOTSTRAP = {
+  wsUrl: "ws://localhost:3100/ws",
+  authToken: "token",
+  targetEnvironment: "local",
+  gatewayPort: 3333,
+  tunnelActive: false,
+  openClawVersion: "2.0.0",
+} as const;
 
 async function openRemoteInstalledChat(user: ReturnType<typeof userEvent.setup>) {
   render(<App />);
@@ -434,6 +483,22 @@ describe("Installed-state chat shell", () => {
     });
   });
 
+  it("restores the transcript scroll position after closing Settings", async () => {
+    const user = userEvent.setup();
+    const scrollState = mockTranscriptScrollState(420);
+    await openInstalledLocalChat(user);
+
+    await openSettingsPanel(user);
+    scrollState.setTop(0);
+    await user.click(screen.getByTestId("right-panel-close"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
+    });
+
+    expect(scrollState.getTop()).toBe(420);
+  });
+
   it("keeps internal weather transcript noise hidden after opening and closing Settings", async () => {
     const noisyTranscript = [
       {
@@ -467,6 +532,89 @@ Tomorrow looks clear and cool.`,
     expect(screen.queryByText(/Timezone: Europe\/London/i)).not.toBeInTheDocument();
   });
 
+  it("restores a handed-off scroll snapshot after chat remounts", async () => {
+    const scrollState = mockTranscriptScrollState(275);
+    vi.stubGlobal("WebSocket", createReconnectMockWebSocket());
+
+    const { unmount } = render(
+      <ChatShell
+        bootstrap={DIRECT_CHAT_BOOTSTRAP}
+        bootstrapping={false}
+        bootstrapError=""
+        onRetryConnection={vi.fn()}
+        onOpenConfigure={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Welcome back.").length).toBeGreaterThan(0);
+    });
+
+    const selectionMap = JSON.parse(localStorage.getItem("clawnetes.chat.selection.v1") || "{}") as Record<string, string>;
+    const activeThreadId = Object.values(selectionMap)[0];
+    expect(activeThreadId).toBeTruthy();
+
+    unmount();
+    scrollState.setTop(0);
+
+    const onConsumeReturnScrollSnapshot = vi.fn();
+    render(
+      <ChatShell
+        bootstrap={DIRECT_CHAT_BOOTSTRAP}
+        bootstrapping={false}
+        bootstrapError=""
+        onRetryConnection={vi.fn()}
+        onOpenConfigure={vi.fn()}
+        returnScrollSnapshot={{
+          agentId: "main",
+          sessionKey: "main",
+          threadId: activeThreadId,
+          scrollTop: 275,
+        }}
+        onConsumeReturnScrollSnapshot={onConsumeReturnScrollSnapshot}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Welcome back.").length).toBeGreaterThan(0);
+    });
+
+    await waitFor(() => {
+      expect(scrollState.getTop()).toBe(275);
+      expect(onConsumeReturnScrollSnapshot).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("ignores stale handed-off scroll snapshots when the thread no longer matches", async () => {
+    const scrollState = mockTranscriptScrollState(0);
+    const onConsumeReturnScrollSnapshot = vi.fn();
+    vi.stubGlobal("WebSocket", createReconnectMockWebSocket());
+
+    render(
+      <ChatShell
+        bootstrap={DIRECT_CHAT_BOOTSTRAP}
+        bootstrapping={false}
+        bootstrapError=""
+        onRetryConnection={vi.fn()}
+        onOpenConfigure={vi.fn()}
+        returnScrollSnapshot={{
+          agentId: "main",
+          sessionKey: "main",
+          threadId: "stale-thread-id",
+          scrollTop: 300,
+        }}
+        onConsumeReturnScrollSnapshot={onConsumeReturnScrollSnapshot}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Welcome back.").length).toBeGreaterThan(0);
+    });
+
+    expect(scrollState.getTop()).toBe(0);
+    expect(onConsumeReturnScrollSnapshot).toHaveBeenCalledTimes(1);
+  });
+
   it("routes chat sends to the selected sub-agent session instead of main", async () => {
     const sentSessionKeys: string[] = [];
     const user = userEvent.setup();
@@ -474,7 +622,7 @@ Tomorrow looks clear and cool.`,
       sessions: [
         {
           agentId: "main",
-          key: "main",
+          key: "agent:main:main",
           sessionId: "sess-1",
           displayName: "Main Session",
           derivedTitle: "Main Session",
@@ -482,25 +630,27 @@ Tomorrow looks clear and cool.`,
         },
         {
           agentId: "ops",
-          key: "ops",
+          key: "agent:ops:main",
           sessionId: "sess-ops",
           displayName: "Ops Session",
           derivedTitle: "Ops Session",
           messages: [{ role: "assistant", content: [{ type: "text", text: "Ops ready." }], timestamp: Date.now() }],
         },
       ],
-      onChatSend: (sessionKey) => sentSessionKeys.push(sessionKey),
+      onChatSend: (sessionKey) => {
+        sentSessionKeys.push(sessionKey);
+      },
     }));
 
     await openInstalledLocalChat(user);
 
     // Open dropdown and select ops agent
     await user.click(screen.getByTestId("chat-active-agent"));
-    // Find the Ops agent button in the dropdown menu
-    const opsButtons = screen.getAllByRole("button").filter(btn =>
-      btn.textContent && btn.textContent.includes("Ops")
+    // Find the Ops agent option in the dropdown menu
+    const opsOption = screen.getAllByRole("option").find(opt =>
+      opt.textContent?.includes("Ops Agent")
     );
-    const opsOption = opsButtons.find(btn => btn.textContent?.includes("Ops Agent")) || opsButtons.find(btn => btn.textContent?.includes("Ops"));
+    expect(opsOption).toBeDefined();
     if (opsOption) {
       await user.click(opsOption);
     }
@@ -516,7 +666,362 @@ Tomorrow looks clear and cool.`,
       expect(screen.getAllByText("Ops Agent handled it.").length).toBeGreaterThan(0);
     });
 
-    expect(sentSessionKeys[sentSessionKeys.length - 1]).toBe("ops");
+    expect(sentSessionKeys[sentSessionKeys.length - 1]).toBe("agent:ops:main");
+  });
+
+  it("routes main-agent chat sends to the canonical main session key", async () => {
+    const sentSessionKeys: string[] = [];
+    const user = userEvent.setup();
+    vi.stubGlobal("WebSocket", createReconnectMockWebSocket({
+      onChatSend: (sessionKey) => {
+        sentSessionKeys.push(sessionKey);
+      },
+    }));
+
+    await openInstalledLocalChat(user);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Welcome back.").length).toBeGreaterThan(0);
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "Handle this");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Main Agent handled it.").length).toBeGreaterThan(0);
+    });
+
+    expect(sentSessionKeys[sentSessionKeys.length - 1]).toBe("agent:main:main");
+  });
+
+  it("shows the selected sub-agent model in the header instead of the main agent model", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("WebSocket", createReconnectMockWebSocket());
+
+    render(
+      <ChatShell
+        bootstrap={DIRECT_CHAT_BOOTSTRAP}
+        bootstrapping={false}
+        bootstrapError=""
+        onRetryConnection={vi.fn()}
+        onOpenConfigure={vi.fn()}
+        agents={[
+          {
+            id: "ops",
+            name: "Ops Agent",
+            emoji: "🛠️",
+            model: "openai-codex/gpt-5.4",
+            provider: "openai",
+            fallbackModels: ["google/gemini-3.1-pro-preview"],
+            skills: [],
+            vibe: "",
+            identityMd: "",
+            userMd: "",
+            soulMd: "",
+            toolsMd: "",
+            agentsMd: "",
+            heartbeatMd: "",
+            memoryMd: "",
+            heartbeatMode: "never",
+            idleTimeoutMs: 0,
+            memoryEnabled: false,
+            sandboxMode: "workspace-write",
+            toolPolicy: { profile: "minimal", allow: [], deny: [] },
+            cronJobs: [],
+          },
+        ]}
+        agentModelRef="google/gemini-3.1-pro-preview"
+        agentFallbackCount={0}
+        agentFallbackModels={[]}
+        agentSkills={[]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Welcome back.").length).toBeGreaterThan(0);
+    });
+
+    await user.click(screen.getByTestId("chat-active-agent"));
+    const opsOption = screen.getAllByRole("option").find((opt) => opt.textContent?.includes("Ops Agent"));
+    expect(opsOption).toBeDefined();
+    if (opsOption) {
+      await user.click(opsOption);
+    }
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-model-badge")).toHaveTextContent("gpt-5.4");
+      expect(screen.getByTestId("chat-model-badge")).toHaveTextContent("+1");
+      expect(screen.getByTestId("chat-model-badge")).not.toHaveTextContent("gemini");
+    });
+  });
+
+  it("removes a non-main agent from the UI and persisted config", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "check_prerequisites") {
+        return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: true });
+      }
+      if (cmd === "get_openclaw_version") {
+        return Promise.resolve("2.0.0");
+      }
+      if (cmd === "has_saved_license") {
+        return Promise.resolve(false);
+      }
+      if (cmd === "get_current_config") {
+        return Promise.resolve({
+          provider: "google",
+          api_key: "gemini-key",
+          auth_method: "token",
+          model: "google/gemini-3.1-pro-preview",
+          user_name: "User",
+          agent_name: "Main Agent",
+          agent_emoji: "🤖",
+          agent_type: "custom",
+          telegram_token: "",
+          gateway_port: 18789,
+          gateway_bind: "127.0.0.1",
+          gateway_auth_mode: "token",
+          tailscale_mode: "off",
+          node_manager: "auto",
+          skills: [],
+          service_keys: {},
+          provider_auths: {
+            google: {
+              auth_method: "token",
+              token: "gemini-key",
+              profile_key: null,
+              profile: null,
+              oauth_provider_id: null,
+            },
+          },
+          sandbox_mode: "workspace-write",
+          allowed_tools: [],
+          denied_tools: [],
+          fallback_models: [],
+          heartbeat_mode: "never",
+          idle_timeout_ms: null,
+          identity_md: "",
+          user_md: "",
+          soul_md: "",
+          tools_md: "",
+          agents_md: "",
+          heartbeat_md: "",
+          memory_md: "",
+          memory_enabled: false,
+          cron_jobs: [],
+          enable_multi_agent: true,
+          agent_configs: [
+            {
+              id: "ops",
+              name: "Ops Agent",
+              model: "openai-codex/gpt-5.4",
+              fallback_models: [],
+              skills: [],
+              vibe: "",
+              emoji: "🛠️",
+              identity_md: "",
+              user_md: "",
+              soul_md: "",
+              tools_md: "",
+              agents_md: "",
+              heartbeat_md: "",
+              memory_md: "",
+              heartbeat_mode: "never",
+              idle_timeout_ms: null,
+              memory_enabled: false,
+              sandbox_mode: "workspace-write",
+              provider: "openai",
+              tools: {
+                profile: "minimal",
+                allow: [],
+                deny: [],
+                elevated: { enabled: false },
+              },
+            },
+          ],
+          preserve_state: true,
+        });
+      }
+      if (cmd === "prepare_gateway_chat_connection") {
+        return Promise.resolve({
+          wsUrl: "ws://127.0.0.1:18789",
+          authToken: "token-123",
+          targetEnvironment: "local",
+          gatewayPort: 18789,
+          tunnelActive: false,
+          openClawVersion: "2.0.0",
+        });
+      }
+      if (cmd === "configure_agent" || cmd === "restart_openclaw_gateway") {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(null);
+    });
+
+    const user = userEvent.setup();
+    await openInstalledLocalChat(user);
+
+    await user.click(screen.getByTestId("chat-active-agent"));
+    const opsOption = screen.getAllByRole("option").find((opt) => opt.textContent?.includes("Ops Agent"));
+    expect(opsOption).toBeDefined();
+    if (opsOption) {
+      await user.click(opsOption);
+    }
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-active-agent")).toHaveTextContent("Ops Agent");
+    });
+
+    await user.click(screen.getByTestId("chat-active-agent"));
+    await user.click(screen.getByTestId("remove-agent-option"));
+    expect(screen.getByTestId("chat-active-agent")).toHaveTextContent("Ops Agent");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-active-agent")).toHaveTextContent("Main Agent");
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      "configure_agent",
+      expect.objectContaining({
+        config: expect.objectContaining({
+          agents: null,
+        }),
+      }),
+    );
+  });
+
+  it("keeps the agent when removal confirmation is canceled", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "check_prerequisites") {
+        return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: true });
+      }
+      if (cmd === "get_openclaw_version") {
+        return Promise.resolve("2.0.0");
+      }
+      if (cmd === "has_saved_license") {
+        return Promise.resolve(false);
+      }
+      if (cmd === "get_current_config") {
+        return Promise.resolve({
+          provider: "google",
+          api_key: "gemini-key",
+          auth_method: "token",
+          model: "google/gemini-3.1-pro-preview",
+          user_name: "User",
+          agent_name: "Main Agent",
+          agent_emoji: "🤖",
+          agent_type: "custom",
+          telegram_token: "",
+          gateway_port: 18789,
+          gateway_bind: "127.0.0.1",
+          gateway_auth_mode: "token",
+          tailscale_mode: "off",
+          node_manager: "auto",
+          skills: [],
+          service_keys: {},
+          provider_auths: {
+            google: {
+              auth_method: "token",
+              token: "gemini-key",
+              profile_key: null,
+              profile: null,
+              oauth_provider_id: null,
+            },
+          },
+          sandbox_mode: "workspace-write",
+          allowed_tools: [],
+          denied_tools: [],
+          fallback_models: [],
+          heartbeat_mode: "never",
+          idle_timeout_ms: null,
+          identity_md: "",
+          user_md: "",
+          soul_md: "",
+          tools_md: "",
+          agents_md: "",
+          heartbeat_md: "",
+          memory_md: "",
+          memory_enabled: false,
+          cron_jobs: [],
+          enable_multi_agent: true,
+          agent_configs: [
+            {
+              id: "ops",
+              name: "Ops Agent",
+              model: "openai-codex/gpt-5.4",
+              fallback_models: [],
+              skills: [],
+              vibe: "",
+              emoji: "🛠️",
+              identity_md: "",
+              user_md: "",
+              soul_md: "",
+              tools_md: "",
+              agents_md: "",
+              heartbeat_md: "",
+              memory_md: "",
+              heartbeat_mode: "never",
+              idle_timeout_ms: null,
+              memory_enabled: false,
+              sandbox_mode: "workspace-write",
+              provider: "openai",
+              tools: {
+                profile: "minimal",
+                allow: [],
+                deny: [],
+                elevated: { enabled: false },
+              },
+            },
+          ],
+          preserve_state: true,
+        });
+      }
+      if (cmd === "prepare_gateway_chat_connection") {
+        return Promise.resolve({
+          wsUrl: "ws://127.0.0.1:18789",
+          authToken: "token-123",
+          targetEnvironment: "local",
+          gatewayPort: 18789,
+          tunnelActive: false,
+          openClawVersion: "2.0.0",
+        });
+      }
+      if (cmd === "configure_agent" || cmd === "restart_openclaw_gateway") {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(null);
+    });
+
+    const user = userEvent.setup();
+    await openInstalledLocalChat(user);
+
+    await user.click(screen.getByTestId("chat-active-agent"));
+    const opsOption = screen.getAllByRole("option").find((opt) => opt.textContent?.includes("Ops Agent"));
+    expect(opsOption).toBeDefined();
+    if (opsOption) {
+      await user.click(opsOption);
+    }
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-active-agent")).toHaveTextContent("Ops Agent");
+    });
+
+    await user.click(screen.getByTestId("chat-active-agent"));
+    await user.click(screen.getByTestId("remove-agent-option"));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByTestId("chat-active-agent")).toHaveTextContent("Ops Agent");
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "configure_agent",
+      expect.objectContaining({
+        config: expect.objectContaining({
+          agents: null,
+        }),
+      }),
+    );
   });
 
   it("keeps the dark startup theme when remote chat opens without a saved preference", async () => {

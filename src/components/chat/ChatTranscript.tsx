@@ -4,6 +4,7 @@ import ChatMessageBody from "./ChatMarkdown";
 
 interface ChatTranscriptProps {
   transcriptRef: React.RefObject<HTMLDivElement | null>;
+  transcriptEndRef: React.RefObject<HTMLDivElement | null>;
   showConnectingState: boolean;
   isConfigUpdating?: boolean;
   connectionLabel: string;
@@ -20,6 +21,7 @@ interface ChatTranscriptProps {
 
 export default function ChatTranscript({
   transcriptRef,
+  transcriptEndRef,
   showConnectingState,
   isConfigUpdating = false,
   connectionLabel,
@@ -107,6 +109,7 @@ export default function ChatTranscript({
             </article>
           ))
         )}
+        <div ref={transcriptEndRef} className="chat-transcript-end" aria-hidden="true" />
       </div>
     </div>
   );

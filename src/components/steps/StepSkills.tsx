@@ -3,6 +3,7 @@ import { invoke } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
 import { AVAILABLE_SKILLS } from "../../presets/availableSkills";
 import { SKILL_ICONS } from "../../presets/modelsByProvider";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 interface StepSkillsProps {
   handleInstall: () => void;
@@ -82,13 +83,13 @@ function StepSkills({ handleInstall }: StepSkillsProps) {
                     </div>
                   ) : (
                     <input
+                      {...TEXT_ENTRY_PROPS}
                       type="password"
                       placeholder={skill.authPlaceholder || "API Key"}
                       value={serviceKeys[skill.id] || ""}
                       onChange={(e) => setField("serviceKeys", { ...serviceKeys, [skill.id]: e.target.value })}
                       onClick={(e) => e.stopPropagation()}
                       style={{ width: "100%", fontSize: "0.8rem", padding: "0.5rem", borderRadius: "8px" }}
-                      autoComplete="off"
                     />
                   )}
                 </div>
@@ -109,21 +110,21 @@ function StepSkills({ handleInstall }: StepSkillsProps) {
           <div className="form-group">
             <label>Skill Name</label>
             <input
+              {...TEXT_ENTRY_PROPS}
               placeholder="my-custom-skill"
               value={customSkillName}
               onChange={e => setField("customSkillName", e.target.value)}
-              autoComplete="off"
             />
           </div>
           <div className="form-group">
             <label>Skill Content (YAML + Markdown)</label>
             <textarea
+              {...TEXT_ENTRY_PROPS}
               className="markdown-editor"
               rows={8}
               value={customSkillContent}
               onChange={e => setField("customSkillContent", e.target.value)}
               placeholder={`---\nname: My Custom Skill\ndescription: A useful skill\n---\n\n# Instructions\nAdd skill documentation here...`}
-              autoComplete="off"
             />
           </div>
           <button

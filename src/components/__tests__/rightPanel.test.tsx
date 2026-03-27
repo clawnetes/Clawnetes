@@ -6,12 +6,8 @@ import ChatPanelContext, { type PanelView } from "../../context/ChatPanelContext
 import RightPanel from "../panel/RightPanel";
 
 const DEFAULT_PROPS = {
-  agents: [
-    { id: "agent-1", name: "Test Agent", emoji: "🤖" },
-    { id: "agent-2", name: "Second Agent", emoji: "💻" },
-  ],
-  activeAgentId: "agent-1",
-  onAgentSwitch: vi.fn(),
+  activeAgentName: "Test Agent",
+  activeAgentEmoji: "🤖",
   modelRef: "anthropic/claude-opus-4-6",
   fallbackModels: ["google/gemini-3.1-pro-preview"],
   skills: ["github", "coding-agent"],
@@ -53,11 +49,18 @@ describe("RightPanel", () => {
     expect(screen.queryByRole("tab", { name: "Integrations" })).not.toBeInTheDocument();
   });
 
-  it("shows agent switcher dropdown in header", () => {
+  it("shows read-only agent badge with name and emoji", () => {
     render(<PanelWrapper><RightPanel {...DEFAULT_PROPS} /></PanelWrapper>);
-    const agentSwitcher = screen.getByTestId("agent-switcher");
-    expect(agentSwitcher).toBeInTheDocument();
-    expect(agentSwitcher).toHaveValue("agent-1");
+    const badge = screen.getByTestId("agent-badge");
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent("🤖 Test Agent");
+    expect(badge.tagName).toBe("SPAN");
+  });
+
+  it("does not render an interactive agent-switcher select", () => {
+    render(<PanelWrapper><RightPanel {...DEFAULT_PROPS} /></PanelWrapper>);
+    expect(screen.queryByTestId("agent-switcher")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 
   it("shows skills panel when clicking Skills tab", async () => {

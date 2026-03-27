@@ -5,6 +5,7 @@ import { SKILL_CATEGORIES } from "../../presets/skillCategories";
 import SearchInput from "../ui/SearchInput";
 import ToggleSwitch from "../ui/ToggleSwitch";
 import Badge from "../ui/Badge";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 interface SkillsPanelProps {
   activeSkills: string[];
@@ -159,6 +160,7 @@ function SkillsPanel({ activeSkills, serviceKeys = {}, onSaveSkillsConfig, savin
                         {showKeyInput && (
                           <div className="px-3 pb-2.5 pl-[42px]">
                             <input
+                              {...TEXT_ENTRY_PROPS}
                               type="password"
                               placeholder={skill.authPlaceholder || "API Key"}
                               value={draftKeys[skillId] || ""}

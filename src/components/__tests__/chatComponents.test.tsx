@@ -118,6 +118,15 @@ describe("ChatComposer", () => {
     expect(screen.getByPlaceholderText("Message TestBot (Enter to send)")).toBeInTheDocument();
   });
 
+  it("disables browser text assistance on the composer textarea", () => {
+    render(<ChatComposer {...baseProps} />);
+    const textarea = screen.getByTestId("chat-composer");
+    expect(textarea).toHaveAttribute("autocomplete", "off");
+    expect(textarea).toHaveAttribute("autocapitalize", "none");
+    expect(textarea).toHaveAttribute("autocorrect", "off");
+    expect(textarea).toHaveAttribute("spellcheck", "false");
+  });
+
   it("shows archived message when thread is archived", () => {
     render(<ChatComposer {...baseProps} activeThreadIsArchived={true} />);
     expect(screen.getByPlaceholderText("Archived chats are read-only")).toBeInTheDocument();
@@ -157,7 +166,7 @@ describe("ChatComposer", () => {
 
 describe("ChatHeader", () => {
   const baseProps = {
-    agents: [{ id: "main", name: "TestBot" }],
+    agents: [{ id: "main", name: "TestBot", emoji: "🤖" }],
     activeAgentId: "main",
     activeAgentName: "TestBot",
     activeSessionKey: "main",
@@ -170,9 +179,20 @@ describe("ChatHeader", () => {
     onRetryConnection: vi.fn(),
   };
 
-  it("renders agent name when single agent", () => {
+  it("renders agent name as static text when single agent and no onAddAgent", () => {
     render(<ChatHeader {...baseProps} />);
-    expect(screen.getByTestId("chat-active-agent")).toHaveTextContent("TestBot");
+    const el = screen.getByTestId("chat-active-agent");
+    expect(el.tagName).toBe("H2");
+    expect(el).toHaveTextContent("TestBot");
+  });
+
+  it("renders dropdown trigger when single agent with onAddAgent", () => {
+    render(<ChatHeader {...baseProps} onAddAgent={vi.fn()} />);
+    const button = screen.getByTestId("chat-active-agent");
+    expect(button.tagName).toBe("BUTTON");
+    expect(button).toHaveTextContent("🤖 TestBot");
+    expect(button).toHaveAttribute("aria-haspopup", "listbox");
+    expect(button).toHaveAttribute("aria-expanded", "false");
   });
 
   it("renders dropdown when multiple agents", () => {
@@ -183,6 +203,124 @@ describe("ChatHeader", () => {
     render(<ChatHeader {...baseProps} agents={agents} />);
     const button = screen.getByTestId("chat-active-agent");
     expect(button.tagName).toBe("BUTTON");
+  });
+
+  it("lists all agents and + Add Agent in dropdown menu", async () => {
+    const user = userEvent.setup();
+    const agents = [
+      { id: "main", name: "Bot A", emoji: "🤖" },
+      { id: "sub", name: "Bot B", emoji: "💻" },
+    ];
+    render(<ChatHeader {...baseProps} agents={agents} onAddAgent={vi.fn()} />);
+    await user.click(screen.getByTestId("chat-active-agent"));
+    const menu = screen.getByTestId("agent-dropdown-menu");
+    expect(menu).toBeInTheDocument();
+    const options = menu.querySelectorAll("[role='option']");
+    expect(options).toHaveLength(2);
+    expect(screen.getByTestId("add-agent-option")).toHaveTextContent("+ Add Agent");
+  });
+
+  it("closes dropdown on Escape key", async () => {
+    const user = userEvent.setup();
+    render(<ChatHeader {...baseProps} onAddAgent={vi.fn()} />);
+    await user.click(screen.getByTestId("chat-active-agent"));
+    expect(screen.getByTestId("agent-dropdown-menu")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("agent-dropdown-menu")).not.toBeInTheDocument();
+  });
+
+  it("opens the add-agent modal from the dropdown and submits a preset-backed agent", async () => {
+    const user = userEvent.setup();
+    const onAddAgent = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ChatHeader
+        {...baseProps}
+        onAddAgent={onAddAgent}
+        providerAuths={{
+          anthropic: {
+            auth_method: "token",
+            token: "",
+            profile_key: null,
+            profile: null,
+            oauth_provider_id: null,
+          },
+        }}
+      />,
+    );
+
+    await user.click(screen.getByTestId("chat-active-agent"));
+    await user.click(screen.getByTestId("add-agent-option"));
+
+    expect(screen.getByTestId("add-agent-modal")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("add-agent-preset-dropdown").querySelector("button")!);
+    await user.click(screen.getByText("Office Assistant"));
+    await user.click(screen.getByRole("button", { name: "Add Agent" }));
+
+    expect(onAddAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Office Assistant",
+        skills: expect.arrayContaining(["himalaya", "slack", "trello"]),
+        agentsMd: expect.stringContaining("office assistant"),
+      }),
+    );
+  });
+
+  it("shows a remove option for non-main agents and calls the remove handler", async () => {
+    const user = userEvent.setup();
+    const onRemoveAgent = vi.fn();
+    render(
+      <ChatHeader
+        {...baseProps}
+        agents={[
+          { id: "main", name: "TestBot", emoji: "🤖" },
+          { id: "ops", name: "Ops", emoji: "🛠️" },
+        ]}
+        activeAgentId="ops"
+        activeAgentName="Ops"
+        onRemoveAgent={onRemoveAgent}
+      />,
+    );
+
+    await user.click(screen.getByTestId("chat-active-agent"));
+    await user.click(screen.getByTestId("remove-agent-option"));
+    expect(onRemoveAgent).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("Remove Agent")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Remove agent "Ops"? This will also delete it from the saved OpenClaw configuration.',
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+
+    expect(onRemoveAgent).toHaveBeenCalledWith("ops");
+  });
+
+  it("does not remove an agent when the confirmation popup is canceled", async () => {
+    const user = userEvent.setup();
+    const onRemoveAgent = vi.fn();
+    render(
+      <ChatHeader
+        {...baseProps}
+        agents={[
+          { id: "main", name: "TestBot", emoji: "🤖" },
+          { id: "ops", name: "Ops", emoji: "🛠️" },
+        ]}
+        activeAgentId="ops"
+        activeAgentName="Ops"
+        onRemoveAgent={onRemoveAgent}
+      />,
+    );
+
+    await user.click(screen.getByTestId("chat-active-agent"));
+    await user.click(screen.getByTestId("remove-agent-option"));
+    expect(onRemoveAgent).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(onRemoveAgent).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("shows session key in metadata", () => {
@@ -200,6 +338,7 @@ describe("ChatTranscript", () => {
   const ref = { current: null };
   const baseProps = {
     transcriptRef: ref,
+    transcriptEndRef: ref,
     showConnectingState: false,
     connectionLabel: "",
     shellError: "",

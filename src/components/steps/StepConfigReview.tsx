@@ -3,6 +3,7 @@ import { AGENT_TYPE_PRESETS } from "../../presets/agentPresets";
 import { AVAILABLE_SKILLS } from "../../presets/availableSkills";
 import { SKILL_ICONS } from "../../presets/modelsByProvider";
 import { isOAuthMethod, LOCAL_PROVIDERS } from "../../utils/providerAuth";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 import type { ProviderAuthConfig } from "../../types";
 import type { ReactNode } from "react";
 
@@ -82,11 +83,11 @@ export default function StepConfigReview({ renderProviderAuthEditor, getProvider
               <div key={s} style={{ marginTop: "0.5rem" }}>
                 <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>{skill.name}</label>
                 <input
+                  {...TEXT_ENTRY_PROPS}
                   type="password"
                   value={serviceKeys[s] || ""}
                   onChange={(e) => setField("serviceKeys", { ...serviceKeys, [s]: e.target.value })}
                   placeholder={skill.authPlaceholder || "API Key"}
-                  autoComplete="off"
                 />
               </div>
             );

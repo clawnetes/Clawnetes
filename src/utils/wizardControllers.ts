@@ -619,6 +619,8 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
             soulMd: agent.soul_md || "",
             toolsMd: agent.tools_md || "",
             agentsMd: agent.agents_md || "",
+            heartbeatMd: agent.heartbeat_md || "",
+            memoryMd: agent.memory_md || "",
             toolPolicy: controller.getLoadedAgentToolPolicy(agent),
             cronJobs: agent.cron_jobs || [],
           };

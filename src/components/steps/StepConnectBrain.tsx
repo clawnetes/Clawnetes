@@ -2,6 +2,7 @@ import { invoke } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
 import { MODELS_BY_PROVIDER, PROVIDER_LOGOS } from "../../presets/modelsByProvider";
 import Dropdown from "../Dropdown";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 import type { ReactNode } from "react";
 
 interface StepConnectBrainProps {
@@ -65,14 +66,14 @@ export default function StepConnectBrain({ renderProviderAuthEditor, getProvider
       {provider === "lmstudio" && (
         <div className="form-group" style={{ marginTop: "1.5rem" }}>
           <label>LM Studio Base URL</label>
-          <input type="text" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} placeholder="http://localhost:1234" autoComplete="off" />
+          <input {...TEXT_ENTRY_PROPS} type="text" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} placeholder="http://localhost:1234" />
         </div>
       )}
 
       {provider === "local" && (
         <div className="form-group" style={{ marginTop: "1.5rem" }}>
           <label>Local Endpoint Base URL</label>
-          <input type="text" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} placeholder="http://localhost:8080" autoComplete="off" />
+          <input {...TEXT_ENTRY_PROPS} type="text" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} placeholder="http://localhost:8080" />
         </div>
       )}
 
@@ -153,10 +154,10 @@ export default function StepConnectBrain({ renderProviderAuthEditor, getProvider
         {(provider === "ollama" || provider === "lmstudio" || provider === "local") && (
           <div style={{ marginTop: "0.5rem" }}>
             <input
+              {...TEXT_ENTRY_PROPS}
               type="text"
               placeholder={`Or type model name manually (e.g. ${provider === "ollama" ? "llama3.2" : "your-model-id"})`}
               style={{ fontSize: "0.85rem" }}
-              autoComplete="off"
               onBlur={(e) => {
                 const val = e.target.value.trim();
                 if (val) setField("model", provider === "lmstudio" ? val : `${provider}/${val}`);

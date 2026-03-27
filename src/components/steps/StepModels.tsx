@@ -4,6 +4,7 @@ import { useWizard } from "../../context/WizardContext";
 import { MODELS_BY_PROVIDER, PROVIDER_LOGOS } from "../../presets/modelsByProvider";
 import { buildReferencedProviders, getBaseProviderFromModel } from "../../utils/providerAuth";
 import Dropdown from "../Dropdown";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 import type { ReactNode } from "react";
 
 interface StepModelsProps {
@@ -71,13 +72,13 @@ function StepModels({ renderProviderAuthEditor, getProviderDefaultModel, getProv
         {provider === "lmstudio" && (
           <div style={{ marginTop: "0.75rem" }}>
             <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>LM Studio Base URL</label>
-            <input type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} autoComplete="off" />
+            <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} />
           </div>
         )}
         {provider === "local" && (
           <div style={{ marginTop: "0.75rem" }}>
             <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Custom Base URL</label>
-            <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} autoComplete="off" />
+            <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} />
           </div>
         )}
       </div>
@@ -277,13 +278,13 @@ function StepModels({ renderProviderAuthEditor, getProviderDefaultModel, getProv
                 {currentProvider === "lmstudio" && (
                   <div style={{ marginTop: "0.75rem" }}>
                     <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>LM Studio Base URL</label>
-                    <input type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} autoComplete="off" />
+                    <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} />
                   </div>
                 )}
                 {currentProvider === "local" && (
                   <div style={{ marginTop: "0.75rem" }}>
                     <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Custom Base URL</label>
-                    <input type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} autoComplete="off" />
+                    <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} />
                   </div>
                 )}
 
