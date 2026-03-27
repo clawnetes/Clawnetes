@@ -17,6 +17,11 @@ export interface GatewayChatSession {
   lastMessagePreview?: string;
   model?: string;
   thinkingLevel?: string;
+  status?: string | null;
+  startedAt?: number | null;
+  endedAt?: number | null;
+  runtimeMs?: number | null;
+  abortedLastRun?: boolean | null;
 }
 
 export interface GatewayChatHistoryPayload {
@@ -41,6 +46,15 @@ export interface GatewaySessionsChangedPayload {
   displayName?: string | null;
   label?: string | null;
   reason?: string | null;
+  phase?: string | null;
+  runId?: string | null;
+  ts?: number | null;
+  status?: string | null;
+  startedAt?: number | null;
+  endedAt?: number | null;
+  runtimeMs?: number | null;
+  abortedLastRun?: boolean | null;
+  session?: GatewayChatSession | null;
 }
 
 export interface GatewayAgentEventPayload {
@@ -324,7 +338,11 @@ export class GatewayChatClient {
     return await this.request("chat.history", { sessionKey, limit: 200 });
   }
 
-  async sendChat(sessionKey: string, message: string, thinking = "adaptive"): Promise<{ runId: string }> {
+  async sendChat(
+    sessionKey: string,
+    message: string,
+    thinking = "adaptive",
+  ): Promise<{ runId: string }> {
     return await this.request("chat.send", {
       sessionKey,
       message,
@@ -407,7 +425,7 @@ export class GatewayChatClient {
         return;
       }
 
-      if (this.initialConnectPromise && connectError) {
+      if (this.initialConnectPromise) {
         this.emitState("failed", closeError.message);
         this.rejectConnect(closeError);
         return;

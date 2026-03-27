@@ -740,3 +740,116 @@ pub async fn setup_remote_openclaw(
 
     Ok(gateway_token)
 }
+
+pub async fn apply_agent_config(
+    remote: &crate::types::RemoteInfo,
+    config: AgentConfig,
+) -> Result<String, ClawError> {
+    let executor = SshExecutor::connect(remote)?;
+    let home = executor.run("echo $HOME")?.trim().to_string();
+    let openclaw_root = format!("{}/.openclaw", home);
+
+    // Read existing openclaw.json
+    let mut config_json = read_remote_json(&executor, &openclaw_root);
+
+    // If config has agents, update agents list in openclaw.json
+    if let Some(agents) = &config.agents {
+        if let Some(obj) = config_json.as_object_mut() {
+            if let Some(agents_entry) = obj.get_mut("agents") {
+                if let Some(agents_obj) = agents_entry.as_object_mut() {
+                    let mut agents_list = Vec::new();
+
+                    for agent in agents {
+                        let mut agent_obj = serde_json::json!({
+                            "id": agent.id,
+                            "name": agent.name,
+                            "workspace": format!("{}/.openclaw/agents/{}/workspace", home, agent.id),
+                            "agentDir": format!("{}/.openclaw/agents/{}/agent", home, agent.id),
+                            "model": {
+                                "primary": agent.model
+                            }
+                        });
+
+                        if let Some(fb) = &agent.fallback_models {
+                            if !fb.is_empty() {
+                                if let Some(model_obj) =
+                                    agent_obj.get_mut("model").and_then(|m| m.as_object_mut())
+                                {
+                                    model_obj.insert(
+                                        "fallbacks".to_string(),
+                                        serde_json::to_value(fb).unwrap(),
+                                    );
+                                }
+                            }
+                        }
+
+                        // Apply per-agent overrides (tools, heartbeat, subagents)
+                        apply_agent_overrides(&mut agent_obj, agent);
+                        agents_list.push(agent_obj);
+                    }
+
+                    agents_obj.insert("list".to_string(), serde_json::json!(agents_list));
+                }
+            }
+        }
+    }
+
+    // Write updated openclaw.json back to remote
+    let config_json_str = serde_json::to_string_pretty(&config_json)
+        .map_err(|e| ClawError::System(format!("Failed to serialize config: {}", e)))?;
+    executor.write_file(&format!("{}/openclaw.json", openclaw_root), &config_json_str)?;
+
+    // Create agent workspace directories and write workspace files
+    if let Some(agents) = &config.agents {
+        let main_agent_dir = format!("{}/agents/main/agent", openclaw_root);
+        for agent in agents {
+            if agent.id == "main" {
+                continue;
+            }
+            let agent_workspace =
+                format!("{}/agents/{}/workspace", openclaw_root, agent.id);
+            let agent_config_dir =
+                format!("{}/agents/{}/agent", openclaw_root, agent.id);
+
+            executor.mkdir_p(&agent_workspace)?;
+            executor.mkdir_p(&agent_config_dir)?;
+
+            write_markdown_file(
+                &executor,
+                &format!("{}/IDENTITY.md", agent_workspace),
+                agent.identity_md.as_ref(),
+                || {
+                    format!(
+                        "# IDENTITY.md - Who Am I?\n- **Name:** {}\n- **Emoji:** 🦞\n---\nManaged by Clawnetes.",
+                        agent.name
+                    )
+                },
+            )?;
+            write_markdown_file(
+                &executor,
+                &format!("{}/USER.md", agent_workspace),
+                agent.user_md.as_ref(),
+                || {
+                    format!(
+                        "# USER.md - About Your Human\n- **Name:** {}\n---",
+                        config.user_name
+                    )
+                },
+            )?;
+            write_markdown_file(
+                &executor,
+                &format!("{}/SOUL.md", agent_workspace),
+                agent.soul_md.as_ref(),
+                || format!("# SOUL.md\n## Mission\nServe {}.", config.user_name),
+            )?;
+
+            // Copy auth-profiles from main agent dir if it exists
+            let _ = executor.run(&format!(
+                "cp {}/auth-profiles.json {}/auth-profiles.json 2>/dev/null || true",
+                main_agent_dir, agent_config_dir
+            ));
+        }
+    }
+
+    Ok("Agent configuration updated on remote.".into())
+}

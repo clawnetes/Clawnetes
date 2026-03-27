@@ -16,6 +16,8 @@ pub struct AgentData {
     pub agents_md: Option<String>,
     pub heartbeat_md: Option<String>,
     pub memory_md: Option<String>,
+    pub heartbeat_mode: Option<String>,
+    pub idle_timeout_ms: Option<u64>,
     pub subagents: Option<SubagentConfig>,
     pub tools: Option<AgentToolsConfig>,
 }

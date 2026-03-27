@@ -1,5 +1,6 @@
 import { useWizard } from "../../context/WizardContext";
 import Dropdown from "../Dropdown";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 const SERVICES_TO_CONFIGURE = [
   { id: "goplaces", name: "Google Places", placeholder: "API Key" },
@@ -38,12 +39,12 @@ export default function StepServiceKeys() {
         <div className="form-group animate-fadeIn">
           <label>{currentService.name} API Key</label>
           <input
+            {...TEXT_ENTRY_PROPS}
             type="password"
             autoFocus
             placeholder={currentService.placeholder}
             value={serviceKeys[currentService.id] || ""}
             onChange={(e) => setField("serviceKeys", { ...serviceKeys, [currentService.id]: e.target.value })}
-            autoComplete="off"
           />
         </div>
       )}

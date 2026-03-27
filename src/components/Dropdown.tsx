@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import type { DropdownOption } from "../types";
+import { TEXT_ENTRY_PROPS } from "./ui/textEntryProps";
 
 interface DropdownProps {
   options: DropdownOption[];
@@ -90,13 +91,13 @@ export default function Dropdown({
           {searchable && (
             <div className="dropdown-search-wrap">
               <input
+                {...TEXT_ENTRY_PROPS}
                 ref={searchRef}
                 type="text"
                 className="dropdown-search"
                 placeholder="Search..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                autoComplete="off"
               />
             </div>
           )}

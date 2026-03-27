@@ -25,7 +25,7 @@ import {
   loadExistingConfig as loadExistingConfigController,
 } from "./utils/wizardControllers";
 import Dropdown from "./components/Dropdown";
-import type { AgentTypeId, AgentConfigData, BusinessFunctionId, CronJobConfig, GatewayChatBootstrap, ProviderAuthConfig, ToolPolicy } from "./types";
+import type { AgentTypeId, AgentConfigData, BusinessFunctionId, ChatTranscriptScrollSnapshot, CronJobConfig, GatewayChatBootstrap, ProviderAuthConfig, ToolPolicy } from "./types";
 import { useWizardState, fieldSetter } from "./hooks/useWizardState";
 import { WizardContext } from "./context/WizardContext";
 import { clearAllChatShellStorage } from "./lib/chatShellStorage";
@@ -63,20 +63,25 @@ import StepAgentConfigLoop from "./components/steps/StepAgentConfigLoop";
 import StepComplete from "./components/steps/StepComplete";
 import ChatShell from "./components/chat/ChatShell";
 import ConfigureDrawer from "./components/chat/ConfigureDrawer";
+import { TEXT_ENTRY_PROPS } from "./components/ui/textEntryProps";
 
 function App() {
   const [state, dispatch] = useWizardState();
   const initialConfigRef = useRef<any>(null);
+  const loadExistingConfigRef = useRef<() => Promise<any>>(() => Promise.resolve());
   const [appScreen, setAppScreen] = useState<"loading" | "setup" | "chat" | "command-center">("loading");
+  const [configUpdating, setConfigUpdating] = useState(false);
   const [pendingMaintenanceConfirm, setPendingMaintenanceConfirm] = useState<"repair" | "audit" | "update" | "uninstall" | null>(null);
   const [chatBootstrap, setChatBootstrap] = useState<GatewayChatBootstrap | null>(null);
   const [chatBootstrapping, setChatBootstrapping] = useState(false);
   const [chatBootstrapError, setChatBootstrapError] = useState("");
+  const [pendingChatReturnScrollSnapshot, setPendingChatReturnScrollSnapshot] = useState<ChatTranscriptScrollSnapshot | null>(null);
   const [storedEnvironments, setStoredEnvironments] = useState<StoredEnvironment[]>([]);
   const [pendingEnvSwitch, setPendingEnvSwitch] = useState<StoredEnvironment | null>(null);
   const [envSwitchPassword, setEnvSwitchPassword] = useState("");
   const [envSwitchKeyPath, setEnvSwitchKeyPath] = useState("");
   const [addingEnvFromChat, setAddingEnvFromChat] = useState(false);
+  const [activeAgentId, setActiveAgentId] = useState<string>("main");
 
   // Destructure state for backwards-compatible access throughout the component
   const {
@@ -337,6 +342,7 @@ function App() {
       });
       setChatBootstrap(bootstrap);
       setAppScreen("chat");
+      await loadExistingConfigRef.current().catch(() => {});
       // Save this environment to the registry
       const saved = upsertEnvironment({
         type: targetEnvironment as "local" | "cloud",
@@ -507,6 +513,18 @@ function App() {
     });
   }
 
+  function mergeProviderAuth(
+    currentProviderAuths: Record<string, ProviderAuthConfig>,
+    targetProvider: string,
+    nextAuth: ProviderAuthConfig,
+  ) {
+    const normalizedProvider = getBaseProvider(targetProvider);
+    return {
+      ...currentProviderAuths,
+      [normalizedProvider]: nextAuth,
+    };
+  }
+
   function getProviderAuth(targetProvider: string): ProviderAuthConfig {
     return providerAuths[getBaseProvider(targetProvider)] || createDefaultProviderAuth(getBaseProvider(targetProvider));
   }
@@ -559,6 +577,8 @@ function App() {
     cronJobs, localBaseUrl, lmstudioBaseUrl, thinkingLevel, messagingChannel, whatsappDmPolicy,
     whatsappPhoneNumber, mode,
   };
+  const configPayloadRef = useRef(configPayloadInput);
+  configPayloadRef.current = configPayloadInput;
 
   const continueToAdvancedSettings = useCallback(async () => {
     await continueToAdvancedSettingsController({
@@ -668,6 +688,7 @@ function App() {
             ...buildConfigPayload(configPayloadInput, nextProviderAuths),
             preserve_state: true,
           },
+          remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
         });
       } catch (e: any) {
         const message = `OAuth succeeded, but saving the imported auth profile failed: ${String(e)}`;
@@ -731,12 +752,12 @@ function App() {
               {auth.auth_method === "setup-token" ? "Claude Code Setup Token" : normalizedProvider === "google" ? "Gemini API Key" : "API Key"}
             </label>
             <input
+              {...TEXT_ENTRY_PROPS}
               type="password"
               data-testid="input-api-key"
               placeholder={auth.auth_method === "setup-token" ? "Paste `claude setup-token` output" : normalizedProvider === "google" ? "Paste your Gemini API key" : `Paste your ${normalizedProvider} API key`}
               value={auth.token}
               onChange={(e) => updateProviderAuth(normalizedProvider, { token: e.target.value })}
-              autoComplete="off"
             />
           </div>
         )}
@@ -1433,6 +1454,18 @@ Managed by Clawnetes.`,
     setWhatsappPhoneSubmitted,
     targetEnvironment,
   ]);
+  loadExistingConfigRef.current = loadExistingConfig;
+
+  const restartGatewayAfterPanelUpdate = useCallback(async () => {
+    setConfigUpdating(true);
+    try {
+      await invoke("restart_openclaw_gateway", {
+        remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
+      });
+    } finally {
+      setConfigUpdating(false);
+    }
+  }, [targetEnvironment, buildActiveRemoteConfig]);
 
   const handleToggleTunnel = useCallback(async () => {
     await handleToggleTunnelController({
@@ -1468,7 +1501,8 @@ Managed by Clawnetes.`,
     setAppScreen("chat");
   }, [setLogs, setMaintCompleted, setMaintenanceStatus]);
 
-  const openCommandCenter = useCallback(() => {
+  const openCommandCenter = useCallback((snapshot: ChatTranscriptScrollSnapshot | null) => {
+    setPendingChatReturnScrollSnapshot(snapshot);
     if (!loading) {
       setLogs("");
       setMaintenanceStatus("");
@@ -1480,12 +1514,19 @@ Managed by Clawnetes.`,
   const handleReconfigureFromDrawer = useCallback(async () => {
     const loaded = await loadExistingConfig();
     if (!loaded) return;
+    setPendingChatReturnScrollSnapshot(null);
     setChatBootstrap(null);
     setChatBootstrapError("");
     setAppScreen("setup");
     setMode("advanced");
     setStep(6);
   }, [loadExistingConfig, setMode, setStep]);
+
+  useEffect(() => {
+    if (appScreen !== "chat" && appScreen !== "command-center") {
+      setPendingChatReturnScrollSnapshot(null);
+    }
+  }, [appScreen]);
 
   const requestMaintenanceConfirmation = useCallback((action: "repair" | "audit" | "update" | "uninstall") => {
     if (loading) return;
@@ -1534,6 +1575,259 @@ Managed by Clawnetes.`,
       prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
     );
   };
+
+  // ── Panel handlers (for right panel in chat) ──
+
+  const handlePanelModelChange = useCallback(async (newModel: string) => {
+    let nextAgentConfigs = configPayloadRef.current.agentConfigs;
+    if (activeAgentId && activeAgentId !== "main") {
+      // Sub-agent: update that agent's model in agentConfigs
+      nextAgentConfigs = nextAgentConfigs.map(a =>
+        a.id === activeAgentId ? { ...a, model: newModel } : a
+      );
+      setAgentConfigs(nextAgentConfigs);
+    } else {
+      // Main agent: update main model state
+      setModel(newModel);
+    }
+    try {
+      const payload = buildConfigPayload({
+        ...configPayloadRef.current,
+        agentConfigs: nextAgentConfigs,
+        model: activeAgentId === "main" ? newModel : configPayloadRef.current.model,
+      });
+      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await restartGatewayAfterPanelUpdate();
+    } catch (e) {
+      console.error("Failed to update model:", e);
+    }
+  }, [activeAgentId, restartGatewayAfterPanelUpdate, setAgentConfigs, setModel]);
+
+  const handlePanelFallbacksChange = useCallback(async (newFallbacks: string[]) => {
+    setFallbackModels(newFallbacks);
+    try {
+      const payload = buildConfigPayload({ ...configPayloadRef.current, fallbackModels: newFallbacks });
+      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await restartGatewayAfterPanelUpdate();
+    } catch (e) {
+      console.error("Failed to update fallback models:", e);
+    }
+  }, [restartGatewayAfterPanelUpdate, setFallbackModels]);
+
+  const handlePanelProviderAuthChange = useCallback(async (provider: string, auth: ProviderAuthConfig) => {
+    const nextProviderAuths = mergeProviderAuth(configPayloadRef.current.providerAuths, provider, auth);
+    updateProviderAuth(provider, auth);
+    try {
+      const payload = buildConfigPayload({
+        ...configPayloadRef.current,
+        providerAuths: nextProviderAuths,
+      });
+      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await restartGatewayAfterPanelUpdate();
+    } catch (e) {
+      console.error("Failed to update provider auth:", e);
+    }
+  }, [restartGatewayAfterPanelUpdate]);
+
+  const handlePanelStartOAuth = useCallback(async (provider: string, authMethod: string, oauthProviderId: string): Promise<ProviderAuthConfig> => {
+    const result = await invoke<ProviderAuthConfig>("start_provider_auth", {
+      provider,
+      method: authMethod,
+      oauthProviderId,
+      remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
+    });
+    const nextProviderAuths = mergeProviderAuth(configPayloadRef.current.providerAuths, provider, result);
+    updateProviderAuth(provider, result);
+    try {
+      const payload = buildConfigPayload({
+        ...configPayloadRef.current,
+        providerAuths: nextProviderAuths,
+      });
+      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await restartGatewayAfterPanelUpdate();
+    } catch (e) {
+      console.error("OAuth succeeded but saving failed:", e);
+    }
+    return result;
+  }, [targetEnvironment, buildActiveRemoteConfig, restartGatewayAfterPanelUpdate]);
+
+  const handlePanelDetectLocalModels = useCallback(async (provider: "ollama" | "lmstudio" | "local", baseUrl?: string): Promise<string[]> => {
+    const remote = targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null;
+    if (provider === "ollama") {
+      return invoke<string[]>("get_ollama_models", { remote });
+    }
+    return invoke<string[]>("get_lmstudio_models", {
+      baseUrl: baseUrl || (provider === "lmstudio" ? "http://localhost:1234/v1" : "http://localhost:8080/v1"),
+      remote,
+    });
+  }, [targetEnvironment, buildActiveRemoteConfig]);
+
+  const [skillsSaving, setSkillsSaving] = useState(false);
+  const [toolsSaving, setToolsSaving] = useState(false);
+
+  const handlePanelSaveSkillsConfig = useCallback(async (newSkills: string[], newServiceKeys: Record<string, string>) => {
+    setSkillsSaving(true);
+    setSelectedSkills(newSkills);
+    setServiceKeys(newServiceKeys);
+    try {
+      const payload = buildConfigPayload({
+        ...configPayloadRef.current,
+        selectedSkills: newSkills,
+        serviceKeys: newServiceKeys,
+      });
+      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await restartGatewayAfterPanelUpdate();
+    } catch (e) {
+      console.error("Failed to save skills config:", e);
+    } finally {
+      setSkillsSaving(false);
+    }
+  }, [restartGatewayAfterPanelUpdate, setSelectedSkills, setServiceKeys]);
+
+  const handleSaveToolPolicy = useCallback(async (newPolicy: ToolPolicy) => {
+    setToolsSaving(true);
+    setToolPolicy(newPolicy);
+    try {
+      const payload = buildConfigPayload({
+        ...configPayloadRef.current,
+        toolPolicy: newPolicy,
+      });
+      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await restartGatewayAfterPanelUpdate();
+    } catch (e) {
+      console.error("Failed to save tool policy:", e);
+    } finally {
+      setToolsSaving(false);
+    }
+  }, [restartGatewayAfterPanelUpdate, setToolPolicy]);
+
+  const handleSaveAdvancedSettings = useCallback(async (
+    newHeartbeatMode: string,
+    newIdleTimeoutMs: number,
+    newSandboxMode: string
+  ) => {
+    setLoading(true);
+    setHeartbeatMode(newHeartbeatMode);
+    setIdleTimeoutMs(newIdleTimeoutMs);
+    setSandboxMode(newSandboxMode);
+    try {
+      const payload = buildConfigPayload({
+        ...configPayloadRef.current,
+        heartbeatMode: newHeartbeatMode,
+        idleTimeoutMs: newIdleTimeoutMs,
+        sandboxMode: newSandboxMode,
+      });
+      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await restartGatewayAfterPanelUpdate();
+    } catch (e) {
+      console.error("Failed to save advanced settings:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [restartGatewayAfterPanelUpdate, setHeartbeatMode, setIdleTimeoutMs, setSandboxMode, setLoading]);
+
+  const handlePanelIdentitySave = useCallback(async (tab: string, content: string) => {
+    const currentConfig = configPayloadRef.current;
+
+    // Update the local state for the changed tab
+    switch (tab) {
+      case "identity": setIdentityMd(content); break;
+      case "soul": setSoulMd(content); break;
+      case "tools": setToolsMd(content); break;
+      case "agents": setAgentsMd(content); break;
+      case "heartbeat": setHeartbeatMd(content); break;
+      case "memory": setMemoryMd(content); break;
+    }
+    try {
+      const remote = targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null;
+      if (!remote && (tab === "identity" || tab === "soul")) {
+        // Local mode + identity/soul: use save_workspace_files (writes .md files directly)
+        const newIdentity = tab === "identity" ? content : currentConfig.identityMd;
+        const newSoul = tab === "soul" ? content : currentConfig.soulMd;
+        await invoke("save_workspace_files", {
+          agentId: null,
+          identity: newIdentity,
+          user: currentConfig.userMd,
+          soul: newSoul,
+        });
+      } else {
+        // Remote mode (all tabs) OR Local non-identity/soul: use configure_agent to persist
+        const overrides: Record<string, string> = {};
+        overrides[`${tab}Md`] = content;
+        const payload = buildConfigPayload({ ...currentConfig, ...overrides });
+        await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote });
+      }
+    } catch (e) {
+      console.error(`Failed to save ${tab}:`, e);
+    }
+  }, [targetEnvironment, buildActiveRemoteConfig, setAgentsMd, setHeartbeatMd, setIdentityMd, setMemoryMd, setSoulMd, setToolsMd]);
+
+  const handlePanelSetupIntegration = useCallback(async (skillId: string) => {
+    if (!selectedSkills.includes(skillId)) {
+      const newSkills = [...selectedSkills, skillId];
+      await handlePanelSaveSkillsConfig(newSkills, serviceKeys);
+    }
+  }, [handlePanelSaveSkillsConfig, selectedSkills, serviceKeys]);
+
+  const handlePanelAddAgent = useCallback(async (newAgent: AgentConfigData) => {
+    const currentConfig = configPayloadRef.current;
+    const nextAgentConfigs = [...currentConfig.agentConfigs, newAgent];
+
+    setAgentConfigs(nextAgentConfigs);
+    setEnableMultiAgent(true);
+    setNumAgents(nextAgentConfigs.length);
+
+    try {
+      const payload = buildConfigPayload({
+        ...currentConfig,
+        agentConfigs: nextAgentConfigs,
+        enableMultiAgent: true,
+      });
+      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await restartGatewayAfterPanelUpdate();
+    } catch (e) {
+      console.error("Failed to add agent:", e);
+    }
+  }, [targetEnvironment, buildActiveRemoteConfig, restartGatewayAfterPanelUpdate, setAgentConfigs, setEnableMultiAgent, setNumAgents]);
+
+  const handlePanelRemoveAgent = useCallback(async (agentId: string) => {
+    if (!agentId || agentId === "main") return;
+
+    const currentConfig = configPayloadRef.current;
+    const nextAgentConfigs = currentConfig.agentConfigs.filter((agent) => agent.id !== agentId);
+    const nextEnableMultiAgent = nextAgentConfigs.length > 0;
+
+    setAgentConfigs(nextAgentConfigs);
+    setEnableMultiAgent(nextEnableMultiAgent);
+    setNumAgents(nextEnableMultiAgent ? nextAgentConfigs.length : 1);
+    if (activeAgentId === agentId) {
+      setActiveAgentId("main");
+    }
+
+    try {
+      const payload = buildConfigPayload({
+        ...currentConfig,
+        agentConfigs: nextAgentConfigs,
+        enableMultiAgent: nextEnableMultiAgent,
+      });
+      await invoke("configure_agent", {
+        config: { ...payload, preserve_state: true },
+        remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
+      });
+      await restartGatewayAfterPanelUpdate();
+    } catch (e) {
+      console.error("Failed to remove agent:", e);
+    }
+  }, [
+    activeAgentId,
+    buildActiveRemoteConfig,
+    restartGatewayAfterPanelUpdate,
+    setActiveAgentId,
+    setAgentConfigs,
+    setEnableMultiAgent,
+    setNumAgents,
+    targetEnvironment,
+  ]);
 
   const getStepStatus = (stepId: number) => {
     if (step === stepId) return "active";
@@ -1641,6 +1935,8 @@ Managed by Clawnetes.`,
               void bootstrapGatewayChat();
             }}
             onOpenConfigure={openCommandCenter}
+            returnScrollSnapshot={pendingChatReturnScrollSnapshot}
+            onConsumeReturnScrollSnapshot={() => setPendingChatReturnScrollSnapshot(null)}
             environments={storedEnvironments}
             activeEnvironmentId={chatBootstrap ? storedEnvironments.find(
               (e) => e.type === (chatBootstrap.targetEnvironment as "local" | "cloud")
@@ -1648,6 +1944,53 @@ Managed by Clawnetes.`,
             )?.id || null : null}
             onSwitchEnvironment={handleSwitchEnvironment}
             onAddEnvironment={handleAddEnvironment}
+            onAgentSwitch={setActiveAgentId}
+            agents={agentConfigs}
+            activeAgentId={activeAgentId}
+            agentModelRef={model}
+            agentFallbackCount={fallbackModels.length}
+            agentFallbackModels={fallbackModels}
+            agentSkills={selectedSkills}
+            serviceKeys={serviceKeys}
+            onModelChange={handlePanelModelChange}
+            onFallbacksChange={handlePanelFallbacksChange}
+            providerAuths={providerAuths}
+            onProviderAuthChange={handlePanelProviderAuthChange}
+            onStartOAuth={handlePanelStartOAuth}
+            onDetectLocalModels={handlePanelDetectLocalModels}
+            onSaveSkillsConfig={handlePanelSaveSkillsConfig}
+            skillsSaving={skillsSaving}
+            onSetupIntegration={handlePanelSetupIntegration}
+            identityMd={identityMd}
+            soulMd={soulMd}
+            toolsMd={toolsMd}
+            agentsMd={agentsMd}
+            heartbeatMd={heartbeatMd}
+            memoryMd={memoryMd}
+            onIdentitySave={handlePanelIdentitySave}
+            identitySaving={savingWorkspace}
+            onAddAgent={handlePanelAddAgent}
+            onRemoveAgent={handlePanelRemoveAgent}
+            isConfigUpdating={configUpdating}
+            targetEnvironment={targetEnvironment}
+            remoteSummary={remoteSummary}
+            gatewayPort={gatewayPort}
+            gatewayBind={gatewayBind}
+            gatewayAuthMode={gatewayAuthMode}
+            heartbeatMode={heartbeatMode}
+            sandboxMode={sandboxMode}
+            toolPolicy={toolPolicy}
+            toolsSaving={loading}
+            settingsBusy={loading}
+            idleTimeoutMs={idleTimeoutMs}
+            onSaveToolPolicy={handleSaveToolPolicy}
+            onSaveAdvancedSettings={handleSaveAdvancedSettings}
+            maintenanceStatus={maintenanceStatus}
+            onRepair={() => void handleDrawerMaintenanceAction("repair")}
+            onAudit={() => void handleDrawerMaintenanceAction("audit")}
+            onUpgrade={() => void handleDrawerMaintenanceAction("update")}
+            onReconfigure={() => void handleReconfigureFromDrawer()}
+            onUninstall={() => void handleDrawerMaintenanceAction("uninstall")}
           />
           {pendingEnvSwitch && (
             <div style={{
@@ -1665,22 +2008,22 @@ Managed by Clawnetes.`,
                 <div className="form-group">
                   <label>SSH Password (if not using key)</label>
                   <input
+                    {...TEXT_ENTRY_PROPS}
                     type="password"
                     placeholder="Password"
                     value={envSwitchPassword}
                     onChange={(e) => setEnvSwitchPassword(e.target.value)}
-                    autoComplete="off"
                   />
                 </div>
                 <div className="form-group" style={{ marginTop: "1rem" }}>
                   <label>SSH Private Key (Optional)</label>
                   <div style={{ display: "flex", gap: "0.5rem" }}>
                     <input
+                      {...TEXT_ENTRY_PROPS}
                       placeholder="/Users/you/.ssh/id_rsa"
                       value={envSwitchKeyPath}
                       onChange={(e) => setEnvSwitchKeyPath(e.target.value)}
                       style={{ flex: 1 }}
-                      autoComplete="off"
                     />
                     <button
                       className="secondary"
@@ -1780,11 +2123,11 @@ Managed by Clawnetes.`,
             <div className="form-group" style={{ marginTop: "1.5rem" }}>
               <label>License Key</label>
               <input
+                {...TEXT_ENTRY_PROPS}
                 value={licenseKey}
                 onChange={(e) => setLicenseKey(e.target.value)}
                 placeholder="XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX"
                 autoFocus
-                autoComplete="off"
               />
             </div>
 

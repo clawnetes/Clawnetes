@@ -2,8 +2,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { invokeMock } = vi.hoisted(() => ({
+const { invokeMock, scrollToMock, scrollIntoViewMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
+  scrollToMock: vi.fn(),
+  scrollIntoViewMock: vi.fn(),
 }));
 
 type MockSessionState = {
@@ -20,9 +22,19 @@ function createMockWebSocket(options?: {
   sendErrorMessage?: string;
   streamTexts?: string[];
   hangAfterSend?: boolean;
+  completeThroughSessionRefresh?: boolean;
   abortErrorMessage?: string;
+  sessionListKey?: string;
+  finalEventSessionKey?: string;
+  sessionsChangedSessionKey?: string;
+  sessionsChangedStatus?: string;
+  sessionsChangedEndedAt?: number;
+  sessionsChangedAbortedLastRun?: boolean;
+  streamDelayMs?: number;
 }) {
   const sentMethods: string[] = [];
+  const sentChatSessionKeys: string[] = [];
+  const sentChatMessages: string[] = [];
   const sessions = new Map<string, MockSessionState>();
   const initialSessions =
     options?.sessions ||
@@ -45,6 +57,17 @@ function createMockWebSocket(options?: {
 
   let runCounter = 0;
   let activeRunId: string | null = null;
+  const sessionListKey = options?.sessionListKey || "main";
+  const finalEventSessionKey = options?.finalEventSessionKey || sessionListKey;
+  const sessionsChangedSessionKey = options?.sessionsChangedSessionKey || sessionListKey;
+
+  const schedule = (callback: () => void, delayMs = 0) => {
+    if (delayMs > 0) {
+      window.setTimeout(callback, delayMs);
+      return;
+    }
+    queueMicrotask(callback);
+  };
 
   class MockWebSocket {
     static OPEN = 1;
@@ -110,11 +133,14 @@ function createMockWebSocket(options?: {
               sessions: main
                 ? [
                     {
-                      key: "main",
+                      key: sessionListKey,
                       displayName: main.displayName,
                       derivedTitle: main.derivedTitle,
                       sessionId: main.sessionId,
                       updatedAt: main.updatedAt,
+                      status: options?.sessionsChangedStatus ?? null,
+                      endedAt: options?.sessionsChangedEndedAt ?? null,
+                      abortedLastRun: options?.sessionsChangedAbortedLastRun ?? null,
                       lastMessagePreview:
                         typeof main.messages[main.messages.length - 1]?.text === "string"
                           ? String(main.messages[main.messages.length - 1]?.text)
@@ -127,7 +153,7 @@ function createMockWebSocket(options?: {
           break;
         }
         case "chat.history": {
-          const main = sessions.get(parsed.params.sessionKey);
+          const main = sessions.get("main");
           respond({
             type: "res",
             id: parsed.id,
@@ -141,6 +167,8 @@ function createMockWebSocket(options?: {
           break;
         }
         case "chat.send": {
+          sentChatSessionKeys.push(String(parsed.params.sessionKey ?? ""));
+          sentChatMessages.push(String(parsed.params.message ?? ""));
           if (options?.sendErrorMessage) {
             respond({
               type: "res",
@@ -154,7 +182,7 @@ function createMockWebSocket(options?: {
           runCounter += 1;
           const runId = `run-${runCounter}`;
           activeRunId = runId;
-          const main = sessions.get(parsed.params.sessionKey) || {
+          const main = sessions.get("main") || {
             sessionId: "sess-live-1",
             displayName: "Main Session",
             derivedTitle: "Main Session",
@@ -176,7 +204,7 @@ function createMockWebSocket(options?: {
               { role: "assistant", content: [{ type: "text", text: "Fresh start." }], timestamp: Date.now() },
             ];
             sessions.set("main", main);
-            queueMicrotask(() => {
+            schedule(() => {
               this.emit("message", {
                 data: JSON.stringify({
                   type: "event",
@@ -188,14 +216,22 @@ function createMockWebSocket(options?: {
                 data: JSON.stringify({
                   type: "event",
                   event: "chat",
-                  payload: { sessionKey: "main", runId, state: "final" },
+                  payload: { sessionKey: finalEventSessionKey, runId, state: "final" },
                 }),
               });
               this.emit("message", {
                 data: JSON.stringify({
                   type: "event",
                   event: "sessions.changed",
-                  payload: { sessionKey: "main", sessionId: main.sessionId, updatedAt: main.updatedAt, reason: "reset" },
+                  payload: {
+                    sessionKey: sessionsChangedSessionKey,
+                    sessionId: main.sessionId,
+                    updatedAt: main.updatedAt,
+                    reason: "reset",
+                    status: options?.sessionsChangedStatus ?? null,
+                    endedAt: options?.sessionsChangedEndedAt ?? null,
+                    abortedLastRun: options?.sessionsChangedAbortedLastRun ?? null,
+                  },
                 }),
               });
             });
@@ -209,10 +245,11 @@ function createMockWebSocket(options?: {
               { role: "assistant", content: [{ type: "text", text: finalText }], timestamp: Date.now() + 1 },
             ];
             sessions.set("main", main);
+            const streamTexts = options?.streamTexts?.length ? options.streamTexts : ["Done."];
             if (!options?.hangAfterSend) {
-              const streamTexts = options?.streamTexts?.length ? options.streamTexts : ["Done."];
-              queueMicrotask(() => {
-                for (const text of streamTexts) {
+              const streamDelayMs = options?.streamDelayMs ?? 0;
+              streamTexts.forEach((text, index) => {
+                schedule(() => {
                   this.emit("message", {
                     data: JSON.stringify({
                       type: "event",
@@ -220,15 +257,36 @@ function createMockWebSocket(options?: {
                       payload: { runId, stream: "assistant", data: { text } },
                     }),
                   });
+                }, streamDelayMs * (index + 1));
+              });
+
+              schedule(() => {
+                if (options?.completeThroughSessionRefresh) {
+                  this.emit("message", {
+                    data: JSON.stringify({
+                      type: "event",
+                      event: "sessions.changed",
+                      payload: {
+                        sessionKey: sessionsChangedSessionKey,
+                        sessionId: main.sessionId,
+                        updatedAt: main.updatedAt + 1,
+                        reason: "message",
+                        status: options?.sessionsChangedStatus ?? null,
+                        endedAt: options?.sessionsChangedEndedAt ?? null,
+                        abortedLastRun: options?.sessionsChangedAbortedLastRun ?? null,
+                      },
+                    }),
+                  });
+                  return;
                 }
                 this.emit("message", {
                   data: JSON.stringify({
                     type: "event",
                     event: "chat",
-                    payload: { sessionKey: "main", runId, state: "final" },
+                    payload: { sessionKey: finalEventSessionKey, runId, state: "final" },
                   }),
                 });
-              });
+              }, streamDelayMs * (streamTexts.length + 1));
             }
           }
           break;
@@ -280,7 +338,7 @@ function createMockWebSocket(options?: {
     }
   }
 
-  return { WebSocket: MockWebSocket, sentMethods };
+  return { WebSocket: MockWebSocket, sentMethods, sentChatSessionKeys, sentChatMessages };
 }
 
 vi.mock("../lib/tauri", () => ({
@@ -332,9 +390,30 @@ async function openInstalledLocalChat(user: ReturnType<typeof userEvent.setup> =
   return user;
 }
 
+async function openSettingsPanel(user: ReturnType<typeof userEvent.setup>) {
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByRole("button", { name: "Settings" }));
+
+  // Click the Advanced tab to render the settings panel
+  await waitFor(() => {
+    expect(screen.getByText("Advanced")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByText("Advanced"));
+
+  await waitFor(() => {
+    expect(screen.getByTestId("settings-panel")).toBeInTheDocument();
+  });
+}
+
 describe("ChatShell message display", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    scrollToMock.mockReset();
+    scrollIntoViewMock.mockReset();
     localStorage.clear();
     let uuidCounter = 0;
     vi.stubGlobal("crypto", { randomUUID: () => `uuid-${++uuidCounter}` });
@@ -349,11 +428,11 @@ describe("ChatShell message display", () => {
     );
     Object.defineProperty(Element.prototype, "scrollIntoView", {
       configurable: true,
-      value: vi.fn(),
+      value: scrollIntoViewMock,
     });
     Object.defineProperty(HTMLElement.prototype, "scrollTo", {
       configurable: true,
-      value: vi.fn(),
+      value: scrollToMock,
     });
     Object.defineProperty(globalThis, "localStorage", {
       configurable: true,
@@ -463,6 +542,40 @@ describe("ChatShell message display", () => {
     expect(screen.queryByText(/SOUL\.md/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/USER\.md/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/ENOENT: no such file or directory/i)).not.toBeInTheDocument();
+  });
+
+  it("strips messaging gateway notices and timestamp wrappers from loaded user history", async () => {
+    const { WebSocket } = createMockWebSocket({
+      historyMessages: [
+        {
+          role: "user",
+          content: [{
+            type: "input_text",
+            text: `YOU
+System: [2026-03-25 08:30:28 GMT] WhatsApp gateway connected.
+
+[Wed 2026-03-25 09:33 GMT] hey what’s going on today regarding world peace`,
+          }],
+          timestamp: 1,
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "A lot is happening." }],
+          timestamp: 2,
+        },
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getAllByText("hey what’s going on today regarding world peace").length).toBeGreaterThan(0);
+    });
+
+    expect(screen.queryByText(/WhatsApp gateway connected/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\[Wed 2026-03-25 09:33 GMT\]/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^YOU$/)).not.toBeInTheDocument();
   });
 
   it("filters internal skill frontmatter from loaded history", async () => {
@@ -650,6 +763,97 @@ Based on the latest data I could pull, Trump's approval looks roughly in the low
     expect(screen.queryByText(/^\s*TEST\s*$/i)).not.toBeInTheDocument();
   });
 
+  it("strips transcript-style thinking output from loaded history and keeps only the final reply", async () => {
+    const { WebSocket } = createMockWebSocket({
+      historyMessages: [
+        {
+          role: "assistant",
+          content: [{
+            type: "text",
+            text: `ACHENEF
+think
+The user asked me to install gcloud and run gws auth setup.
+YOU
+Command still running (session gentle-coral, pid 177047). Use process for follow-up.
+ACHENEF
+<final>The Google Cloud CLI has been installed.
+Open this link:
+https://accounts.google.com/example
+Paste the verification code back here.</final>
+HEARTBEAT_OK`,
+          }],
+          timestamp: 1,
+        },
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByText((_, node) =>
+        node?.tagName === "P" && (node.textContent?.includes("The Google Cloud CLI has been installed.") ?? false)
+      )).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("link", { name: "https://accounts.google.com/example" })).toBeInTheDocument();
+    expect(screen.queryByText(/The user asked me to install gcloud/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^think$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Command still running/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/HEARTBEAT_OK/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/<final>/i)).not.toBeInTheDocument();
+  });
+
+  it("strips leaked skill docs and browser payloads from transcript-style history", async () => {
+    const { WebSocket } = createMockWebSocket({
+      historyMessages: [
+        {
+          role: "assistant",
+          content: [{
+            type: "text",
+            text: `TEST
+I’ll do a quick scan for today’s notable AI developments and then give you the short version.
+YOU
+---
+name: agent-browser
+description: Browser automation CLI for AI agents.
+allowed-tools: Bash(agent-browser:*)
+---
+
+# Browser Automation with agent-browser
+TEST
+Web search isn’t configured here, so I’m checking live headlines through the browser instead.
+YOU
+{
+  "targetId": "072C57376416171C7B4C9E96F42628EF",
+  "title": "",
+  "url": "https://news.google.com/search?q=AI&hl=en-GB&gl=GB&ceid=GB%3Aen",
+  "wsUrl": "ws://127.0.0.1:18800/devtools/page/072C57376416171C7B4C9E96F42628EF",
+  "type": "page"
+}
+TEST
+Here’s the quick AI-news snapshot for today:
+OpenAI / Sora: the biggest headline looks like turbulence around Sora.
+Google Research: Google published TurboQuant.`,
+          }],
+          timestamp: 1,
+        },
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Here’s the quick AI-news snapshot for today:/)).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/I’ll do a quick scan/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Browser Automation with agent-browser/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/"targetId": "072C57376416171C7B4C9E96F42628EF"/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Web search isn’t configured here/i)).not.toBeInTheDocument();
+  });
+
   it("shows send failures as visible system errors", async () => {
     const { WebSocket } = createMockWebSocket({ sendErrorMessage: "Request failed." });
     vi.stubGlobal("WebSocket", WebSocket);
@@ -697,11 +901,283 @@ Based on the latest data I could pull, Trump's approval looks roughly in the low
 
     expect(screen.queryByText(/Quite a lotQuite a lot/i)).not.toBeInTheDocument();
   });
+
+  it("hides streamed thinking output and only shows the final assistant reply", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      streamTexts: [
+        "ACHENEF\nthink",
+        "ACHENEF\nthink\nThe user asked me to install gcloud and run gws auth setup.",
+        `ACHENEF
+think
+The user asked me to install gcloud and run gws auth setup.
+ACHENEF
+<final>The Google Cloud CLI has been installed.
+Open this link:
+https://accounts.google.com/example`,
+        `ACHENEF
+think
+The user asked me to install gcloud and run gws auth setup.
+ACHENEF
+<final>The Google Cloud CLI has been installed.
+Open this link:
+https://accounts.google.com/example
+Paste the verification code back here.</final>
+HEARTBEAT_OK`,
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "set up gcloud auth");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getByText((_, node) =>
+        node?.tagName === "P" && (node.textContent?.includes("The Google Cloud CLI has been installed.") ?? false)
+      )).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("link", { name: "https://accounts.google.com/example" })).toBeInTheDocument();
+    expect(screen.queryByText(/The user asked me to install gcloud/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^think$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/HEARTBEAT_OK/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/<final>/i)).not.toBeInTheDocument();
+  });
+
+  it("clears thinking state when a reply completes through session refresh without a final chat event", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      completeThroughSessionRefresh: true,
+      streamTexts: ["Final answer from history refresh."],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "hello");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Final answer from history refresh.")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("chat-stop")).not.toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("Agent is thinking...")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-send")).toBeInTheDocument();
+  });
+
+  it("clears thinking state when sessions.list uses a canonical key and chat.final uses the alias key", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      sessionListKey: "agent:main:main",
+      finalEventSessionKey: "main",
+      streamTexts: ["Alias final event completed the reply."],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "hello");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Alias final event completed the reply.")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("chat-stop")).not.toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("Agent is thinking...")).not.toBeInTheDocument();
+  });
+
+  it("clears thinking state from a terminal sessions.changed snapshot even without a final chat event", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      sessionListKey: "agent:main:main",
+      sessionsChangedSessionKey: "main",
+      completeThroughSessionRefresh: true,
+      sessionsChangedStatus: "done",
+      sessionsChangedEndedAt: 12345,
+      streamTexts: ["Terminal session snapshot resolved the run."],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "hello");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Terminal session snapshot resolved the run.")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("chat-stop")).not.toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("Agent is thinking...")).not.toBeInTheDocument();
+  });
+
+  it("reuses a stored alias thread when the live session key is canonical", async () => {
+    const scopeKey = "local|18789|ws://127.0.0.1:18789";
+    localStorage.setItem(
+      "clawnetes.chat.threads.v1",
+      JSON.stringify({
+        [scopeKey]: [
+          {
+            id: "thread-main-alias",
+            agentId: "main",
+            sessionKey: "main",
+            sessionId: "sess-live-1",
+            title: "Main Session",
+            preview: "Fresh conversation",
+            updatedAt: 10,
+            status: "live",
+            messages: [],
+          },
+        ],
+      }),
+    );
+    localStorage.setItem("clawnetes.chat.selection.v1", JSON.stringify({ [`${scopeKey}|main`]: "thread-main-alias" }));
+
+    const { WebSocket } = createMockWebSocket({
+      sessionListKey: "agent:main:main",
+      finalEventSessionKey: "main",
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-testid^="chat-thread-"]')).toHaveLength(1);
+    });
+
+    expect(screen.getByRole("button", { name: "Main Session" })).toBeInTheDocument();
+  });
+
+  it("keeps auto-following while the assistant reply is streaming", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      streamTexts: ["First chunk.", "First chunk. Second chunk.", "First chunk. Second chunk. Third chunk."],
+      streamDelayMs: 20,
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    const transcript = document.querySelector(".chat-transcript-scroll") as HTMLDivElement;
+    let scrollTop = 600;
+    let scrollHeight = 1000;
+
+    Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(transcript, "scrollHeight", {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "follow the stream");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getByText("First chunk. Second chunk. Third chunk.")).toBeInTheDocument();
+    });
+
+    expect(scrollIntoViewMock.mock.calls.length).toBeGreaterThan(2);
+  });
+
+  it("pauses streaming auto-follow after manual scroll-up and re-enables it on the next reply", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      streamTexts: ["Chunk one.", "Chunk one. Chunk two.", "Chunk one. Chunk two. Chunk three."],
+      streamDelayMs: 25,
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    const transcript = document.querySelector(".chat-transcript-scroll") as HTMLDivElement;
+    let scrollTop = 600;
+    let scrollHeight = 1000;
+
+    Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(transcript, "scrollHeight", {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "first reply");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Chunk one.")).toBeInTheDocument();
+    });
+
+    const followCallsBeforePause = scrollIntoViewMock.mock.calls.length;
+    scrollTop = 200;
+    scrollHeight = 1200;
+    fireEvent.scroll(transcript);
+
+    await waitFor(() => {
+      expect(screen.getByText("Chunk one. Chunk two. Chunk three.")).toBeInTheDocument();
+    });
+
+    const followCallsAfterPause = scrollIntoViewMock.mock.calls.length;
+    expect(followCallsAfterPause).toBe(followCallsBeforePause);
+
+    scrollTop = 800;
+    scrollHeight = 1200;
+    fireEvent.scroll(transcript);
+
+    await user.type(screen.getByTestId("chat-composer"), "second reply");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(scrollIntoViewMock.mock.calls.length).toBeGreaterThan(followCallsAfterPause);
+    });
+  });
 });
 
 describe("ChatShell fresh chat flow", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    scrollToMock.mockReset();
+    scrollIntoViewMock.mockReset();
     localStorage.clear();
     let uuidCounter = 0;
     vi.stubGlobal("crypto", { randomUUID: () => `uuid-${++uuidCounter}` });
@@ -716,11 +1192,11 @@ describe("ChatShell fresh chat flow", () => {
     );
     Object.defineProperty(Element.prototype, "scrollIntoView", {
       configurable: true,
-      value: vi.fn(),
+      value: scrollIntoViewMock,
     });
     Object.defineProperty(HTMLElement.prototype, "scrollTo", {
       configurable: true,
-      value: vi.fn(),
+      value: scrollToMock,
     });
     Object.defineProperty(globalThis, "localStorage", {
       configurable: true,
@@ -752,17 +1228,42 @@ describe("ChatShell fresh chat flow", () => {
 
     expect(sentMethods).toContain("chat.send");
     expect(sentMethods).not.toContain("sessions.create");
+  });
 
-    const archivedThread = screen
-      .getAllByRole("button")
-      .find((button) => typeof button.className === "string" && button.className.includes("chat-list-item archived"));
-    expect(archivedThread).toBeDefined();
+  it("keeps replying after /new when the main session stays canonical", async () => {
+    const user = userEvent.setup();
+    const { WebSocket, sentChatSessionKeys, sentChatMessages } = createMockWebSocket({
+      historyMessages: [
+        { role: "assistant", content: [{ type: "text", text: "Older transcript" }], timestamp: 2 },
+      ],
+      sessionListKey: "agent:main:main",
+      finalEventSessionKey: "main",
+      sessionsChangedSessionKey: "main",
+      streamTexts: ["Follow-up reply after /new."],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
 
-    await user.click(archivedThread!);
+    await openInstalledLocalChat(user);
 
     await waitFor(() => {
       expect(screen.getAllByText("Older transcript").length).toBeGreaterThan(0);
     });
+
+    await user.click(screen.getByTestId("chat-new-session"));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Fresh start.").length).toBeGreaterThan(0);
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "hello again");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Follow-up reply after /new.").length).toBeGreaterThan(0);
+    });
+
+    expect(sentChatMessages).toEqual(["/new", "hello again"]);
+    expect(sentChatSessionKeys).toEqual(["agent:main:main", "agent:main:main"]);
   });
 
   it("persists theme selection", async () => {
@@ -863,15 +1364,7 @@ describe("ChatShell fresh chat flow", () => {
     localStorage.setItem("clawnetes.chat.theme.v1", "dark");
 
     await openInstalledLocalChat();
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByRole("button", { name: "Configure" }));
-    await waitFor(() => {
-      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
-    });
+    await openSettingsPanel(user);
 
     await user.click(screen.getByRole("button", { name: /Uninstall/ }));
 
@@ -891,7 +1384,7 @@ describe("ChatShell fresh chat flow", () => {
     });
 
     expect(invokeMock.mock.calls.some(([cmd]) => cmd === "uninstall_openclaw")).toBe(true);
-    expect(screen.queryByTestId("command-center-screen")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("settings-panel")).not.toBeInTheDocument();
     expect(localStorage.getItem("clawnetes.chat.threads.v1")).toBeNull();
     expect(localStorage.getItem("clawnetes.chat.selection.v1")).toBeNull();
     expect(localStorage.getItem("clawnetes.chat.theme.v1")).toBeNull();
@@ -903,15 +1396,7 @@ describe("ChatShell fresh chat flow", () => {
     vi.stubGlobal("WebSocket", WebSocket);
 
     await openInstalledLocalChat();
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByRole("button", { name: "Configure" }));
-    await waitFor(() => {
-      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
-    });
+    await openSettingsPanel(user);
 
     await user.click(screen.getByRole("button", { name: /Uninstall/ }));
     await waitFor(() => {
@@ -925,6 +1410,7 @@ describe("ChatShell fresh chat flow", () => {
     });
 
     expect(invokeMock.mock.calls.some(([cmd]) => cmd === "uninstall_openclaw")).toBe(false);
+    expect(screen.getByTestId("settings-panel")).toBeInTheDocument();
   });
 
   it("keeps the command center visible when uninstall fails after confirmation", async () => {
@@ -958,15 +1444,7 @@ describe("ChatShell fresh chat flow", () => {
     });
 
     await openInstalledLocalChat();
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByRole("button", { name: "Configure" }));
-    await waitFor(() => {
-      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
-    });
+    await openSettingsPanel(user);
 
     await user.click(screen.getByRole("button", { name: /Uninstall/ }));
     await waitFor(() => {
@@ -976,7 +1454,7 @@ describe("ChatShell fresh chat flow", () => {
     await user.click(screen.getByRole("button", { name: "Yes" }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
+      expect(screen.getByTestId("settings-panel")).toBeInTheDocument();
     });
 
     expect(screen.queryByText("Welcome to Clawnetes")).not.toBeInTheDocument();
@@ -1004,15 +1482,7 @@ describe("ChatShell fresh chat flow", () => {
     vi.stubGlobal("WebSocket", WebSocket);
 
     await openInstalledLocalChat();
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByRole("button", { name: "Configure" }));
-    await waitFor(() => {
-      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
-    });
+    await openSettingsPanel(user);
 
     await user.click(screen.getByRole("button", { name: new RegExp(buttonName) }));
 
@@ -1042,15 +1512,7 @@ describe("ChatShell fresh chat flow", () => {
     vi.stubGlobal("WebSocket", WebSocket);
 
     await openInstalledLocalChat();
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByRole("button", { name: "Configure" }));
-    await waitFor(() => {
-      expect(screen.getByTestId("command-center-screen")).toBeInTheDocument();
-    });
+    await openSettingsPanel(user);
 
     await user.click(screen.getByRole("button", { name: new RegExp(buttonName) }));
     await waitFor(() => {

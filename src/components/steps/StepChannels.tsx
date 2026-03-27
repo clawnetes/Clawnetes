@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { useWizard } from "../../context/WizardContext";
 import Dropdown from "../Dropdown";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 interface StepChannelsProps {
   handleAdvancedTransition: () => void;
@@ -37,7 +38,7 @@ function StepChannels({ handleAdvancedTransition }: StepChannelsProps) {
       {messagingChannel === "telegram" && (
         <div className="form-group" style={{ marginTop: "1rem" }}>
           <label>Telegram Bot Token</label>
-          <input type="password" data-testid="input-telegram-token" placeholder="123456:ABC-..." value={telegramToken} onChange={(e) => setField("telegramToken", e.target.value)} autoComplete="off" />
+          <input {...TEXT_ENTRY_PROPS} type="password" data-testid="input-telegram-token" placeholder="123456:ABC-..." value={telegramToken} onChange={(e) => setField("telegramToken", e.target.value)} />
           <p className="input-hint">Get one from @BotFather on Telegram.</p>
         </div>
       )}
@@ -63,12 +64,12 @@ function StepChannels({ handleAdvancedTransition }: StepChannelsProps) {
             <div className="form-group" style={{ marginTop: "1rem" }}>
               <label>Your Phone Number (Allowlist)</label>
               <input
+                {...TEXT_ENTRY_PROPS}
                 type="text"
                 data-testid="input-whatsapp-phone"
                 placeholder="+1234567890"
                 value={whatsappPhoneNumber}
                 onChange={(e) => setField("whatsappPhoneNumber", e.target.value)}
-                autoComplete="off"
               />
               <p className="input-hint">The phone number you will use to message the bot. Include country code.</p>
             </div>

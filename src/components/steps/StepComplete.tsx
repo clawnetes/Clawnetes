@@ -6,6 +6,7 @@ import type { DeferredOAuthItem } from "../../utils/providerAuth";
 import type { RemoteConfig } from "../../types";
 import { runWhatsAppPairingCommandFlow } from "../../utils/whatsappPairing";
 import { REMOTE_TUNNEL_ACCESS_PORT, resolveGatewayAccessPort } from "../../lib/gatewayPorts";
+import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 interface StepCompleteProps {
   handleToggleTunnel: () => void;
@@ -177,12 +178,12 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
             {telegramToken && (
               <div className="form-group" style={{ marginTop: "2rem" }}>
                 <input
+                  {...TEXT_ENTRY_PROPS}
                   type="text"
                   placeholder="Enter code (e.g. 3RQ8EBFE)"
                   value={pairingInput}
                   onChange={(e) => setField("pairingInput", e.target.value.toUpperCase())}
                   style={{ textAlign: "center", letterSpacing: "2px", fontWeight: "bold" }}
-                  autoComplete="off"
                 />
                 <button className="primary" style={{ width: "100%", marginTop: "1rem" }} onClick={handlePairing} disabled={!pairingInput || pairingStatus === "Verifying..."}>
                   {pairingStatus === "Verifying..." ? "Verifying..." : "Pair Agent"}
@@ -208,12 +209,12 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
               <div>
                 <label style={{ fontSize: "0.9rem", marginBottom: "0.5rem", display: "block" }}>Your WhatsApp Phone Number</label>
                 <input
+                  {...TEXT_ENTRY_PROPS}
                   type="tel"
                   placeholder="+1234567890"
                   value={whatsappPhoneNumber}
                   onChange={(e) => setField("whatsappPhoneNumber", e.target.value)}
                   style={{ marginBottom: "0.75rem" }}
-                  autoComplete="off"
                 />
                 <p className="input-hint">Include country code, e.g. +1234567890.</p>
                 <button

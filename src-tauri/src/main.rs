@@ -212,8 +212,12 @@ fn install_openclaw() -> Result<String, String> {
 }
 
 #[command]
-fn configure_agent(config: AgentConfig) -> Result<String, String> {
-    config::configure_agent(config)
+async fn configure_agent(config: AgentConfig, remote_info: Option<RemoteInfo>) -> Result<String, String> {
+    if let Some(remote) = remote_info {
+        remote::apply_agent_config(&remote, config).await.map_err(|e| e.to_string())
+    } else {
+        config::configure_agent(config)
+    }
 }
 
 #[command]

@@ -1,15 +1,14 @@
-import { memo, useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
-import type { GatewayChatBootstrap } from "../../types";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { AgentConfigData, ChatTranscriptScrollSnapshot, GatewayChatBootstrap, ProviderAuthConfig, ToolPolicy } from "../../types";
 import {
-  extractMessageText,
   GatewayChatClient,
   type GatewayAgentEventPayload,
   type GatewayChatAgent,
   type GatewayConnectState,
   type GatewayChatEventPayload,
   type GatewayChatSession,
+  type GatewaySessionsChangedPayload,
 } from "../../lib/gatewayChat";
-import { generateUUID } from "../../lib/gatewayUuid";
 import {
   buildChatScopeKey,
   inferDocumentTheme,
@@ -22,553 +21,92 @@ import {
   saveThemePreference,
   type ChatResolvedTheme,
   type ChatThemePreference,
-  type StoredChatMessage,
   type StoredChatThread,
 } from "../../lib/chatShellStorage";
+import {
+  type ChatMessage,
+  createThread,
+  deriveThreadPreview,
+  deriveThreadTitle,
+  formatSessionTitle,
+  resolveSessionKeyForAgent,
+  sanitizeAssistantTranscriptText,
+  toChatMessages,
+  toStoredMessages,
+} from "../../lib/chatMessageFilters";
+import { isTerminalSessionSnapshot, preferCanonicalSessionKey, sessionKeysMatch } from "../../lib/chatSessionKeys";
 
-type ChatMessage = {
-  id: string;
-  role: "user" | "assistant" | "system";
-  text: string;
-  runId?: string;
-  pending?: boolean;
-  error?: boolean;
-  timestamp?: number;
-};
+import ChatPanelContext, { type PanelView } from "../../context/ChatPanelContext";
+import ChatSidebar from "./ChatSidebar";
+import type { StoredEnvironment } from "./ChatSidebar";
+import ChatHeader from "./ChatHeader";
+import ChatTranscript from "./ChatTranscript";
+import ChatComposer from "./ChatComposer";
+import RightPanel from "../panel/RightPanel";
 
-interface StoredEnvironment {
-  id: string;
-  name: string;
-  type: "local" | "cloud";
-  remoteIp?: string;
-  remoteUser?: string;
-  addedAt: number;
-  lastUsedAt: number;
-}
+export type { StoredEnvironment };
 
 interface ChatShellProps {
   bootstrap: GatewayChatBootstrap | null;
   bootstrapping: boolean;
   bootstrapError: string;
   onRetryConnection: () => void;
-  onOpenConfigure: () => void;
+  onOpenConfigure: (snapshot: ChatTranscriptScrollSnapshot | null) => void;
   environments?: StoredEnvironment[];
   activeEnvironmentId?: string | null;
   onSwitchEnvironment?: (envId: string) => void;
   onAddEnvironment?: () => void;
-}
-
-function isToolMessage(message: Record<string, unknown>): boolean {
-  if (message.type === "tool_use" || message.type === "tool_result") return true;
-
-  if (Array.isArray(message.content)) {
-    const hasToolPart = (message.content as Record<string, unknown>[]).some(
-      (part) => typeof part === "object" && part !== null && (part.type === "tool_use" || part.type === "tool_result"),
-    );
-    if (hasToolPart) return true;
-  }
-
-  if (message.role === "user") {
-    const text = extractMessageText(message);
-    if (text.startsWith("{") && (text.includes('"tool":') || text.includes('"status":'))) return true;
-  }
-
-  return false;
-}
-
-function normalizeTranscriptText(text: string) {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-function isSkillFrontmatterNoiseText(text: string) {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith("---")) return false;
-
-  return (
-    /(?:^|\n)name:\s*[^\n]+/i.test(trimmed) &&
-    /(?:^|\n)description:\s*[^\n]+/i.test(trimmed) &&
-    /(?:^|\n)homepage:\s*[^\n]+/i.test(trimmed) &&
-    /(?:^|\n)metadata:\s*[^\n]+/i.test(trimmed) &&
-    /(?:^|\n)#\s+[^\n]+?\s+Skill\b/i.test(trimmed)
-  );
-}
-
-function parseJsonObject(text: string): Record<string, unknown> | null {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
-  try {
-    const parsed = JSON.parse(trimmed);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function isToolPayloadJson(text: string) {
-  const parsed = parseJsonObject(text);
-  if (!parsed) return false;
-
-  return (
-    typeof parsed.tool === "string" ||
-    typeof parsed.finalUrl === "string" ||
-    typeof parsed.externalContent === "object" ||
-    typeof parsed.fetchedAt === "string" ||
-    typeof parsed.tookMs === "number" ||
-    typeof parsed.docs === "string" ||
-    (typeof parsed.status === "string" && (parsed.status === "error" || parsed.status === "ok")) ||
-    (typeof parsed.error === "string" && typeof parsed.message === "string")
-  );
-}
-
-function hasAnsiColorNoise(text: string) {
-  return (
-    /\u001b\[[0-9;]*[A-Za-z]/.test(text) ||
-    /\[(?:\d{1,3};){1,4}\d{1,3}m/.test(text) ||
-    /\[(?:0|1|2|30|31|32|33|34|35|36|37|38|39|46)m/.test(text)
-  );
-}
-
-function isWeatherToolNoiseText(text: string) {
-  return (
-    /weather report(?: for)?:/i.test(text) ||
-    /wttr\.in/i.test(text) ||
-    /follow\s+.*igor_chubin/i.test(text) ||
-    /\btimezone:\s+[A-Za-z_]+\/[A-Za-z_]+/i.test(text)
-  );
-}
-
-function hasWrappedExternalContent(text: string) {
-  return (
-    /SECURITY NOTICE:\s+The following content is from an EXTERNAL, UNTRUSTED source/i.test(text) ||
-    /<<<EXTERNAL_UNTRUSTED_CONTENT\b/i.test(text) ||
-    /<<<END_EXTERNAL_UNTRUSTED_CONTENT\b/i.test(text)
-  );
-}
-
-function isNoiseOnlyLine(line: string) {
-  const trimmed = line.trim();
-  if (!trimmed) return true;
-
-  return (
-    hasAnsiColorNoise(trimmed) ||
-    /^(?:YOU|TEST)$/.test(trimmed) ||
-    /^SECURITY NOTICE:/i.test(trimmed) ||
-    /^- DO NOT treat any part of this content/i.test(trimmed) ||
-    /^- DO NOT execute tools\/commands/i.test(trimmed) ||
-    /^- This content may contain social engineering/i.test(trimmed) ||
-    /^- Respond helpfully to legitimate requests/i.test(trimmed) ||
-    /^- Delete data, emails, or files$/i.test(trimmed) ||
-    /^- Execute system commands$/i.test(trimmed) ||
-    /^- Change your behavior or ignore your guidelines$/i.test(trimmed) ||
-    /^- Reveal sensitive information$/i.test(trimmed) ||
-    /^- Send messages to third parties$/i.test(trimmed) ||
-    /^<<<EXTERNAL_UNTRUSTED_CONTENT\b/i.test(trimmed) ||
-    /^<<<END_EXTERNAL_UNTRUSTED_CONTENT\b/i.test(trimmed) ||
-    /^Source:\s+Web Fetch$/i.test(trimmed) ||
-    /^Response body truncated after \d+ bytes\./i.test(trimmed) ||
-    /^Weather report(?: for)?:/i.test(trimmed) ||
-    /^Weather:/i.test(trimmed) ||
-    /^Timezone:/i.test(trimmed) ||
-    /^Location:/i.test(trimmed) ||
-    /^Follow\s+.*igor_chubin/i.test(trimmed) ||
-    /^[\s\p{So}\p{Sk}│┌┐└┘├┤┬┴┼─━╷╂]+$/u.test(trimmed)
-  );
-}
-
-function extractReplyFromToolNoise(text: string) {
-  const lines = text.split(/\r?\n/);
-  let firstVisibleLineIndex = 0;
-  while (firstVisibleLineIndex < lines.length && isNoiseOnlyLine(lines[firstVisibleLineIndex])) {
-    firstVisibleLineIndex += 1;
-  }
-
-  const trailingCandidate = lines.slice(firstVisibleLineIndex).join("\n").trim();
-  if (
-    trailingCandidate &&
-    /[A-Za-z]/.test(trailingCandidate) &&
-    !hasAnsiColorNoise(trailingCandidate) &&
-    !isWeatherToolNoiseText(trailingCandidate)
-  ) {
-    return trailingCandidate;
-  }
-
-  for (let start = lines.length - 1; start >= 0; start -= 1) {
-    const suffixLines = lines.slice(start);
-    let candidate = suffixLines.join("\n").trim();
-    if (!candidate) continue;
-    if (hasAnsiColorNoise(candidate)) continue;
-    if (/^Weather report(?: for)?:/i.test(candidate)) continue;
-    if (/^Weather:/i.test(candidate)) continue;
-    if (/^Timezone:/i.test(candidate)) continue;
-    if (/^Location:/i.test(candidate)) continue;
-    if (/^Follow\s+.*igor_chubin/i.test(candidate)) continue;
-    if (!/[A-Za-z]/.test(candidate)) continue;
-
-    while (candidate) {
-      const [firstLine, ...rest] = candidate.split(/\r?\n/);
-      if (!isNoiseOnlyLine(firstLine)) break;
-      candidate = rest.join("\n").trim();
-    }
-
-    if (!candidate) continue;
-    if (candidate.split(/\r?\n/).every((line) => isNoiseOnlyLine(line))) continue;
-    return candidate;
-  }
-
-  return "";
-}
-
-function stripLeadingTranscriptLabels(text: string) {
-  let candidate = text.trim();
-  while (candidate) {
-    const lines = candidate.split(/\r?\n/);
-    const first = lines[0]?.trim() || "";
-    if (!/^(?:YOU|TEST)$/i.test(first)) break;
-    candidate = lines.slice(1).join("\n").trim();
-  }
-  return candidate;
-}
-
-function stripWrappedExternalContent(text: string) {
-  if (!hasWrappedExternalContent(text)) return text;
-
-  const marker = "<<<END_EXTERNAL_UNTRUSTED_CONTENT";
-  const lastMarkerIndex = text.lastIndexOf(marker);
-  if (lastMarkerIndex >= 0) {
-    const markerEndIndex = text.indexOf(">>>", lastMarkerIndex);
-    if (markerEndIndex >= 0) {
-      return text.slice(markerEndIndex + 3).trim();
-    }
-  }
-
-  return "";
-}
-
-function isBootstrapNoiseText(text: string) {
-  const normalized = normalizeTranscriptText(text);
-  if (!normalized) return false;
-
-  return (
-    /A new session was started via \/new or \/reset\./i.test(normalized) ||
-    /Run your Session Startup sequence/i.test(normalized) ||
-    /^Current time:/i.test(normalized) ||
-    /^#\s*(SOUL|USER|MEMORY)\.md\b/i.test(text.trim()) ||
-    (/\"status\"\s*:\s*\"error\"/i.test(text) &&
-      /\"tool\"\s*:\s*\"read\"/i.test(text) &&
-      /ENOENT: no such file or directory/i.test(text)) ||
-    (/ENOENT: no such file or directory/i.test(text) && /(workspace\/memory|MEMORY\.md)/i.test(text))
-  );
-}
-
-function sanitizeTranscriptText(text: string) {
-  const trimmed = stripLeadingTranscriptLabels(text);
-  if (!trimmed) return "";
-  if (isBootstrapNoiseText(trimmed)) return "";
-  if (isSkillFrontmatterNoiseText(trimmed)) return "";
-  if (isToolPayloadJson(trimmed)) return "";
-
-  if (hasWrappedExternalContent(trimmed)) {
-    return stripLeadingTranscriptLabels(stripWrappedExternalContent(trimmed));
-  }
-
-  if (isWeatherToolNoiseText(trimmed) || hasAnsiColorNoise(trimmed)) {
-    return stripLeadingTranscriptLabels(extractReplyFromToolNoise(trimmed));
-  }
-
-  return trimmed;
-}
-
-function toChatMessages(rawMessages: unknown[] | undefined): ChatMessage[] {
-  if (!Array.isArray(rawMessages)) return [];
-  const messages: ChatMessage[] = [];
-  rawMessages.forEach((item, index) => {
-    if (typeof item !== "object" || item === null) return;
-    const message = item as Record<string, unknown>;
-
-    const role = message.role === "assistant" || message.role === "system" ? message.role : "user";
-    if (isToolMessage(message)) return;
-    if (role === "system") return;
-
-    const text = sanitizeTranscriptText(extractMessageText(message));
-    if (!text) return;
-
-    messages.push({
-      id: `${String(message.timestamp || index)}-${role}`,
-      role,
-      text,
-      timestamp: typeof message.timestamp === "number" ? message.timestamp : undefined,
-    });
-  });
-  return messages;
-}
-
-function toStoredMessages(messages: ChatMessage[]): StoredChatMessage[] {
-  return messages
-    .filter((message) => !message.pending)
-    .map((message) => ({
-      id: message.id,
-      role: message.role,
-      text: message.text,
-      timestamp: message.timestamp,
-      error: message.error,
-    }));
-}
-
-function clipLabel(value: string, max = 42) {
-  const normalized = value.trim();
-  if (!normalized) return "";
-  return normalized.length > max ? `${normalized.slice(0, max - 1)}…` : normalized;
-}
-
-function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
-  const pattern = /(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|`([^`\n]+)`|\*\*([^*]+)\*\*|\*([^*\n]+)\*)/g;
-  const nodes: ReactNode[] = [];
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
-    }
-
-    const [fullMatch, , linkLabel, href, inlineCode, boldText, italicText] = match;
-
-    if (href && linkLabel) {
-      nodes.push(
-        <a
-          key={`${keyPrefix}-link-${match.index}`}
-          href={href}
-          target="_blank"
-          rel="noreferrer noopener"
-        >
-          {linkLabel}
-        </a>,
-      );
-    } else if (inlineCode) {
-      nodes.push(
-        <code key={`${keyPrefix}-code-${match.index}`}>
-          {inlineCode}
-        </code>,
-      );
-    } else if (boldText) {
-      nodes.push(
-        <strong key={`${keyPrefix}-strong-${match.index}`}>
-          {boldText}
-        </strong>,
-      );
-    } else if (italicText) {
-      nodes.push(
-        <em key={`${keyPrefix}-em-${match.index}`}>
-          {italicText}
-        </em>,
-      );
-    } else {
-      nodes.push(fullMatch);
-    }
-
-    lastIndex = match.index + fullMatch.length;
-  }
-
-  if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
-  }
-
-  return nodes;
-}
-
-function renderMarkdownParagraph(text: string, keyPrefix: string) {
-  const lines = text.split("\n");
-  return lines.flatMap((line, index) => {
-    const lineNodes = renderInlineMarkdown(line, `${keyPrefix}-line-${index}`);
-    if (index === lines.length - 1) return lineNodes;
-    return [...lineNodes, <br key={`${keyPrefix}-br-${index}`} />];
-  });
-}
-
-function renderChatMarkdown(text: string): ReactNode[] {
-  const nodes: ReactNode[] = [];
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  let index = 0;
-
-  const isUnorderedListItem = (line: string) => /^\s*[-*]\s+/.test(line);
-  const isOrderedListItem = (line: string) => /^\s*\d+\.\s+/.test(line);
-  const isCodeFence = (line: string) => /^```/.test(line.trim());
-
-  while (index < lines.length) {
-    const line = lines[index];
-    const trimmed = line.trim();
-
-    if (!trimmed) {
-      index += 1;
-      continue;
-    }
-
-    if (isCodeFence(line)) {
-      const language = trimmed.slice(3).trim();
-      const codeLines: string[] = [];
-      index += 1;
-      while (index < lines.length && !isCodeFence(lines[index])) {
-        codeLines.push(lines[index]);
-        index += 1;
-      }
-      if (index < lines.length && isCodeFence(lines[index])) {
-        index += 1;
-      }
-      nodes.push(
-        <pre key={`code-block-${nodes.length}`} className="chat-markdown-code-block">
-          <code data-language={language || undefined}>{codeLines.join("\n")}</code>
-        </pre>,
-      );
-      continue;
-    }
-
-    if (isUnorderedListItem(line)) {
-      const items: string[] = [];
-      while (index < lines.length && isUnorderedListItem(lines[index])) {
-        items.push(lines[index].replace(/^\s*[-*]\s+/, ""));
-        index += 1;
-      }
-      nodes.push(
-        <ul key={`unordered-list-${nodes.length}`} className="chat-message-list">
-          {items.map((item, itemIndex) => (
-            <li key={`unordered-item-${itemIndex}`}>{renderMarkdownParagraph(item, `ul-${nodes.length}-${itemIndex}`)}</li>
-          ))}
-        </ul>,
-      );
-      continue;
-    }
-
-    if (isOrderedListItem(line)) {
-      const items: string[] = [];
-      while (index < lines.length && isOrderedListItem(lines[index])) {
-        items.push(lines[index].replace(/^\s*\d+\.\s+/, ""));
-        index += 1;
-      }
-      nodes.push(
-        <ol key={`ordered-list-${nodes.length}`} className="chat-message-list">
-          {items.map((item, itemIndex) => (
-            <li key={`ordered-item-${itemIndex}`}>{renderMarkdownParagraph(item, `ol-${nodes.length}-${itemIndex}`)}</li>
-          ))}
-        </ol>,
-      );
-      continue;
-    }
-
-    const paragraphLines = [line];
-    index += 1;
-    while (
-      index < lines.length &&
-      lines[index].trim() &&
-      !isCodeFence(lines[index]) &&
-      !isUnorderedListItem(lines[index]) &&
-      !isOrderedListItem(lines[index])
-    ) {
-      paragraphLines.push(lines[index]);
-      index += 1;
-    }
-
-    nodes.push(
-      <p key={`paragraph-${nodes.length}`} className="chat-message-paragraph">
-        {renderMarkdownParagraph(paragraphLines.join("\n"), `paragraph-${nodes.length}`)}
-      </p>,
-    );
-  }
-
-  return nodes;
-}
-
-function ChatMessageBody({ message }: { message: ChatMessage }) {
-  const text = message.text || (message.pending ? "Thinking..." : "");
-
-  if (message.role === "assistant" || message.role === "system") {
-    return <div className="chat-message-markdown">{renderChatMarkdown(text)}</div>;
-  }
-
-  return <p className="chat-message-plain">{text}</p>;
-}
-
-function formatSessionTitle(session: GatewayChatSession) {
-  return session.displayName || session.derivedTitle || session.lastMessagePreview || session.key;
-}
-
-function deriveThreadTitle(params: {
-  session?: GatewayChatSession;
-  messages?: StoredChatMessage[];
-  fallback?: string;
-}) {
-  const userPrompt = params.messages?.find((message) => message.role === "user" && message.text.trim());
-  if (userPrompt) {
-    return clipLabel(userPrompt.text.replace(/\s+/g, " "));
-  }
-  if (params.session) {
-    return clipLabel(formatSessionTitle(params.session));
-  }
-  return clipLabel(params.fallback || "New chat") || "New chat";
-}
-
-function deriveThreadPreview(params: {
-  session?: GatewayChatSession;
-  messages?: StoredChatMessage[];
-  fallback?: string;
-}) {
-  const lastMessage = [...(params.messages || [])].reverse().find((message) => message.text.trim());
-  if (lastMessage) {
-    return clipLabel(lastMessage.text.replace(/\s+/g, " "), 80);
-  }
-  if (params.session?.lastMessagePreview) {
-    return clipLabel(params.session.lastMessagePreview.replace(/\s+/g, " "), 80);
-  }
-  return clipLabel(params.fallback || "Fresh conversation", 80) || "Fresh conversation";
-}
-
-function createThread(params: {
-  agentId: string;
-  sessionKey: string;
-  sessionId?: string;
-  status: StoredChatThread["status"];
-  session?: GatewayChatSession;
-  title?: string;
-  preview?: string;
-  messages?: StoredChatMessage[];
-}) {
-  const messages = params.messages || [];
-  return {
-    id: generateUUID(),
-    agentId: params.agentId,
-    sessionKey: params.sessionKey,
-    sessionId: params.sessionId,
-    title: deriveThreadTitle({ session: params.session, messages, fallback: params.title }),
-    preview: deriveThreadPreview({ session: params.session, messages, fallback: params.preview }),
-    updatedAt: Date.now(),
-    status: params.status,
-    messages,
-  } satisfies StoredChatThread;
-}
-
-function defaultSessionKeyForAgent(agentId: string) {
-  return agentId === "main" ? "main" : agentId;
-}
-
-function resolveSessionKeyForAgent(params: {
-  agentId: string;
-  liveSessions: GatewayChatSession[];
-  preferredSessionKey?: string;
-}) {
-  if (params.preferredSessionKey && params.liveSessions.some((session) => session.key === params.preferredSessionKey)) {
-    return params.preferredSessionKey;
-  }
-
-  if (params.agentId === "main") {
-    return params.liveSessions.find((session) => session.key === "main")?.key || params.liveSessions[0]?.key || "main";
-  }
-
-  return (
-    params.liveSessions.find((session) => session.key === params.agentId)?.key ||
-    params.liveSessions.find((session) => session.key !== "main")?.key ||
-    defaultSessionKeyForAgent(params.agentId)
-  );
+  onAgentSwitch?: (agentId: string) => void;
+  agents?: AgentConfigData[];
+  activeAgentId?: string;
+  agentModelRef?: string;
+  agentFallbackCount?: number;
+  agentFallbackModels?: string[];
+  agentSkills?: string[];
+  serviceKeys?: Record<string, string>;
+  onModelChange?: (model: string) => void;
+  onFallbacksChange?: (models: string[]) => void;
+  providerAuths?: Record<string, ProviderAuthConfig>;
+  onProviderAuthChange?: (provider: string, auth: ProviderAuthConfig) => void | Promise<void>;
+  onStartOAuth?: (provider: string, authMethod: string, oauthProviderId: string) => Promise<ProviderAuthConfig>;
+  onDetectLocalModels?: (provider: "ollama" | "lmstudio" | "local", baseUrl?: string) => Promise<string[]>;
+  onSaveSkillsConfig?: (skills: string[], serviceKeys: Record<string, string>) => void;
+  skillsSaving?: boolean;
+  onSetupIntegration?: (skillId: string) => void;
+  onAddAgent?: (agent: AgentConfigData) => void | Promise<void>;
+  onRemoveAgent?: (agentId: string) => void | Promise<void>;
+  // Identity editor
+  identityMd?: string;
+  soulMd?: string;
+  toolsMd?: string;
+  agentsMd?: string;
+  heartbeatMd?: string;
+  memoryMd?: string;
+  onIdentitySave?: (tab: string, content: string) => void;
+  identitySaving?: boolean;
+  // Settings
+  targetEnvironment?: string;
+  remoteSummary?: string;
+  gatewayPort?: number;
+  gatewayBind?: string;
+  gatewayAuthMode?: string;
+  heartbeatMode?: string;
+  sandboxMode?: string;
+  toolPolicy?: ToolPolicy;
+  toolsSaving?: boolean;
+  idleTimeoutMs?: number;
+  onSaveToolPolicy?: (policy: ToolPolicy) => void;
+  onSaveAdvancedSettings?: (heartbeatMode: string, idleTimeoutMs: number, sandboxMode: string) => void;
+  settingsBusy?: boolean;
+  maintenanceStatus?: string;
+  onRepair?: () => void;
+  onAudit?: () => void;
+  onUpgrade?: () => void;
+  onReconfigure?: () => void;
+  onUninstall?: () => void;
+  isConfigUpdating?: boolean;
+  returnScrollSnapshot?: ChatTranscriptScrollSnapshot | null;
+  onConsumeReturnScrollSnapshot?: () => void;
 }
 
 function readPrefersDark() {
@@ -601,6 +139,10 @@ function isNearBottom(element: HTMLDivElement, threshold = 96) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
 
+function isAssistantStreaming(messages: ChatMessage[]) {
+  return messages.some((message) => message.role === "assistant" && message.pending);
+}
+
 function mergeAssistantStreamText(current: string, incoming: string) {
   if (!current) return incoming;
   if (!incoming) return current;
@@ -618,135 +160,72 @@ function mergeAssistantStreamText(current: string, incoming: string) {
   return `${current}${incoming}`;
 }
 
-function ChatIcon({ name }: { name: string }) {
-  switch (name) {
-    case "plus":
-      return (
-        <svg aria-hidden="true" viewBox="0 0 16 16">
-          <path d="M8 3v10" />
-          <path d="M3 8h10" />
-        </svg>
-      );
-    case "sliders":
-      return (
-        <svg aria-hidden="true" viewBox="0 0 16 16">
-          <path d="M3 4h10" />
-          <path d="M5 8h8" />
-          <path d="M3 12h10" />
-          <circle cx="6" cy="4" r="1.25" />
-          <circle cx="10" cy="8" r="1.25" />
-          <circle cx="8" cy="12" r="1.25" />
-        </svg>
-      );
-    case "reset":
-      return (
-        <svg aria-hidden="true" viewBox="0 0 16 16">
-          <path d="M3.5 8a4.5 4.5 0 1 0 1.3-3.2" />
-          <path d="M3.5 4.5v3h3" />
-        </svg>
-      );
-    case "reconnect":
-      return (
-        <svg aria-hidden="true" viewBox="0 0 16 16">
-          <path d="M13 5.5V3h-2.5" />
-          <path d="M3 10.5V13h2.5" />
-          <path d="M12.2 7A4.5 4.5 0 0 0 4 5.4" />
-          <path d="M3.8 9A4.5 4.5 0 0 0 12 10.6" />
-        </svg>
-      );
-    case "sun":
-      return (
-        <svg aria-hidden="true" viewBox="0 0 16 16">
-          <circle cx="8" cy="8" r="2.5" />
-          <path d="M8 1.75v1.5" />
-          <path d="M8 12.75v1.5" />
-          <path d="M1.75 8h1.5" />
-          <path d="M12.75 8h1.5" />
-          <path d="M3.35 3.35l1.05 1.05" />
-          <path d="M11.6 11.6l1.05 1.05" />
-          <path d="M12.65 3.35L11.6 4.4" />
-          <path d="M4.4 11.6l-1.05 1.05" />
-        </svg>
-      );
-    case "moon":
-      return (
-        <svg aria-hidden="true" viewBox="0 0 16 16">
-          <path d="M10.8 2.2A5.8 5.8 0 1 0 13.8 11 5.2 5.2 0 0 1 10.8 2.2Z" />
-        </svg>
-      );
-    case "system":
-      return (
-        <svg aria-hidden="true" viewBox="0 0 16 16">
-          <rect x="2.5" y="3" width="11" height="8" rx="1.5" />
-          <path d="M6 13h4" />
-          <path d="M8 11v2" />
-        </svg>
-      );
-    case "spark":
-      return (
-        <svg aria-hidden="true" viewBox="0 0 16 16">
-          <path d="M8 2.2 9.5 6.5 13.8 8 9.5 9.5 8 13.8 6.5 9.5 2.2 8 6.5 6.5Z" />
-        </svg>
-      );
-    case "note":
-      return (
-        <svg aria-hidden="true" viewBox="0 0 16 16">
-          <path d="M3 3.5h10" />
-          <path d="M3 7.5h10" />
-          <path d="M3 11.5h7" />
-        </svg>
-      );
-    case "plan":
-      return (
-        <svg aria-hidden="true" viewBox="0 0 16 16">
-          <path d="M3 4.5h10" />
-          <path d="M3 8h10" />
-          <path d="M3 11.5h6.5" />
-          <circle cx="11.75" cy="11.5" r="1.25" />
-        </svg>
-      );
-    case "chat":
-    default:
-      return (
-        <svg aria-hidden="true" viewBox="0 0 16 16">
-          <path d="M3 4.5A1.5 1.5 0 0 1 4.5 3h7A1.5 1.5 0 0 1 13 4.5v4A1.5 1.5 0 0 1 11.5 10h-4l-2.75 2v-2H4.5A1.5 1.5 0 0 1 3 8.5Z" />
-        </svg>
-      );
+function asSessionLifecycleSnapshot(
+  payload?: GatewayChatSession | GatewaySessionsChangedPayload | null,
+): GatewayChatSession | GatewaySessionsChangedPayload | null {
+  if (!payload) {
+    return null;
   }
+  if ("session" in payload) {
+    return payload.session ?? payload;
+  }
+  return payload;
 }
 
-function ChatActionButton({
-  icon,
-  label,
-  className,
-  children,
-  ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
-  icon: ReactNode;
-  label: string;
+function sessionMatchesActiveContext(params: {
+  sessionKey?: string | null;
+  activeSessionKey?: string | null;
+  agentId?: string | null;
 }) {
-  return (
-    <button className={`chat-action-button ${className || ""}`.trim()} {...props}>
-      <span className="chat-button-icon">{icon}</span>
-      <span className="chat-button-label">{children || label}</span>
-    </button>
-  );
+  return sessionKeysMatch({
+    left: params.sessionKey,
+    right: params.activeSessionKey,
+    agentId: params.agentId,
+  });
 }
 
-function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection, onOpenConfigure, environments, activeEnvironmentId, onSwitchEnvironment, onAddEnvironment }: ChatShellProps) {
+function ChatShell({
+  bootstrap, bootstrapping, bootstrapError, onRetryConnection, onOpenConfigure,
+  environments, activeEnvironmentId, onSwitchEnvironment, onAddEnvironment, onAgentSwitch,
+  agents: propAgents,
+  activeAgentId: chatActiveAgentId,
+  agentModelRef, agentFallbackCount, agentFallbackModels, agentSkills, serviceKeys,
+  onModelChange, onFallbacksChange, providerAuths, onProviderAuthChange, onStartOAuth, onDetectLocalModels, onSaveSkillsConfig, skillsSaving, onSetupIntegration, onAddAgent, onRemoveAgent,
+  identityMd, soulMd, toolsMd, agentsMd, heartbeatMd, memoryMd,
+  onIdentitySave, identitySaving,
+  targetEnvironment, remoteSummary, gatewayPort, gatewayBind, gatewayAuthMode,
+  heartbeatMode, sandboxMode, toolPolicy, toolsSaving, idleTimeoutMs, onSaveToolPolicy, onSaveAdvancedSettings, settingsBusy, maintenanceStatus,
+  onRepair, onAudit, onUpgrade, onReconfigure, onUninstall, isConfigUpdating = false,
+  returnScrollSnapshot = null,
+  onConsumeReturnScrollSnapshot,
+}: ChatShellProps) {
   const clientRef = useRef<GatewayChatClient | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const activeAgentIdRef = useRef("");
   const activeSessionKeyRef = useRef("");
   const activeThreadIdRef = useRef("");
+  const activeRunIdRef = useRef("");
   const threadsRef = useRef<StoredChatThread[]>([]);
   const shouldAutoScrollRef = useRef(true);
   const pendingScrollBehaviorRef = useRef<ScrollBehavior | null>("auto");
-  const previousMessageCountRef = useRef(0);
+  const streamFollowEnabledRef = useRef(false);
+  const streamFollowRunIdRef = useRef("");
+  const userPausedStreamFollowRef = useRef(false);
+  const internalReturnScrollSnapshotRef = useRef<ChatTranscriptScrollSnapshot | null>(null);
+  const consumedExternalReturnScrollSnapshotRef = useRef<ChatTranscriptScrollSnapshot | null>(null);
 
   const [connectionLabel, setConnectionLabel] = useState("Connecting to gateway...");
   const [connectionState, setConnectionState] = useState<GatewayConnectState["status"]>("connecting");
   const [agents, setAgents] = useState<GatewayChatAgent[]>([]);
+
+  // Prefer gateway-reported agents (always correct for the current environment).
+  // Only fall back to propAgents (from App state) when the gateway hasn't reported agents yet.
+  const displayAgents = agents.length > 0
+    ? agents
+    : propAgents && propAgents.length > 0
+      ? propAgents.map(a => ({ id: a.id, name: a.name, emoji: a.emoji }))
+      : [];
   const [liveSessions, setLiveSessions] = useState<GatewayChatSession[]>([]);
   const [threads, setThreads] = useState<StoredChatThread[]>([]);
   const [activeAgentId, setActiveAgentId] = useState("");
@@ -758,8 +237,6 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   const [sending, setSending] = useState(false);
   const [activeRunId, setActiveRunId] = useState("");
   const [shellError, setShellError] = useState("");
-  const [envDropdownOpen, setEnvDropdownOpen] = useState(false);
-  const envDropdownRef = useRef<HTMLDivElement>(null);
   const initialThemeStateRef = useRef<{
     themePreference: ChatThemePreference;
     resolvedTheme: ChatResolvedTheme;
@@ -771,19 +248,54 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   const [themePreference, setThemePreference] = useState<ChatThemePreference>(initialThemeState.themePreference);
   const [resolvedTheme, setResolvedTheme] = useState<ChatResolvedTheme>(initialThemeState.resolvedTheme);
 
-  const scopeKey = bootstrap ? buildChatScopeKey(bootstrap) : "";
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelView, setPanelView] = useState<PanelView>("model");
 
-  // Close env dropdown on click outside
-  useEffect(() => {
-    if (!envDropdownOpen) return;
-    function handleMouseDown(e: MouseEvent) {
-      if (envDropdownRef.current && !envDropdownRef.current.contains(e.target as Node)) {
-        setEnvDropdownOpen(false);
-      }
+  const captureTranscriptScrollSnapshot = useCallback((): ChatTranscriptScrollSnapshot | null => {
+    const transcript = transcriptRef.current;
+    if (!transcript || !activeAgentId || !activeSessionKey || !activeThreadId) {
+      return null;
     }
-    document.addEventListener("mousedown", handleMouseDown);
-    return () => document.removeEventListener("mousedown", handleMouseDown);
-  }, [envDropdownOpen]);
+
+    return {
+      agentId: activeAgentId,
+      sessionKey: activeSessionKey,
+      threadId: activeThreadId,
+      scrollTop: transcript.scrollTop,
+    };
+  }, [activeAgentId, activeSessionKey, activeThreadId]);
+
+  const clearReturnScrollSnapshots = useCallback((consumeExternal = false) => {
+    internalReturnScrollSnapshotRef.current = null;
+    if (consumeExternal) {
+      if (returnScrollSnapshot) {
+        consumedExternalReturnScrollSnapshotRef.current = returnScrollSnapshot;
+      }
+      onConsumeReturnScrollSnapshot?.();
+    }
+  }, [onConsumeReturnScrollSnapshot, returnScrollSnapshot]);
+
+  useEffect(() => {
+    if (!returnScrollSnapshot) {
+      consumedExternalReturnScrollSnapshotRef.current = null;
+    }
+  }, [returnScrollSnapshot]);
+
+  const openPanel = useCallback((view?: PanelView) => {
+    internalReturnScrollSnapshotRef.current = captureTranscriptScrollSnapshot();
+    if (view) setPanelView(view);
+    setPanelOpen(true);
+  }, [captureTranscriptScrollSnapshot]);
+
+  const closePanel = useCallback(() => {
+    setPanelOpen(false);
+  }, []);
+
+  const togglePanel = useCallback(() => {
+    setPanelOpen((prev) => !prev);
+  }, []);
+
+  const scopeKey = bootstrap ? buildChatScopeKey(bootstrap) : "";
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId) || null;
   const activeThreadIsArchived = activeThread?.status === "archived";
@@ -793,7 +305,21 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     if (!transcript) return;
 
     const updatePosition = () => {
-      shouldAutoScrollRef.current = isNearBottom(transcript);
+      const nearBottom = isNearBottom(transcript);
+      shouldAutoScrollRef.current = nearBottom;
+
+      if (!activeRunIdRef.current) {
+        return;
+      }
+
+      if (nearBottom) {
+        userPausedStreamFollowRef.current = false;
+        streamFollowEnabledRef.current = true;
+        return;
+      }
+
+      userPausedStreamFollowRef.current = true;
+      streamFollowEnabledRef.current = false;
     };
 
     updatePosition();
@@ -801,31 +327,118 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     return () => transcript.removeEventListener("scroll", updatePosition);
   }, [bootstrap]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const transcript = transcriptRef.current;
     if (!transcript) {
-      previousMessageCountRef.current = messages.length;
       pendingScrollBehaviorRef.current = null;
       return;
     }
 
-    const shouldScroll =
-      pendingScrollBehaviorRef.current !== null &&
-      (shouldAutoScrollRef.current || messages.length > previousMessageCountRef.current);
+    const followingStream =
+      activeRunIdRef.current &&
+      streamFollowEnabledRef.current &&
+      !userPausedStreamFollowRef.current &&
+      isAssistantStreaming(messages);
+    const scrollBehavior = followingStream ? "auto" : pendingScrollBehaviorRef.current;
+    const shouldScroll = !!scrollBehavior;
 
     if (shouldScroll) {
-      const scrollBehavior = pendingScrollBehaviorRef.current ?? undefined;
-      if (typeof transcript.scrollTo === "function") {
+      if (transcriptEndRef.current && typeof transcriptEndRef.current.scrollIntoView === "function") {
+        transcriptEndRef.current.scrollIntoView({ behavior: scrollBehavior, block: "end" });
+      } else if (typeof transcript.scrollTo === "function") {
         transcript.scrollTo({ top: transcript.scrollHeight, behavior: scrollBehavior });
       } else {
         transcript.scrollTop = transcript.scrollHeight;
       }
+
+      if (followingStream) {
+        shouldAutoScrollRef.current = true;
+      }
+    }
+
+    pendingScrollBehaviorRef.current = null;
+  }, [messages]);
+
+  useLayoutEffect(() => {
+    if (panelOpen) {
+      return;
+    }
+
+    const transcript = transcriptRef.current;
+    const externalSnapshot = returnScrollSnapshot && consumedExternalReturnScrollSnapshotRef.current !== returnScrollSnapshot
+      ? returnScrollSnapshot
+      : null;
+    const snapshot = internalReturnScrollSnapshotRef.current ?? externalSnapshot;
+    if (!transcript || !snapshot) {
+      return;
+    }
+
+    if (!activeAgentId || !activeSessionKey || !activeThreadId) {
+      return;
+    }
+
+    const sameThread = snapshot.threadId === activeThreadId;
+    const sameSession = sessionMatchesActiveContext({
+      sessionKey: snapshot.sessionKey,
+      activeSessionKey,
+      agentId: snapshot.agentId,
+    });
+    const sameAgent = snapshot.agentId === activeAgentId;
+
+    if (!sameThread || !sameSession || !sameAgent) {
+      clearReturnScrollSnapshots(Boolean(returnScrollSnapshot));
+      return;
+    }
+
+    pendingScrollBehaviorRef.current = null;
+    transcript.scrollTop = snapshot.scrollTop;
+    shouldAutoScrollRef.current = isNearBottom(transcript);
+    clearReturnScrollSnapshots(Boolean(returnScrollSnapshot));
+  }, [
+    activeAgentId,
+    activeSessionKey,
+    activeThreadId,
+    bootstrap,
+    clearReturnScrollSnapshots,
+    panelOpen,
+    returnScrollSnapshot,
+  ]);
+
+  function queueScrollToBottom(behavior: ScrollBehavior = "auto") {
+    pendingScrollBehaviorRef.current = behavior;
+  }
+
+  function prepareNextRunAutoFollow(scrollBehavior: ScrollBehavior = "auto") {
+    streamFollowEnabledRef.current = true;
+    streamFollowRunIdRef.current = "";
+    userPausedStreamFollowRef.current = false;
+    shouldAutoScrollRef.current = true;
+    queueScrollToBottom(scrollBehavior);
+  }
+
+  function beginStreamAutoFollow(runId: string, scrollBehavior: ScrollBehavior = "auto") {
+    const nextRunId = runId.trim();
+    const isNewRun = streamFollowRunIdRef.current !== nextRunId;
+
+    streamFollowRunIdRef.current = nextRunId;
+    if (isNewRun) {
+      userPausedStreamFollowRef.current = false;
       shouldAutoScrollRef.current = true;
     }
 
-    previousMessageCountRef.current = messages.length;
-    pendingScrollBehaviorRef.current = null;
-  }, [messages]);
+    if (userPausedStreamFollowRef.current) {
+      return;
+    }
+
+    streamFollowEnabledRef.current = true;
+    queueScrollToBottom(scrollBehavior);
+  }
+
+  function endStreamAutoFollow() {
+    streamFollowEnabledRef.current = false;
+    streamFollowRunIdRef.current = "";
+    userPausedStreamFollowRef.current = false;
+  }
 
   useEffect(() => {
     activeAgentIdRef.current = activeAgentId;
@@ -838,6 +451,10 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   useEffect(() => {
     activeThreadIdRef.current = activeThreadId;
   }, [activeThreadId]);
+
+  useEffect(() => {
+    activeRunIdRef.current = activeRunId;
+  }, [activeRunId]);
 
   useEffect(() => {
     threadsRef.current = threads;
@@ -861,6 +478,15 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     if (!scopeKey || !activeAgentId || !activeThreadId) return;
     saveStoredSelection(scopeKey, activeAgentId, activeThreadId);
   }, [activeAgentId, activeThreadId, scopeKey]);
+
+  // Re-fetch agent list from the gateway after a config update completes
+  const prevConfigUpdating = useRef(false);
+  useEffect(() => {
+    if (prevConfigUpdating.current && !isConfigUpdating && clientRef.current) {
+      void bootstrapShell(clientRef.current);
+    }
+    prevConfigUpdating.current = isConfigUpdating;
+  }, [isConfigUpdating]);
 
   useEffect(() => {
     const nextMessages = toStoredMessages(messages);
@@ -906,6 +532,19 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     return () => mediaQuery.removeEventListener?.("change", listener);
   }, [themePreference]);
 
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+      const modifier = isMac ? e.metaKey : e.ctrlKey;
+      if (modifier && e.key === ",") {
+        e.preventDefault();
+        togglePanel();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [togglePanel]);
+
   function updateThreads(updater: (current: StoredChatThread[]) => StoredChatThread[]) {
     setThreads((current) => updater(current));
   }
@@ -920,25 +559,49 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     const existing = threadsRef.current.find(
       (thread) =>
         thread.agentId === params.agentId &&
-        thread.sessionKey === params.sessionKey &&
+        sessionMatchesActiveContext({
+          sessionKey: thread.sessionKey,
+          activeSessionKey: params.sessionKey,
+          agentId: params.agentId,
+        }) &&
         thread.status !== "archived" &&
         (!params.preferredThreadId || thread.id === params.preferredThreadId),
     );
 
     if (existing) {
       updateThreads((current) =>
-        current.map((thread) =>
-          thread.id !== existing.id
-            ? thread
-            : {
-                ...thread,
-                status: "live",
-                sessionId: params.sessionId || params.session?.sessionId || thread.sessionId,
-                title: deriveThreadTitle({ session: params.session, messages: thread.messages, fallback: thread.title }),
-                preview: deriveThreadPreview({ session: params.session, messages: thread.messages, fallback: thread.preview }),
-                updatedAt: params.session?.updatedAt || thread.updatedAt || Date.now(),
-              },
-        ),
+        current.flatMap((thread) => {
+          const isDuplicate =
+            thread.id !== existing.id &&
+            thread.agentId === params.agentId &&
+            thread.status !== "archived" &&
+            sessionMatchesActiveContext({
+              sessionKey: thread.sessionKey,
+              activeSessionKey: params.sessionKey,
+              agentId: params.agentId,
+            });
+
+          if (isDuplicate) {
+            return [];
+          }
+
+          if (thread.id !== existing.id) {
+            return [thread];
+          }
+
+          return [{
+            ...thread,
+            status: "live",
+            sessionKey: preferCanonicalSessionKey({
+              sessionKey: thread.sessionKey,
+              matchedSessionKey: params.sessionKey,
+            }),
+            sessionId: params.sessionId || params.session?.sessionId || thread.sessionId,
+            title: deriveThreadTitle({ session: params.session, messages: thread.messages, fallback: thread.title }),
+            preview: deriveThreadPreview({ session: params.session, messages: thread.messages, fallback: thread.preview }),
+            updatedAt: params.session?.updatedAt || thread.updatedAt || Date.now(),
+          }];
+        }),
       );
       return existing.id;
     }
@@ -952,7 +615,22 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
       title: params.session ? formatSessionTitle(params.session) : "New chat",
       preview: params.session?.lastMessagePreview || "Fresh conversation",
     });
-    updateThreads((current) => [nextThread, ...current.filter((thread) => thread.id !== nextThread.id)]);
+    updateThreads((current) => [
+      nextThread,
+      ...current.filter(
+        (thread) =>
+          thread.id !== nextThread.id &&
+          !(
+            thread.agentId === params.agentId &&
+            thread.status !== "archived" &&
+            sessionMatchesActiveContext({
+              sessionKey: thread.sessionKey,
+              activeSessionKey: params.sessionKey,
+              agentId: params.agentId,
+            })
+          ),
+      ),
+    ]);
     return nextThread.id;
   }
 
@@ -1002,9 +680,9 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
       handleAgentEvent(event);
     };
 
-    client.onSessionsChanged = () => {
+    client.onSessionsChanged = (payload) => {
       if (activeAgentIdRef.current) {
-        void refreshSessions(activeAgentIdRef.current, client, activeThreadIdRef.current || undefined);
+        void refreshSessions(activeAgentIdRef.current, client, activeThreadIdRef.current || undefined, payload);
       }
     };
 
@@ -1038,6 +716,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
       setActiveAgentId(nextAgentId);
       setMessages([]);
       setActiveRunId("");
+      endStreamAutoFollow();
 
       if (!nextAgentId) {
         setLiveSessions([]);
@@ -1053,11 +732,17 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     }
   }
 
-  async function refreshSessions(agentId: string, client = clientRef.current, preferredThreadId?: string) {
+  async function refreshSessions(
+    agentId: string,
+    client = clientRef.current,
+    preferredThreadId?: string,
+    sessionChange?: GatewaySessionsChangedPayload,
+  ) {
     if (!client || !agentId) {
       setLiveSessions([]);
       setActiveSessionKey("");
       setMessages([]);
+      endStreamAutoFollow();
       return;
     }
 
@@ -1072,28 +757,53 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
       liveSessions: nextSessions,
       preferredSessionKey: desiredThread?.status !== "archived" ? desiredThread?.sessionKey : undefined,
     });
-    const matchedSession = nextSessions.find((session) => session.key === desiredSessionKey);
+    const matchedSession =
+      nextSessions.find((session) =>
+        sessionMatchesActiveContext({
+          sessionKey: session.key,
+          activeSessionKey: desiredSessionKey,
+          agentId,
+        }),
+      ) || null;
+    const resolvedSessionKey = preferCanonicalSessionKey({
+      sessionKey: desiredSessionKey,
+      matchedSessionKey: matchedSession?.key,
+    });
+    const matchedSessionChange =
+      sessionChange &&
+      sessionMatchesActiveContext({
+        sessionKey: sessionChange.sessionKey ?? sessionChange.session?.key,
+        activeSessionKey: resolvedSessionKey,
+        agentId,
+      })
+        ? sessionChange
+        : null;
     const nextThreadId = ensureLiveThread({
       agentId,
-      sessionKey: desiredSessionKey,
-      session: matchedSession,
+      sessionKey: resolvedSessionKey,
+      session: matchedSession || undefined,
       preferredThreadId: desiredThread?.status === "archived" ? undefined : desiredThread?.id,
-      sessionId: matchedSession?.sessionId || desiredThread?.sessionId,
+      sessionId: matchedSession?.sessionId || matchedSessionChange?.sessionId || desiredThread?.sessionId,
     });
 
     setActiveThreadId(nextThreadId);
-    setActiveSessionKey(desiredSessionKey);
+    setActiveSessionKey(resolvedSessionKey);
 
     const selectedThread =
       threadsRef.current.find((thread) => thread.id === nextThreadId) ||
-      createThread({ agentId, sessionKey: desiredSessionKey, status: matchedSession ? "live" : "draft" });
+      createThread({ agentId, sessionKey: resolvedSessionKey, status: matchedSession ? "live" : "draft" });
 
     if (matchedSession) {
-      await loadHistory(desiredSessionKey, nextThreadId, client);
+      await loadHistory(resolvedSessionKey, nextThreadId, client, matchedSessionChange || matchedSession);
       return;
     }
 
-    pendingScrollBehaviorRef.current = "auto";
+    if (matchedSessionChange && isTerminalSessionSnapshot(asSessionLifecycleSnapshot(matchedSessionChange))) {
+      await loadHistory(resolvedSessionKey, nextThreadId, client, matchedSessionChange);
+      return;
+    }
+
+    queueScrollToBottom("auto");
     setMessages(
       selectedThread.messages.map((message) => ({
         ...message,
@@ -1101,14 +811,35 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     );
   }
 
-  async function loadHistory(sessionKey: string, threadId: string, client = clientRef.current) {
+  async function loadHistory(
+    sessionKey: string,
+    threadId: string,
+    client = clientRef.current,
+    sessionSnapshot?: GatewayChatSession | GatewaySessionsChangedPayload | null,
+  ) {
     if (!client || !sessionKey) return;
     setLoadingHistory(true);
     try {
       const payload = await client.loadHistory(sessionKey);
       const nextMessages = toChatMessages(payload.messages);
-      pendingScrollBehaviorRef.current = "auto";
+      const latestMessage = nextMessages[nextMessages.length - 1];
+      const terminalSnapshot = asSessionLifecycleSnapshot(sessionSnapshot);
+      const shouldFinalizeActiveRun =
+        sessionMatchesActiveContext({
+          sessionKey,
+          activeSessionKey: activeSessionKeyRef.current,
+          agentId: activeAgentIdRef.current,
+        }) &&
+        !!activeRunIdRef.current &&
+        (latestMessage?.role === "assistant" || isTerminalSessionSnapshot(terminalSnapshot));
+
+      queueScrollToBottom("auto");
       setMessages(nextMessages);
+      if (shouldFinalizeActiveRun) {
+        setActiveRunId("");
+        setSending(false);
+        endStreamAutoFollow();
+      }
       updateThreads((current) =>
         current.map((thread) =>
           thread.id !== threadId
@@ -1128,7 +859,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
       const message = error instanceof Error ? error.message : String(error);
       const missingSession = /not found|unknown session|key required/i.test(message);
       if (missingSession) {
-        pendingScrollBehaviorRef.current = "auto";
+        queueScrollToBottom("auto");
         setMessages([]);
         updateThreads((current) =>
           current.map((thread) =>
@@ -1152,27 +883,47 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   }
 
   function handleChatEvent(event: GatewayChatEventPayload) {
-    if (!event.sessionKey || event.sessionKey !== activeSessionKeyRef.current) return;
+    if (!sessionMatchesActiveContext({
+      sessionKey: event.sessionKey,
+      activeSessionKey: activeSessionKeyRef.current,
+      agentId: activeAgentIdRef.current,
+    })) {
+      return;
+    }
 
     if (event.errorMessage) {
-      pendingScrollBehaviorRef.current = "smooth";
+      queueScrollToBottom("auto");
       setMessages((current) => [
         ...current,
         { id: `error-${Date.now()}`, role: "system", text: event.errorMessage || "Gateway error.", error: true },
       ]);
       setActiveRunId("");
       setSending(false);
+      endStreamAutoFollow();
       return;
     }
 
     if (event.state === "final" || event.state === "aborted") {
       setMessages((current) =>
-        current.map((message) =>
-          message.runId && message.runId === event.runId ? { ...message, pending: false } : message,
-        ),
+        current.flatMap((message) => {
+          if (!message.runId || message.runId !== event.runId) {
+            return [message];
+          }
+
+          const visibleText = message.role === "assistant"
+            ? sanitizeAssistantTranscriptText(message.rawText || message.text)
+            : message.text;
+
+          if (message.role === "assistant" && !visibleText) {
+            return [];
+          }
+
+          return [{ ...message, text: visibleText, pending: false }];
+        }),
       );
       setActiveRunId("");
       setSending(false);
+      endStreamAutoFollow();
       void refreshSessions(activeAgentIdRef.current, clientRef.current || undefined, activeThreadIdRef.current || undefined);
     }
   }
@@ -1181,20 +932,37 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     if (!event.runId || event.stream !== "assistant") return;
     const delta = typeof event.data.text === "string" ? event.data.text : "";
     if (!delta) return;
+    beginStreamAutoFollow(event.runId, "auto");
 
     setMessages((current) => {
       const existingIndex = current.findIndex((message) => message.runId === event.runId);
       if (existingIndex >= 0) {
-        return current.map((message, index) =>
-          index === existingIndex
-            ? { ...message, text: mergeAssistantStreamText(message.text, delta), pending: true }
-            : message,
-        );
+        return current.map((message, index) => {
+          if (index !== existingIndex) {
+            return message;
+          }
+
+          const rawText = mergeAssistantStreamText(message.rawText || message.text, delta);
+          return {
+            ...message,
+            rawText,
+            text: sanitizeAssistantTranscriptText(rawText),
+            pending: true,
+          };
+        });
       }
-      pendingScrollBehaviorRef.current = "smooth";
+
+      const rawText = delta;
       return [
         ...current,
-        { id: `assistant-${event.runId}`, role: "assistant", text: delta, runId: event.runId, pending: true },
+        {
+          id: `assistant-${event.runId}`,
+          role: "assistant",
+          text: sanitizeAssistantTranscriptText(rawText),
+          rawText,
+          runId: event.runId,
+          pending: true,
+        },
       ];
     });
   }
@@ -1202,12 +970,28 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   async function handleAgentSwitch(agentId: string) {
     if (!agentId || agentId === activeAgentId) return;
     setActiveAgentId(agentId);
+    onAgentSwitch?.(agentId);
     setLiveSessions([]);
     setActiveSessionKey("");
     setActiveThreadId("");
     setMessages([]);
     setActiveRunId("");
+    endStreamAutoFollow();
     await refreshSessions(agentId);
+  }
+
+  async function handleAgentRemove(agentId: string) {
+    if (!agentId || agentId === "main") return;
+    setActiveAgentId("main");
+    onAgentSwitch?.("main");
+    setLiveSessions([]);
+    setActiveSessionKey("");
+    setActiveThreadId("");
+    setMessages([]);
+    setActiveRunId("");
+    endStreamAutoFollow();
+    await onRemoveAgent?.(agentId);
+    await refreshSessions("main");
   }
 
   async function handleThreadSwitch(threadId: string) {
@@ -1218,7 +1002,8 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
     setShellError("");
 
     if (thread.status === "archived") {
-      pendingScrollBehaviorRef.current = "auto";
+      endStreamAutoFollow();
+      queueScrollToBottom("auto");
       setMessages(
         thread.messages.map((message) => ({
           ...message,
@@ -1259,19 +1044,29 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
       }),
     );
 
+    activeThreadIdRef.current = freshThread.id;
     setActiveThreadId(freshThread.id);
-    pendingScrollBehaviorRef.current = "auto";
+    prepareNextRunAutoFollow("auto");
     setMessages([]);
     setShellError("");
     setSending(true);
 
     try {
-      const result = await clientRef.current.sendChat(activeSessionKey, "/new");
+      const result = await clientRef.current.sendChat(activeSessionKey, "/new", "adaptive");
       setActiveRunId(result.runId);
-      setMessages([{ id: `assistant-${result.runId}`, role: "assistant", text: "", runId: result.runId, pending: true }]);
+      beginStreamAutoFollow(result.runId, "auto");
+      setMessages([{
+        id: `assistant-${result.runId}`,
+        role: "assistant",
+        text: "",
+        rawText: "",
+        runId: result.runId,
+        pending: true,
+      }]);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setSending(false);
+      endStreamAutoFollow();
       setShellError(`Failed to start a fresh chat: ${message}`);
     }
   }
@@ -1294,23 +1089,31 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
 
     setComposerValue("");
     setSending(true);
-    pendingScrollBehaviorRef.current = "smooth";
+    prepareNextRunAutoFollow("auto");
     setMessages((current) => [
       ...current,
       { id: `user-${Date.now()}`, role: "user", text, timestamp: Date.now() },
     ]);
 
     try {
-      const result = await clientRef.current.sendChat(activeSessionKey, text);
+      const result = await clientRef.current.sendChat(activeSessionKey, text, "adaptive");
       setActiveRunId(result.runId);
-      pendingScrollBehaviorRef.current = "smooth";
+      beginStreamAutoFollow(result.runId, "auto");
       setMessages((current) => [
         ...current,
-        { id: `assistant-${result.runId}`, role: "assistant", text: "", runId: result.runId, pending: true },
+        {
+          id: `assistant-${result.runId}`,
+          role: "assistant",
+          text: "",
+          rawText: "",
+          runId: result.runId,
+          pending: true,
+        },
       ]);
     } catch (error) {
       setSending(false);
-      pendingScrollBehaviorRef.current = "smooth";
+      endStreamAutoFollow();
+      queueScrollToBottom("auto");
       setMessages((current) => [
         ...current,
         { id: `error-${Date.now()}`, role: "system", text: String(error), error: true },
@@ -1324,6 +1127,7 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
 
     setSending(false);
     setActiveRunId("");
+    endStreamAutoFollow();
     setMessages((current) =>
       current.map((message) => (message.runId === runId ? { ...message, pending: false } : message)),
     );
@@ -1337,14 +1141,22 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
 
   async function handleResetChat() {
     if (!clientRef.current || !activeSessionKey || connectionState !== "connected" || activeThreadIsArchived) return;
-    pendingScrollBehaviorRef.current = "auto";
+    prepareNextRunAutoFollow("auto");
     setMessages([]);
     setSending(true);
     setShellError("");
     try {
-      const result = await clientRef.current.sendChat(activeSessionKey, "/reset");
+      const result = await clientRef.current.sendChat(activeSessionKey, "/reset", "adaptive");
       setActiveRunId(result.runId);
-      setMessages([{ id: `assistant-${result.runId}`, role: "assistant", text: "", runId: result.runId, pending: true }]);
+      beginStreamAutoFollow(result.runId, "auto");
+      setMessages([{
+        id: `assistant-${result.runId}`,
+        role: "assistant",
+        text: "",
+        rawText: "",
+        runId: result.runId,
+        pending: true,
+      }]);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setSending(false);
@@ -1360,10 +1172,12 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   const activeAgentName = agents.find((agent) => agent.id === activeAgentId)?.name || activeAgentId;
   const showEmptyAgentState = gatewayConnected && agents.length === 0;
   const showConnectingState =
-    connectionState === "connecting" ||
-    connectionState === "challenged" ||
-    connectionState === "authenticating" ||
-    connectionState === "reconnecting";
+    !isConfigUpdating && (
+      connectionState === "connecting" ||
+      connectionState === "challenged" ||
+      connectionState === "authenticating" ||
+      connectionState === "reconnecting"
+    );
 
   const agentThreads = threads
     .filter((thread) => thread.agentId === activeAgentId)
@@ -1371,337 +1185,182 @@ function ChatShell({ bootstrap, bootstrapping, bootstrapError, onRetryConnection
   const liveThreads = agentThreads.filter((thread) => thread.status !== "archived");
   const archivedThreads = agentThreads.filter((thread) => thread.status === "archived");
 
+  const panelContextValue = {
+    panelOpen,
+    panelView,
+    setPanelOpen,
+    setPanelView,
+    openPanel,
+    closePanel,
+  };
+
+  const activeDisplayAgent = displayAgents.find((a) => a.id === activeAgentId) || null;
+
+  // Resolve per-agent config: when a non-main agent is selected, use its config from propAgents
+  const activeAgentConfig = activeAgentId && activeAgentId !== "main" && propAgents
+    ? propAgents.find(a => a.id === activeAgentId) ?? null
+    : null;
+
+  // Per-agent overrides (fall back to top-level props when no agent-specific config exists)
+  const resolvedModelRef = activeAgentConfig?.model ?? agentModelRef;
+  const resolvedFallbackModels = activeAgentConfig?.fallbackModels ?? agentFallbackModels;
+  const resolvedSkills = activeAgentConfig?.skills ?? agentSkills;
+  const resolvedIdentityMd = activeAgentConfig?.identityMd ?? identityMd;
+  const resolvedSoulMd = activeAgentConfig?.soulMd ?? soulMd;
+  const resolvedToolsMd = activeAgentConfig?.toolsMd ?? toolsMd;
+  const resolvedAgentsMd = activeAgentConfig?.agentsMd ?? agentsMd;
+  const resolvedHeartbeatMd = activeAgentConfig?.heartbeatMd ?? heartbeatMd;
+  const resolvedMemoryMd = activeAgentConfig?.memoryMd ?? memoryMd;
+  const resolvedToolPolicy = activeAgentConfig?.toolPolicy ?? toolPolicy;
+  const resolvedSandboxMode = activeAgentConfig?.sandboxMode ?? sandboxMode;
+  const resolvedHeartbeatMode = activeAgentConfig?.heartbeatMode ?? heartbeatMode;
+  const resolvedIdleTimeoutMs = activeAgentConfig?.idleTimeoutMs ?? idleTimeoutMs;
+
+  if (panelOpen) {
+    return (
+      <ChatPanelContext.Provider value={panelContextValue}>
+        <div className="chat-shell-fullpanel" data-theme={resolvedTheme}>
+          <RightPanel
+            activeAgentName={activeDisplayAgent?.name || activeAgentId}
+            activeAgentEmoji={activeDisplayAgent && "emoji" in activeDisplayAgent ? String(activeDisplayAgent.emoji || "") || undefined : undefined}
+            modelRef={resolvedModelRef}
+            fallbackModels={resolvedFallbackModels}
+            skills={resolvedSkills}
+            onModelChange={onModelChange}
+            onFallbacksChange={onFallbacksChange}
+            providerAuths={providerAuths}
+            onProviderAuthChange={onProviderAuthChange}
+            onStartOAuth={onStartOAuth}
+            onDetectLocalModels={onDetectLocalModels}
+            activeSkills={resolvedSkills}
+            serviceKeys={serviceKeys}
+            onSaveSkillsConfig={onSaveSkillsConfig}
+            skillsSaving={skillsSaving}
+            onSetupIntegration={onSetupIntegration}
+            identityMd={resolvedIdentityMd}
+            soulMd={resolvedSoulMd}
+            toolsMd={resolvedToolsMd}
+            agentsMd={resolvedAgentsMd}
+            heartbeatMd={resolvedHeartbeatMd}
+            memoryMd={resolvedMemoryMd}
+            onIdentitySave={onIdentitySave}
+            identitySaving={identitySaving}
+            targetEnvironment={targetEnvironment}
+            remoteSummary={remoteSummary}
+            gatewayPort={gatewayPort}
+            gatewayBind={gatewayBind}
+            gatewayAuthMode={gatewayAuthMode}
+            heartbeatMode={resolvedHeartbeatMode}
+            sandboxMode={resolvedSandboxMode}
+            toolPolicy={resolvedToolPolicy}
+            toolsSaving={toolsSaving}
+            idleTimeoutMs={resolvedIdleTimeoutMs}
+            onSaveToolPolicy={onSaveToolPolicy}
+            onSaveAdvancedSettings={onSaveAdvancedSettings}
+            settingsBusy={settingsBusy}
+            maintenanceStatus={maintenanceStatus}
+            onRepair={onRepair}
+            onAudit={onAudit}
+            onUpgrade={onUpgrade}
+            onReconfigure={onReconfigure}
+            onUninstall={onUninstall}
+          />
+        </div>
+      </ChatPanelContext.Provider>
+    );
+  }
+
   return (
-    <div className="chat-shell" data-theme={resolvedTheme}>
-      <aside className="chat-sidebar">
-        <div className="chat-sidebar-top">
-          {environments && environments.length >= 1 && onSwitchEnvironment && (
-            <div className="chat-env-switcher">
-              <p className="chat-sidebar-kicker">Environment</p>
-              <div className="chat-env-dropdown" ref={envDropdownRef} data-testid="chat-env-dropdown">
-                <button
-                  type="button"
-                  className="chat-env-trigger"
-                  onClick={() => setEnvDropdownOpen(!envDropdownOpen)}
-                >
-                  <span>{environments.find((e) => e.id === activeEnvironmentId)?.name || "Select..."}</span>
-                  <svg className={`dropdown-chevron ${envDropdownOpen ? "rotated" : ""}`} width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </button>
-                {envDropdownOpen && (
-                  <div className="chat-env-panel">
-                    {[...environments]
-                      .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
-                      .map((env) => (
-                        <button
-                          key={env.id}
-                          type="button"
-                          className={`chat-env-option ${env.id === activeEnvironmentId ? "active" : ""}`}
-                          onClick={() => {
-                            if (env.id !== activeEnvironmentId) {
-                              onSwitchEnvironment(env.id);
-                            }
-                            setEnvDropdownOpen(false);
-                          }}
-                        >
-                          <span>{env.name}</span>
-                          {env.id === activeEnvironmentId && (
-                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                              <path d="M3 7L6 10L11 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                          )}
-                        </button>
-                      ))}
-                    {onAddEnvironment && (
-                      <>
-                        <div className="chat-env-divider" />
-                        <button
-                          type="button"
-                          className="chat-env-option add"
-                          onClick={() => {
-                            setEnvDropdownOpen(false);
-                            onAddEnvironment();
-                          }}
-                        >
-                          + Add remote environment
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
+    <ChatPanelContext.Provider value={panelContextValue}>
+      <div className="chat-shell" data-theme={resolvedTheme}>
+        <ChatSidebar
+          environments={environments}
+          activeEnvironmentId={activeEnvironmentId}
+          onSwitchEnvironment={onSwitchEnvironment}
+          onAddEnvironment={onAddEnvironment}
+          canCreateChat={canCreateChat}
+          onNewChat={() => void handleNewChat()}
+          liveThreads={liveThreads}
+          archivedThreads={archivedThreads}
+          activeThreadId={activeThreadId}
+          onThreadSwitch={(threadId) => void handleThreadSwitch(threadId)}
+          themePreference={themePreference}
+          onThemeChange={setThemePreference}
+          onOpenConfigure={() => onOpenConfigure(captureTranscriptScrollSnapshot())}
+          onOpenPanel={(view) => openPanel(view as PanelView)}
+          connectionLabel={connectionLabel}
+        />
+
+        <section className="chat-main-panel">
+          <ChatHeader
+            agents={displayAgents}
+            activeAgentId={activeAgentId}
+            activeAgentName={activeAgentName}
+            activeSessionKey={activeSessionKey}
+            activeThreadIsArchived={activeThreadIsArchived}
+            gatewayConnected={gatewayConnected}
+            chatReady={chatReady}
+            showEmptyAgentState={showEmptyAgentState}
+            onAgentSwitch={(agentId) => void handleAgentSwitch(agentId)}
+            onAddAgent={onAddAgent}
+            onRemoveAgent={(agentId) => void handleAgentRemove(agentId)}
+            providerAuths={providerAuths}
+            onProviderAuthChange={onProviderAuthChange}
+            onStartOAuth={onStartOAuth}
+            onDetectLocalModels={onDetectLocalModels}
+            onResetChat={() => void handleResetChat()}
+            onRetryConnection={onRetryConnection}
+            modelRef={resolvedModelRef}
+            fallbackCount={resolvedFallbackModels?.length ?? agentFallbackCount}
+            onOpenModelPanel={() => openPanel("model")}
+          />
+
+          {!bootstrap && (
+            <div className="chat-bootstrap-status">
+              <p className="chat-bootstrap-title">Starting the gateway workspace</p>
+              <p className="chat-bootstrap-detail">{bootstrapping ? "Preparing the OpenClaw gateway connection..." : bootstrapError || "No gateway connection available."}</p>
+              {!bootstrapping && <button onClick={onRetryConnection}>Retry</button>}
             </div>
           )}
-          <div className="chat-sidebar-brand">
-            <p className="chat-sidebar-kicker">Clawnetes</p>
-            <h1>Agent Workspace</h1>
-            <span className="chat-sidebar-subtle">OpenClaw desktop shell</span>
-          </div>
 
-          <button
-            className="chat-primary-button"
-            data-testid="chat-new-session"
-            disabled={!canCreateChat}
-            onClick={() => void handleNewChat()}
-          >
-            <span className="chat-button-icon"><ChatIcon name="plus" /></span>
-            <span className="chat-button-label">New chat</span>
-          </button>
-        </div>
+          {bootstrap && (
+            <>
+              <ChatTranscript
+                transcriptRef={transcriptRef}
+                transcriptEndRef={transcriptEndRef}
+                showConnectingState={showConnectingState}
+                isConfigUpdating={isConfigUpdating && connectionState !== "connected"}
+                connectionLabel={connectionLabel}
+                shellError={shellError}
+                showEmptyAgentState={showEmptyAgentState}
+                loadingHistory={loadingHistory}
+                messages={messages}
+                activeAgentName={activeAgentName}
+                activeThreadIsArchived={activeThreadIsArchived}
+                activeThreadTitle={activeThread?.title}
+                activeSessionKey={activeSessionKey}
+                onSetComposerValue={setComposerValue}
+              />
 
-        <div className="chat-sidebar-section">
-          <div className="chat-sidebar-section-header">
-            <span>Live</span>
-          </div>
-          <div className="chat-session-list">
-            {liveThreads.length === 0 ? (
-              <div className="chat-list-empty">No active chats yet.</div>
-            ) : (
-              liveThreads.map((thread) => (
-                <button
-                  key={thread.id}
-                  className={`chat-list-item ${activeThreadId === thread.id ? "active" : ""}`}
-                  onClick={() => void handleThreadSwitch(thread.id)}
-                  data-testid={`chat-thread-${thread.id}`}
-                  type="button"
-                >
-                  <span className="chat-list-item-icon"><ChatIcon name="chat" /></span>
-                  <strong title={thread.title}>{thread.title}</strong>
-                </button>
-              ))
-            )}
-          </div>
-        </div>
+              <ChatComposer
+                composerValue={composerValue}
+                onComposerChange={setComposerValue}
+                onSend={() => void handleSend()}
+                onAbort={() => void handleAbort()}
+                canSend={canSend}
+                chatReady={chatReady}
+                activeAgentId={activeAgentId}
+                activeAgentName={activeAgentName}
+                activeThreadIsArchived={activeThreadIsArchived}
+                sending={sending}
+                activeRunId={activeRunId}
+              />
+            </>
+          )}
+        </section>
 
-        <div className="chat-sidebar-section">
-          <div className="chat-sidebar-section-header">
-            <span>Recent</span>
-          </div>
-          <div className="chat-session-list">
-            {archivedThreads.length === 0 ? (
-              <div className="chat-list-empty">Past chats appear here after `/new`.</div>
-            ) : (
-              archivedThreads.map((thread) => (
-                <button
-                  key={thread.id}
-                  className={`chat-list-item archived ${activeThreadId === thread.id ? "active" : ""}`}
-                  onClick={() => void handleThreadSwitch(thread.id)}
-                  type="button"
-                >
-                  <span className="chat-list-item-icon"><ChatIcon name="note" /></span>
-                  <strong title={thread.title}>{thread.title}</strong>
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div className="chat-sidebar-actions">
-          <div className="chat-theme-toggle" role="group" aria-label="Theme">
-            {(["light", "dark", "system"] as ChatThemePreference[]).map((theme) => (
-              <button
-                key={theme}
-                className={themePreference === theme ? "active" : ""}
-                onClick={() => setThemePreference(theme)}
-                type="button"
-              >
-                <span className="chat-button-icon">
-                  <ChatIcon name={theme === "light" ? "sun" : theme === "dark" ? "moon" : "system"} />
-                </span>
-                <span className="chat-button-label">{theme}</span>
-              </button>
-            ))}
-          </div>
-          <ChatActionButton
-            className="secondary"
-            data-testid="chat-configure"
-            icon={<ChatIcon name="sliders" />}
-            label="Configure"
-            onClick={onOpenConfigure}
-            type="button"
-          />
-          <div className="chat-sidebar-status">{connectionLabel}</div>
-        </div>
-      </aside>
-
-      <section className="chat-main-panel">
-        <header className="chat-main-header">
-          <div className="chat-header-agent">
-            <p className="chat-sidebar-kicker">Active Agent</p>
-            {agents.length > 1 ? (
-              <select
-                className="chat-agent-dropdown"
-                data-testid="chat-active-agent"
-                value={activeAgentId}
-                onChange={(e) => void handleAgentSwitch(e.target.value)}
-                disabled={!gatewayConnected}
-              >
-                {agents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>{agent.name || agent.id}</option>
-                ))}
-              </select>
-            ) : (
-              <h2 data-testid="chat-active-agent">
-                {showEmptyAgentState ? "No agents available" : activeAgentName || "Connecting to gateway..."}
-              </h2>
-            )}
-            <span className="chat-header-thread-meta">
-              {activeThreadIsArchived ? "Archived transcript" : `Session ${activeSessionKey || "main"}`}
-            </span>
-          </div>
-          <div className="chat-main-actions">
-            <ChatActionButton
-              className="secondary"
-              data-testid="chat-reset"
-              disabled={!chatReady || !activeSessionKey || activeThreadIsArchived}
-              icon={<ChatIcon name="reset" />}
-              label="Reset"
-              onClick={() => void handleResetChat()}
-              type="button"
-            />
-            <ChatActionButton
-              className="secondary"
-              data-testid="chat-reconnect"
-              icon={<ChatIcon name="reconnect" />}
-              label="Reconnect"
-              onClick={onRetryConnection}
-              type="button"
-            />
-          </div>
-        </header>
-
-        {!bootstrap && (
-          <div className="chat-bootstrap-status">
-            <p className="chat-bootstrap-title">Starting the gateway workspace</p>
-            <p className="chat-bootstrap-detail">{bootstrapping ? "Preparing the OpenClaw gateway connection..." : bootstrapError || "No gateway connection available."}</p>
-            {!bootstrapping && <button onClick={onRetryConnection}>Retry</button>}
-          </div>
-        )}
-
-        {bootstrap && (
-          <>
-            <div className="chat-transcript">
-              <div ref={transcriptRef} className="chat-transcript-scroll">
-              {showConnectingState ? (
-                <div className="chat-state-card" data-testid="chat-connecting-state">
-                  <h3>Connecting to OpenClaw</h3>
-                  <p>{connectionLabel}</p>
-                </div>
-              ) : shellError ? (
-                <div className="chat-state-card error" data-testid="chat-error-state">
-                  <h3>Gateway connection failed</h3>
-                  <p>{shellError}</p>
-                </div>
-              ) : showEmptyAgentState ? (
-                <div className="chat-state-card" data-testid="chat-empty-agent-state">
-                  <h3>No agents available</h3>
-                  <p>The OpenClaw gateway is connected, but it did not return any configured agents.</p>
-                </div>
-              ) : loadingHistory ? (
-                <div className="chat-state-card">
-                  <h3>Loading session</h3>
-                  <p>Fetching the latest transcript from OpenClaw.</p>
-                </div>
-              ) : messages.length === 0 ? (
-                <div className="chat-empty-stage">
-                  <div className="chat-empty-stage-badge">Workspace</div>
-                  <h3>{activeThreadIsArchived ? activeThread?.title || "Archived chat" : "Let’s build"}</h3>
-                  <p>
-                    {activeThreadIsArchived
-                      ? "This transcript is archived locally. Switch to a live chat or start a new one to keep sending."
-                      : `${activeAgentName || "Your agent"} is ready on ${activeSessionKey || "main"}.`}
-                  </p>
-                  {!activeThreadIsArchived && (
-                    <div className="chat-suggestion-grid">
-                      <ChatActionButton
-                        icon={<ChatIcon name="spark" />}
-                        label="Build a release checklist"
-                        onClick={() => setComposerValue("Build a release checklist for this repo.")}
-                        type="button"
-                      />
-                      <ChatActionButton
-                        icon={<ChatIcon name="note" />}
-                        label="Summarize this workspace"
-                        onClick={() => setComposerValue("Summarize the current OpenClaw chat architecture.")}
-                        type="button"
-                      />
-                      <ChatActionButton
-                        icon={<ChatIcon name="plan" />}
-                        label="Create a plan"
-                        onClick={() => setComposerValue("Draft an implementation plan for the next bugfix.")}
-                        type="button"
-                      />
-                    </div>
-                  )}
-                </div>
-              ) : (
-                messages.map((message) => (
-                  <article
-                    key={message.id}
-                    className={`chat-bubble ${message.role} ${message.error ? "error" : ""}`}
-                  >
-                    <span className="chat-bubble-role">
-                      {message.role === "user" ? "You" : message.role === "assistant" ? activeAgentName : "System"}
-                    </span>
-                    <ChatMessageBody message={message} />
-                  </article>
-                ))
-              )}
-              </div>
-            </div>
-
-            <div className="chat-composer">
-              <div className="chat-composer-input-wrap">
-                <textarea
-                  value={composerValue}
-                  onChange={(event) => setComposerValue(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      void handleSend();
-                    }
-                  }}
-                  placeholder={
-                    activeThreadIsArchived
-                      ? "Archived chats are read-only"
-                      : `Message ${activeAgentName || "agent"} (Enter to send)`
-                  }
-                  rows={1}
-                  data-testid="chat-composer"
-                  disabled={!chatReady || !activeAgentId || activeThreadIsArchived}
-                  autoComplete="off"
-                />
-                {sending ? (
-                  <button
-                    className="chat-composer-icon-btn stop"
-                    onClick={() => void handleAbort()}
-                    disabled={!activeRunId || !chatReady}
-                    aria-label="Stop"
-                    data-testid="chat-stop"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="1.5" /></svg>
-                  </button>
-                ) : (
-                  <button
-                    className="chat-composer-icon-btn send"
-                    data-testid="chat-send"
-                    disabled={!canSend}
-                    onClick={() => void handleSend()}
-                    aria-label="Send"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="12" x2="8" y2="4" /><polyline points="4,7 8,3 12,7" /></svg>
-                  </button>
-                )}
-              </div>
-              <span className="chat-composer-status">
-                {sending ? "Agent is thinking..." : activeThreadIsArchived ? "Read-only archived transcript" : "Enter sends, Shift+Enter adds a new line"}
-              </span>
-            </div>
-          </>
-        )}
-      </section>
-    </div>
+      </div>
+    </ChatPanelContext.Provider>
   );
 }
 

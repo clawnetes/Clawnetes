@@ -107,6 +107,18 @@ describe("Dropdown", () => {
     expect(screen.getByText("No results found")).toBeInTheDocument();
   });
 
+  it("disables browser text assistance on the searchable input", async () => {
+    render(
+      <Dropdown options={basicOptions} value="" onChange={() => {}} searchable />
+    );
+    await userEvent.click(screen.getByRole("button"));
+    const searchInput = screen.getByPlaceholderText("Search...");
+    expect(searchInput).toHaveAttribute("autocomplete", "off");
+    expect(searchInput).toHaveAttribute("autocapitalize", "none");
+    expect(searchInput).toHaveAttribute("autocorrect", "off");
+    expect(searchInput).toHaveAttribute("spellcheck", "false");
+  });
+
   it("shows checkmark on selected option", async () => {
     const { container } = render(
       <Dropdown options={basicOptions} value="b" onChange={() => {}} />
