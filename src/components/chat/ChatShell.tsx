@@ -46,6 +46,11 @@ import RightPanel from "../panel/RightPanel";
 
 export type { StoredEnvironment };
 
+type ChatMessageTailEntry = {
+  role: "user" | "assistant";
+  text: string;
+};
+
 interface ChatShellProps {
   bootstrap: GatewayChatBootstrap | null;
   bootstrapping: boolean;
@@ -56,6 +61,7 @@ interface ChatShellProps {
   activeEnvironmentId?: string | null;
   onSwitchEnvironment?: (envId: string) => void;
   onAddEnvironment?: () => void;
+  onRemoveEnvironment?: (envId: string) => void;
   onAgentSwitch?: (agentId: string) => void;
   agents?: AgentConfigData[];
   activeAgentId?: string;
@@ -160,6 +166,95 @@ function mergeAssistantStreamText(current: string, incoming: string) {
   return `${current}${incoming}`;
 }
 
+function buildRecentVisibleTail(messages: ChatMessage[]): ChatMessageTailEntry[] {
+  const visible = toStoredMessages(messages)
+    .filter((message) => (message.role === "user" || message.role === "assistant") && message.text.trim());
+
+  if (visible.length === 0) {
+    return [];
+  }
+
+  const last = visible[visible.length - 1];
+  if (
+    last.role === "assistant" &&
+    visible.length >= 2 &&
+    visible[visible.length - 2]?.role === "user"
+  ) {
+    return visible.slice(-2).map((message) => ({
+      role: message.role as "user" | "assistant",
+      text: message.text.trim(),
+    }));
+  }
+
+  return [{
+    role: last.role as "user" | "assistant",
+    text: last.text.trim(),
+  }];
+}
+
+function historyContainsRecentTail(messages: ChatMessage[], tail: ChatMessageTailEntry[]) {
+  if (tail.length === 0) {
+    return true;
+  }
+
+  const visible = messages
+    .filter((message) => (message.role === "user" || message.role === "assistant") && message.text.trim())
+    .map((message) => ({
+      role: message.role as "user" | "assistant",
+      text: message.text.trim(),
+    }));
+
+  if (visible.length < tail.length) {
+    return false;
+  }
+
+  const recent = visible.slice(-tail.length);
+  return tail.every((entry, index) =>
+    recent[index]?.role === entry.role && recent[index]?.text === entry.text,
+  );
+}
+
+function finalizeRunMessages(messages: ChatMessage[], runId?: string | null) {
+  if (!runId) {
+    return messages;
+  }
+
+  return messages.flatMap((message) => {
+    if (!message.runId || message.runId !== runId) {
+      return [message];
+    }
+
+    const visibleText = message.role === "assistant"
+      ? sanitizeAssistantTranscriptText(message.rawText || message.text)
+      : message.text;
+
+    if (message.role === "assistant" && !visibleText) {
+      return [];
+    }
+
+    return [{ ...message, text: visibleText, pending: false }];
+  });
+}
+
+function ensurePendingAssistantMessage(messages: ChatMessage[], runId: string) {
+  const existingIndex = messages.findIndex((message) => message.runId === runId);
+  if (existingIndex >= 0) {
+    return messages;
+  }
+
+  return [
+    ...messages,
+    {
+      id: `assistant-${runId}`,
+      role: "assistant",
+      text: "",
+      rawText: "",
+      runId,
+      pending: true,
+    },
+  ];
+}
+
 function asSessionLifecycleSnapshot(
   payload?: GatewayChatSession | GatewaySessionsChangedPayload | null,
 ): GatewayChatSession | GatewaySessionsChangedPayload | null {
@@ -186,7 +281,7 @@ function sessionMatchesActiveContext(params: {
 
 function ChatShell({
   bootstrap, bootstrapping, bootstrapError, onRetryConnection, onOpenConfigure,
-  environments, activeEnvironmentId, onSwitchEnvironment, onAddEnvironment, onAgentSwitch,
+  environments, activeEnvironmentId, onSwitchEnvironment, onAddEnvironment, onRemoveEnvironment, onAgentSwitch,
   agents: propAgents,
   activeAgentId: chatActiveAgentId,
   agentModelRef, agentFallbackCount, agentFallbackModels, agentSkills, serviceKeys,
@@ -214,6 +309,14 @@ function ChatShell({
   const userPausedStreamFollowRef = useRef(false);
   const internalReturnScrollSnapshotRef = useRef<ChatTranscriptScrollSnapshot | null>(null);
   const consumedExternalReturnScrollSnapshotRef = useRef<ChatTranscriptScrollSnapshot | null>(null);
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const historyReconcileRef = useRef<{
+    sessionKey: string;
+    threadId: string;
+    tail: ChatMessageTailEntry[];
+    retries: number;
+  } | null>(null);
+  const historyReconcileTimerRef = useRef<number | null>(null);
 
   const [connectionLabel, setConnectionLabel] = useState("Connecting to gateway...");
   const [connectionState, setConnectionState] = useState<GatewayConnectState["status"]>("connecting");
@@ -457,8 +560,36 @@ function ChatShell({
   }, [activeRunId]);
 
   useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
     threadsRef.current = threads;
   }, [threads]);
+
+  function clearHistoryReconcile() {
+    historyReconcileRef.current = null;
+    if (historyReconcileTimerRef.current !== null) {
+      window.clearTimeout(historyReconcileTimerRef.current);
+      historyReconcileTimerRef.current = null;
+    }
+  }
+
+  function scheduleHistoryReconcileRetry(
+    sessionKey: string,
+    threadId: string,
+    client: GatewayChatClient,
+    sessionSnapshot?: GatewayChatSession | GatewaySessionsChangedPayload | null,
+  ) {
+    if (historyReconcileTimerRef.current !== null) {
+      window.clearTimeout(historyReconcileTimerRef.current);
+    }
+
+    historyReconcileTimerRef.current = window.setTimeout(() => {
+      historyReconcileTimerRef.current = null;
+      void loadHistory(sessionKey, threadId, client, sessionSnapshot);
+    }, 350);
+  }
 
   useEffect(() => {
     if (!scopeKey) {
@@ -511,6 +642,12 @@ function ChatShell({
     if (typeof document === "undefined") return;
     document.documentElement.dataset.theme = resolvedTheme;
   }, [resolvedTheme]);
+
+  useEffect(() => () => {
+    if (historyReconcileTimerRef.current !== null) {
+      window.clearTimeout(historyReconcileTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     saveThemePreference(themePreference);
@@ -708,6 +845,7 @@ function ChatShell({
   async function bootstrapShell(client: GatewayChatClient) {
     try {
       setShellError("");
+      clearHistoryReconcile();
       const agentPayload = await client.listAgents();
       const nextAgents = agentPayload.agents || [];
       setAgents(nextAgents);
@@ -822,6 +960,33 @@ function ChatShell({
     try {
       const payload = await client.loadHistory(sessionKey);
       const nextMessages = toChatMessages(payload.messages);
+      const pendingReconcile = historyReconcileRef.current;
+      const shouldPreserveLocalMessages =
+        !!pendingReconcile &&
+        pendingReconcile.sessionKey === sessionKey &&
+        pendingReconcile.threadId === threadId &&
+        !historyContainsRecentTail(nextMessages, pendingReconcile.tail);
+
+      if (shouldPreserveLocalMessages) {
+        queueScrollToBottom("auto");
+        setActiveRunId("");
+        setSending(false);
+        endStreamAutoFollow();
+
+        if (pendingReconcile.retries < 1) {
+          historyReconcileRef.current = {
+            ...pendingReconcile,
+            retries: pendingReconcile.retries + 1,
+          };
+          scheduleHistoryReconcileRetry(sessionKey, threadId, client, sessionSnapshot);
+        }
+        return;
+      }
+
+      if (pendingReconcile?.sessionKey === sessionKey && pendingReconcile.threadId === threadId) {
+        clearHistoryReconcile();
+      }
+
       const latestMessage = nextMessages[nextMessages.length - 1];
       const terminalSnapshot = asSessionLifecycleSnapshot(sessionSnapshot);
       const shouldFinalizeActiveRun =
@@ -859,6 +1024,7 @@ function ChatShell({
       const message = error instanceof Error ? error.message : String(error);
       const missingSession = /not found|unknown session|key required/i.test(message);
       if (missingSession) {
+        clearHistoryReconcile();
         queueScrollToBottom("auto");
         setMessages([]);
         updateThreads((current) =>
@@ -904,27 +1070,24 @@ function ChatShell({
     }
 
     if (event.state === "final" || event.state === "aborted") {
-      setMessages((current) =>
-        current.flatMap((message) => {
-          if (!message.runId || message.runId !== event.runId) {
-            return [message];
-          }
-
-          const visibleText = message.role === "assistant"
-            ? sanitizeAssistantTranscriptText(message.rawText || message.text)
-            : message.text;
-
-          if (message.role === "assistant" && !visibleText) {
-            return [];
-          }
-
-          return [{ ...message, text: visibleText, pending: false }];
-        }),
-      );
+      const sessionKey = activeSessionKeyRef.current;
+      const threadId = activeThreadIdRef.current;
+      setMessages((current) => {
+        const finalizedMessages = finalizeRunMessages(current, event.runId);
+        historyReconcileRef.current = sessionKey && threadId
+          ? {
+              sessionKey,
+              threadId,
+              tail: buildRecentVisibleTail(finalizedMessages),
+              retries: 0,
+            }
+          : null;
+        return finalizedMessages;
+      });
       setActiveRunId("");
       setSending(false);
       endStreamAutoFollow();
-      void refreshSessions(activeAgentIdRef.current, clientRef.current || undefined, activeThreadIdRef.current || undefined);
+      void refreshSessions(activeAgentIdRef.current, clientRef.current || undefined, threadId || undefined);
     }
   }
 
@@ -969,6 +1132,7 @@ function ChatShell({
 
   async function handleAgentSwitch(agentId: string) {
     if (!agentId || agentId === activeAgentId) return;
+    clearHistoryReconcile();
     setActiveAgentId(agentId);
     onAgentSwitch?.(agentId);
     setLiveSessions([]);
@@ -982,6 +1146,7 @@ function ChatShell({
 
   async function handleAgentRemove(agentId: string) {
     if (!agentId || agentId === "main") return;
+    clearHistoryReconcile();
     setActiveAgentId("main");
     onAgentSwitch?.("main");
     setLiveSessions([]);
@@ -997,6 +1162,7 @@ function ChatShell({
   async function handleThreadSwitch(threadId: string) {
     const thread = threads.find((candidate) => candidate.id === threadId);
     if (!thread) return;
+    clearHistoryReconcile();
     setActiveThreadId(threadId);
     setActiveSessionKey(thread.sessionKey);
     setShellError("");
@@ -1017,6 +1183,7 @@ function ChatShell({
 
   async function handleNewChat() {
     if (!clientRef.current || !activeAgentId || !activeSessionKey || connectionState !== "connected") return;
+    clearHistoryReconcile();
 
     const archivedMessages = toStoredMessages(messages);
     const freshThread = createThread({
@@ -1055,14 +1222,7 @@ function ChatShell({
       const result = await clientRef.current.sendChat(activeSessionKey, "/new", "adaptive");
       setActiveRunId(result.runId);
       beginStreamAutoFollow(result.runId, "auto");
-      setMessages([{
-        id: `assistant-${result.runId}`,
-        role: "assistant",
-        text: "",
-        rawText: "",
-        runId: result.runId,
-        pending: true,
-      }]);
+      setMessages((current) => ensurePendingAssistantMessage(current, result.runId));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setSending(false);
@@ -1087,6 +1247,7 @@ function ChatShell({
       return;
     }
 
+    clearHistoryReconcile();
     setComposerValue("");
     setSending(true);
     prepareNextRunAutoFollow("auto");
@@ -1099,17 +1260,7 @@ function ChatShell({
       const result = await clientRef.current.sendChat(activeSessionKey, text, "adaptive");
       setActiveRunId(result.runId);
       beginStreamAutoFollow(result.runId, "auto");
-      setMessages((current) => [
-        ...current,
-        {
-          id: `assistant-${result.runId}`,
-          role: "assistant",
-          text: "",
-          rawText: "",
-          runId: result.runId,
-          pending: true,
-        },
-      ]);
+      setMessages((current) => ensurePendingAssistantMessage(current, result.runId));
     } catch (error) {
       setSending(false);
       endStreamAutoFollow();
@@ -1123,6 +1274,7 @@ function ChatShell({
 
   async function handleAbort() {
     if (!clientRef.current || !activeRunId || !activeSessionKey || connectionState !== "connected") return;
+    clearHistoryReconcile();
     const runId = activeRunId;
 
     setSending(false);
@@ -1141,6 +1293,7 @@ function ChatShell({
 
   async function handleResetChat() {
     if (!clientRef.current || !activeSessionKey || connectionState !== "connected" || activeThreadIsArchived) return;
+    clearHistoryReconcile();
     prepareNextRunAutoFollow("auto");
     setMessages([]);
     setSending(true);
@@ -1149,14 +1302,7 @@ function ChatShell({
       const result = await clientRef.current.sendChat(activeSessionKey, "/reset", "adaptive");
       setActiveRunId(result.runId);
       beginStreamAutoFollow(result.runId, "auto");
-      setMessages([{
-        id: `assistant-${result.runId}`,
-        role: "assistant",
-        text: "",
-        rawText: "",
-        runId: result.runId,
-        pending: true,
-      }]);
+      setMessages((current) => ensurePendingAssistantMessage(current, result.runId));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setSending(false);
@@ -1278,6 +1424,7 @@ function ChatShell({
           activeEnvironmentId={activeEnvironmentId}
           onSwitchEnvironment={onSwitchEnvironment}
           onAddEnvironment={onAddEnvironment}
+          onRemoveEnvironment={onRemoveEnvironment}
           canCreateChat={canCreateChat}
           onNewChat={() => void handleNewChat()}
           liveThreads={liveThreads}

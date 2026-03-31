@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -31,6 +31,7 @@ function createMockWebSocket(options?: {
   sessionsChangedEndedAt?: number;
   sessionsChangedAbortedLastRun?: boolean;
   streamDelayMs?: number;
+  staleHistoryLoadsAfterSend?: number;
 }) {
   const sentMethods: string[] = [];
   const sentChatSessionKeys: string[] = [];
@@ -57,6 +58,8 @@ function createMockWebSocket(options?: {
 
   let runCounter = 0;
   let activeRunId: string | null = null;
+  let staleHistoryLoadsRemaining = 0;
+  let staleHistoryMessages: Array<Record<string, unknown>> | null = null;
   const sessionListKey = options?.sessionListKey || "main";
   const finalEventSessionKey = options?.finalEventSessionKey || sessionListKey;
   const sessionsChangedSessionKey = options?.sessionsChangedSessionKey || sessionListKey;
@@ -154,6 +157,13 @@ function createMockWebSocket(options?: {
         }
         case "chat.history": {
           const main = sessions.get("main");
+          const messages =
+            staleHistoryLoadsRemaining > 0 && staleHistoryMessages
+              ? staleHistoryMessages
+              : main?.messages || [];
+          if (staleHistoryLoadsRemaining > 0) {
+            staleHistoryLoadsRemaining -= 1;
+          }
           respond({
             type: "res",
             id: parsed.id,
@@ -161,7 +171,7 @@ function createMockWebSocket(options?: {
             payload: {
               sessionKey: parsed.params.sessionKey,
               sessionId: main?.sessionId || null,
-              messages: main?.messages || [],
+              messages,
             },
           });
           break;
@@ -239,6 +249,10 @@ function createMockWebSocket(options?: {
             const finalText = options?.streamTexts?.length
               ? options.streamTexts[options.streamTexts.length - 1]
               : "Done.";
+            if ((options?.staleHistoryLoadsAfterSend || 0) > 0) {
+              staleHistoryLoadsRemaining = options?.staleHistoryLoadsAfterSend || 0;
+              staleHistoryMessages = main.messages.map((message) => ({ ...message }));
+            }
             main.messages = [
               ...main.messages,
               { role: "user", text: parsed.params.message, timestamp: Date.now() },
@@ -713,6 +727,65 @@ Tomorrow in London is looking nice:
     expect(screen.queryByText(/docs\.openclaw\.ai\/tools\/web/i)).not.toBeInTheDocument();
   });
 
+  it("filters transcript-wrapped cron scaffolding and session-history payloads from loaded user history", async () => {
+    const { WebSocket } = createMockWebSocket({
+      historyMessages: [
+        {
+          role: "user",
+          content: [{
+            type: "input_text",
+            text: `YOU
+[cron:16be9dc1-918b-42c7-a092-586524937423 burnscope-overnight-check] Overnight burnscope check: inspect the current state of the burnscope project and any active ACP Codex run. If work is incomplete, proactively continue or relaunch Codex to finish Claude Code/Codex integration, CLI color visualization improvements, tests, README, and push to github.com/clawnetes/burnscope.
+Current time: Tuesday, March 31st, 2026 — 12:08 PM (Europe/London) / 2026-03-31 11:08 UTC
+
+Return your summary as plain text; it will be delivered automatically. If the task explicitly calls for messaging a specific external recipient, note who/where it should go instead of sending it yourself.
+YOU
+{
+  "count": 11,
+  "sessions": [
+    {
+      "key": "agent:main:main",
+      "kind": "other",
+      "channel": "unknown",
+      "displayName": "Mulugeta Tamiru id:5162540072",
+      "updatedAt": 1774955300182,
+      "sessionId": "866d4920-e511-4db8-87d2-fd7f7c16b6c2",
+      "contextTokens": 272000,
+      "estimatedCostUsd": 2.5778185000000002,
+      "status": "running",
+      "startedAt": 1774955300178,
+      "childSessions": [
+        "agent:codex:acp:da28e748-899d-40f1-90dd-e6af3f7c29a5"
+      ],
+      "systemSent": true
+    }
+  ]
+}`,
+          }],
+          timestamp: 1,
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Burnscope looks caught up. The active Codex runs are still in progress." }],
+          timestamp: 2,
+        },
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/Burnscope looks caught up/i).length).toBeGreaterThan(0);
+    });
+
+    expect(screen.queryByText(/\[cron:16be9dc1/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Return your summary as plain text; it will be delivered automatically/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/"estimatedCostUsd": 2\.5778185000000002/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/"childSessions": \[/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^YOU$/)).not.toBeInTheDocument();
+  });
+
   it("strips wrapped external fetch content and keeps the final reply", async () => {
     const { WebSocket } = createMockWebSocket({
       historyMessages: [
@@ -999,6 +1072,37 @@ HEARTBEAT_OK`,
 
     await waitFor(() => {
       expect(screen.getByText("Alias final event completed the reply.")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("chat-stop")).not.toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("Agent is thinking...")).not.toBeInTheDocument();
+  });
+
+  it("keeps the just-finished turn visible when the first post-final history reload is stale", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      staleHistoryLoadsAfterSend: 1,
+      streamTexts: ["This reply should stay visible."],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "keep this visible");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      const transcript = document.querySelector(".chat-transcript-scroll");
+      expect(transcript).not.toBeNull();
+      expect(within(transcript as HTMLElement).getByText("keep this visible")).toBeInTheDocument();
+      expect(within(transcript as HTMLElement).getByText("This reply should stay visible.")).toBeInTheDocument();
     });
 
     await waitFor(() => {

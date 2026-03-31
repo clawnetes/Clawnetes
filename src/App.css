@@ -181,8 +181,18 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+.chat-env-row {
+  display: flex;
+  align-items: stretch;
+}
+
+.chat-env-row.removable {
+  gap: 0.2rem;
+  padding-right: 0.35rem;
+}
+
 .chat-env-option {
-  width: 100%;
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -195,6 +205,7 @@ body {
   border-radius: 0;
   cursor: pointer;
   box-shadow: none;
+  text-align: left;
 }
 
 .chat-env-option:hover {
@@ -208,6 +219,38 @@ body {
 .chat-env-option.add {
   color: var(--text-subtle);
   font-size: 0.82rem;
+}
+
+.chat-env-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  margin: 0.2rem 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #ffffff;
+  cursor: pointer;
+  box-shadow: none;
+  font: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0;
+}
+
+.chat-env-remove:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+html[data-theme="light"] .chat-env-remove {
+  color: #4b5563;
+}
+
+html[data-theme="light"] .chat-env-remove:hover {
+  background: rgba(17, 17, 17, 0.08);
 }
 
 .chat-env-divider {

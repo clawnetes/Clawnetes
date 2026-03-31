@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   clearLastRemoteConnection,
+  clearLastRemoteConnectionIfMatches,
   loadLastRemoteConnection,
   saveLastRemoteConnection,
 } from "../lib/remoteConnectionStorage";
@@ -35,6 +36,14 @@ describe("remoteConnectionStorage", () => {
   it("clears the saved connection", () => {
     saveLastRemoteConnection("192.168.1.100", "ubuntu");
     clearLastRemoteConnection();
+    expect(loadLastRemoteConnection()).toBeNull();
+  });
+
+  it("clears only when the requested connection matches", () => {
+    saveLastRemoteConnection("192.168.1.100", "ubuntu");
+    expect(clearLastRemoteConnectionIfMatches("10.0.0.1", "root")).toBe(false);
+    expect(loadLastRemoteConnection()).toEqual({ ip: "192.168.1.100", user: "ubuntu" });
+    expect(clearLastRemoteConnectionIfMatches("192.168.1.100", "ubuntu")).toBe(true);
     expect(loadLastRemoteConnection()).toBeNull();
   });
 
