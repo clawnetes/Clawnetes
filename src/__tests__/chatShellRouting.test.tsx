@@ -454,6 +454,46 @@ describe("Installed-state chat shell", () => {
     expect(screen.getAllByText("Welcome back.").length).toBeGreaterThan(0);
   });
 
+  it("removes a saved previous remote from the environment dropdown and clears matching legacy storage", async () => {
+    localStorage.setItem(
+      "clawnetes.environments.v1",
+      JSON.stringify([
+        { id: "local-existing", name: "Local", type: "local", addedAt: 1, lastUsedAt: 10 },
+        {
+          id: "old-remote",
+          name: "deploy@10.0.0.9",
+          type: "cloud",
+          remoteIp: "10.0.0.9",
+          remoteUser: "deploy",
+          addedAt: 2,
+          lastUsedAt: 9,
+        },
+      ]),
+    );
+    localStorage.setItem(
+      "clawnetes.remote.lastConnection.v1",
+      JSON.stringify({ ip: "10.0.0.9", user: "deploy" }),
+    );
+
+    const user = userEvent.setup();
+    await openInstalledLocalChat(user);
+
+    await user.click(screen.getByTestId("chat-env-dropdown").querySelector("button")!);
+    expect(screen.getByText("deploy@10.0.0.9")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("remove-environment-old-remote"));
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem("clawnetes.environments.v1") || "[]") as Array<{ id: string }>;
+      expect(stored.some((env) => env.id === "old-remote")).toBe(false);
+    });
+    expect(localStorage.getItem("clawnetes.remote.lastConnection.v1")).toBeNull();
+
+    await user.click(screen.getByTestId("chat-env-dropdown").querySelector("button")!);
+    expect(screen.queryByText("deploy@10.0.0.9")).not.toBeInTheDocument();
+  });
+
   it("keeps the fresh conversation selected after reconnect", async () => {
     const user = userEvent.setup();
     await openInstalledLocalChat(user);

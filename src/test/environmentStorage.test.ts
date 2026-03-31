@@ -82,6 +82,13 @@ describe("environmentStorage", () => {
     expect(loadEnvironments()).toHaveLength(0);
   });
 
+  it("removeEnvironment clears the active environment id when removing the active entry", () => {
+    const env = upsertEnvironment({ type: "local" });
+    setActiveEnvironmentId(env.id);
+    removeEnvironment(env.id);
+    expect(getActiveEnvironmentId()).toBeNull();
+  });
+
   it("removeEnvironment is no-op for unknown id", () => {
     upsertEnvironment({ type: "local" });
     removeEnvironment("nonexistent");
@@ -113,6 +120,17 @@ describe("environmentStorage", () => {
     expect(envs[0].name).toBe("deploy@192.168.1.100");
     expect(envs[0].remoteIp).toBe("192.168.1.100");
     expect(envs[0].remoteUser).toBe("deploy");
+  });
+
+  it("stays empty after removing the only migrated environment and clearing legacy storage", () => {
+    localStorage.setItem(
+      "clawnetes.remote.lastConnection.v1",
+      JSON.stringify({ ip: "192.168.1.100", user: "deploy" }),
+    );
+    const envs = loadEnvironments();
+    removeEnvironment(envs[0].id);
+    localStorage.removeItem("clawnetes.remote.lastConnection.v1");
+    expect(loadEnvironments()).toEqual([]);
   });
 
   it("does not migrate if registry already exists", () => {

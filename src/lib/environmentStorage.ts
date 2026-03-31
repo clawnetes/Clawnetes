@@ -36,6 +36,16 @@ function writeJson(key: string, value: unknown): void {
   }
 }
 
+function removeKey(key: string): void {
+  const storage = getSafeLocalStorage();
+  if (!storage) return;
+  try {
+    storage.removeItem(key);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
 function isValidEnvironment(env: unknown): env is StoredEnvironment {
   if (!env || typeof env !== "object") return false;
   const e = env as Record<string, unknown>;
@@ -107,6 +117,9 @@ export function upsertEnvironment(env: {
 export function removeEnvironment(id: string): void {
   const envs = loadEnvironments().filter((e) => e.id !== id);
   saveEnvironments(envs);
+  if (getActiveEnvironmentId() === id) {
+    removeKey(ACTIVE_ENV_KEY);
+  }
 }
 
 export function getActiveEnvironmentId(): string | null {

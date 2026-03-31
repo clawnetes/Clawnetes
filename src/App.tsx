@@ -31,11 +31,12 @@ import { WizardContext } from "./context/WizardContext";
 import { clearAllChatShellStorage } from "./lib/chatShellStorage";
 import {
   loadEnvironments,
+  removeEnvironment,
   upsertEnvironment,
   setActiveEnvironmentId,
   type StoredEnvironment,
 } from "./lib/environmentStorage";
-import { saveLastRemoteConnection } from "./lib/remoteConnectionStorage";
+import { clearLastRemoteConnectionIfMatches, saveLastRemoteConnection } from "./lib/remoteConnectionStorage";
 import StepWelcome from "./components/steps/StepWelcome";
 import StepSecurity from "./components/steps/StepSecurity";
 import StepIdentity from "./components/steps/StepIdentity";
@@ -361,6 +362,11 @@ function App() {
 
   useEffect(() => { void checkSystem(true, false); setStoredEnvironments(loadEnvironments()); }, []);
 
+  const activeStoredEnvironmentId = chatBootstrap ? storedEnvironments.find(
+    (e) => e.type === (chatBootstrap.targetEnvironment as "local" | "cloud")
+      && (chatBootstrap.targetEnvironment === "local" || (e.remoteIp === remoteIp && e.remoteUser === remoteUser)),
+  )?.id || null : null;
+
   const handleSwitchEnvironment = useCallback((envId: string) => {
     const envs = loadEnvironments();
     const env = envs.find((e) => e.id === envId);
@@ -392,6 +398,19 @@ function App() {
     setPendingEnvSwitch(null);
     setChatBootstrap(null);
   }, [pendingEnvSwitch, envSwitchPassword, envSwitchKeyPath, setTargetEnvironment, setRemoteIp, setRemoteUser, setRemotePassword, setRemotePrivateKeyPath]);
+
+  const handleRemoveEnvironment = useCallback((envId: string) => {
+    const env = loadEnvironments().find((entry) => entry.id === envId);
+    if (!env || env.type !== "cloud" || env.id === activeStoredEnvironmentId) {
+      return;
+    }
+
+    removeEnvironment(env.id);
+    if (env.remoteIp && env.remoteUser) {
+      clearLastRemoteConnectionIfMatches(env.remoteIp, env.remoteUser);
+    }
+    setStoredEnvironments(loadEnvironments());
+  }, [activeStoredEnvironmentId]);
 
   const handleAddEnvironment = useCallback(() => {
     setTargetEnvironment("cloud");
@@ -1938,12 +1957,10 @@ Managed by Clawnetes.`,
             returnScrollSnapshot={pendingChatReturnScrollSnapshot}
             onConsumeReturnScrollSnapshot={() => setPendingChatReturnScrollSnapshot(null)}
             environments={storedEnvironments}
-            activeEnvironmentId={chatBootstrap ? storedEnvironments.find(
-              (e) => e.type === (chatBootstrap.targetEnvironment as "local" | "cloud")
-                && (chatBootstrap.targetEnvironment === "local" || (e.remoteIp === remoteIp && e.remoteUser === remoteUser))
-            )?.id || null : null}
+            activeEnvironmentId={activeStoredEnvironmentId}
             onSwitchEnvironment={handleSwitchEnvironment}
             onAddEnvironment={handleAddEnvironment}
+            onRemoveEnvironment={handleRemoveEnvironment}
             onAgentSwitch={setActiveAgentId}
             agents={agentConfigs}
             activeAgentId={activeAgentId}

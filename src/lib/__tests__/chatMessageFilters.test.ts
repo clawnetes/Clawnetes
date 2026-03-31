@@ -126,6 +126,61 @@ System: [2026-03-25 08:30:28 GMT] WhatsApp gateway connected.
 
     expect(sanitizeTranscriptText(text)).toBe("hey what’s going on today regarding world peace");
   });
+
+  it("returns empty for transcript-wrapped session history payloads", () => {
+    const text = `YOU
+{
+  "count": 11,
+  "sessions": [
+    {
+      "key": "agent:main:main",
+      "displayName": "Mulugeta Tamiru id:5162540072",
+      "updatedAt": 1774955300182,
+      "sessionId": "866d4920-e511-4db8-87d2-fd7f7c16b6c2",
+      "contextTokens": 272000,
+      "estimatedCostUsd": 2.5778185000000002,
+      "childSessions": ["agent:codex:acp:da28e748-899d-40f1-90dd-e6af3f7c29a5"],
+      "systemSent": true
+    }
+  ]
+}`;
+
+    expect(sanitizeTranscriptText(text)).toBe("");
+  });
+
+  it("returns empty for transcript-wrapped cron automation scaffolding", () => {
+    const text = `YOU
+[cron:16be9dc1-918b-42c7-a092-586524937423 burnscope-overnight-check] Overnight burnscope check: inspect the current state of the burnscope project and any active ACP Codex run.
+Current time: Tuesday, March 31st, 2026 — 12:08 PM (Europe/London) / 2026-03-31 11:08 UTC
+
+Return your summary as plain text; it will be delivered automatically. If the task explicitly calls for messaging a specific external recipient, note who/where it should go instead of sending it yourself.`;
+
+    expect(sanitizeTranscriptText(text)).toBe("");
+  });
+
+  it("keeps real user text while dropping transcript-wrapped scaffolding and payload sections", () => {
+    const text = `YOU
+[cron:16be9dc1-918b-42c7-a092-586524937423 burnscope-overnight-check] Overnight burnscope check: inspect the current state of the burnscope project.
+Current time: Tuesday, March 31st, 2026 — 12:08 PM (Europe/London) / 2026-03-31 11:08 UTC
+
+Return your summary as plain text; it will be delivered automatically.
+YOU
+{
+  "count": 1,
+  "sessions": [
+    {
+      "key": "agent:main:main",
+      "sessionId": "866d4920-e511-4db8-87d2-fd7f7c16b6c2",
+      "updatedAt": 1774955300182,
+      "childSessions": ["agent:codex:acp:da28e748-899d-40f1-90dd-e6af3f7c29a5"]
+    }
+  ]
+}
+YOU
+what changed in burnscope today?`;
+
+    expect(sanitizeTranscriptText(text)).toBe("what changed in burnscope today?");
+  });
 });
 
 describe("sanitizeAssistantTranscriptText", () => {
@@ -273,6 +328,40 @@ https://accounts.google.com/example</final>`,
     expect(result[0].text).toBe(`The Google Cloud CLI has been installed.
 Use this link:
 https://accounts.google.com/example`);
+  });
+
+  it("drops transcript-wrapped internal user scaffolding while preserving real user text", () => {
+    const raw = [
+      {
+        role: "user",
+        content: [{
+          type: "text",
+          text: `YOU
+[cron:16be9dc1-918b-42c7-a092-586524937423 burnscope-overnight-check] Overnight burnscope check: inspect the current state of the burnscope project.
+Current time: Tuesday, March 31st, 2026 — 12:08 PM (Europe/London) / 2026-03-31 11:08 UTC
+Return your summary as plain text; it will be delivered automatically.
+YOU
+{
+  "count": 1,
+  "sessions": [
+    {
+      "key": "agent:main:main",
+      "sessionId": "866d4920-e511-4db8-87d2-fd7f7c16b6c2",
+      "updatedAt": 1774955300182,
+      "childSessions": ["agent:codex:acp:da28e748-899d-40f1-90dd-e6af3f7c29a5"]
+    }
+  ]
+}
+YOU
+what changed in burnscope today?`,
+        }],
+      },
+    ];
+
+    const result = toChatMessages(raw);
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe("user");
+    expect(result[0].text).toBe("what changed in burnscope today?");
   });
 });
 

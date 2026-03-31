@@ -421,4 +421,79 @@ describe("ChatSidebar", () => {
     await user.click(screen.getByText("Settings"));
     expect(onOpenPanel).toHaveBeenCalledWith("model");
   });
+
+  it("shows remove controls only for non-active cloud environments", async () => {
+    const user = userEvent.setup();
+    render(
+      <ChatSidebar
+        {...baseProps}
+        environments={[
+          { id: "local", name: "Local", type: "local", addedAt: 1, lastUsedAt: 3 },
+          { id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
+          { id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
+        ]}
+        activeEnvironmentId="active"
+        onSwitchEnvironment={vi.fn()}
+        onRemoveEnvironment={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByTestId("chat-env-dropdown").querySelector("button")!);
+
+    expect(screen.queryByTestId("remove-environment-local")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("remove-environment-active")).not.toBeInTheDocument();
+    expect(screen.getByTestId("remove-environment-old")).toBeInTheDocument();
+  });
+
+  it("opens a confirmation dialog before removing a saved remote", async () => {
+    const user = userEvent.setup();
+    const onRemoveEnvironment = vi.fn();
+    const onSwitchEnvironment = vi.fn();
+    render(
+      <ChatSidebar
+        {...baseProps}
+        environments={[
+          { id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
+          { id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
+        ]}
+        activeEnvironmentId="active"
+        onSwitchEnvironment={onSwitchEnvironment}
+        onRemoveEnvironment={onRemoveEnvironment}
+      />,
+    );
+
+    await user.click(screen.getByTestId("chat-env-dropdown").querySelector("button")!);
+    await user.click(screen.getByTestId("remove-environment-old"));
+
+    expect(onSwitchEnvironment).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("Remove Remote Environment")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    expect(onRemoveEnvironment).toHaveBeenCalledWith("old");
+  });
+
+  it("does not remove a saved remote when the dialog is canceled", async () => {
+    const user = userEvent.setup();
+    const onRemoveEnvironment = vi.fn();
+    render(
+      <ChatSidebar
+        {...baseProps}
+        environments={[
+          { id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
+          { id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
+        ]}
+        activeEnvironmentId="active"
+        onSwitchEnvironment={vi.fn()}
+        onRemoveEnvironment={onRemoveEnvironment}
+      />,
+    );
+
+    await user.click(screen.getByTestId("chat-env-dropdown").querySelector("button")!);
+    await user.click(screen.getByTestId("remove-environment-old"));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(onRemoveEnvironment).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
 });

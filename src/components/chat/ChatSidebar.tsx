@@ -3,6 +3,7 @@ import type { ChatThemePreference, StoredChatThread } from "../../lib/chatShellS
 import type { StoredEnvironment } from "../../lib/environmentStorage";
 import ChatIcon, { ChatActionButton } from "./ChatIcon";
 import EmptyState from "../ui/EmptyState";
+import ConfirmDialog from "../ui/ConfirmDialog";
 
 export type { StoredEnvironment };
 
@@ -11,6 +12,7 @@ interface ChatSidebarProps {
   activeEnvironmentId?: string | null;
   onSwitchEnvironment?: (envId: string) => void;
   onAddEnvironment?: () => void;
+  onRemoveEnvironment?: (envId: string) => void;
   canCreateChat: boolean;
   onNewChat: () => void;
   liveThreads: StoredChatThread[];
@@ -29,6 +31,7 @@ export default function ChatSidebar({
   activeEnvironmentId,
   onSwitchEnvironment,
   onAddEnvironment,
+  onRemoveEnvironment,
   canCreateChat,
   onNewChat,
   liveThreads,
@@ -42,7 +45,20 @@ export default function ChatSidebar({
   connectionLabel,
 }: ChatSidebarProps) {
   const [envDropdownOpen, setEnvDropdownOpen] = useState(false);
+  const [pendingRemoveEnvironment, setPendingRemoveEnvironment] = useState<StoredEnvironment | null>(null);
   const envDropdownRef = useRef<HTMLDivElement>(null);
+
+  const handleCancelRemoveEnvironment = () => {
+    setPendingRemoveEnvironment(null);
+  };
+
+  const handleConfirmRemoveEnvironment = () => {
+    if (!pendingRemoveEnvironment || !onRemoveEnvironment) {
+      return;
+    }
+    onRemoveEnvironment(pendingRemoveEnvironment.id);
+    setPendingRemoveEnvironment(null);
+  };
 
   useEffect(() => {
     if (!envDropdownOpen) return;
@@ -76,26 +92,50 @@ export default function ChatSidebar({
                 <div className="chat-env-panel">
                   {[...environments]
                     .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
-                    .map((env) => (
-                      <button
-                        key={env.id}
-                        type="button"
-                        className={`chat-env-option ${env.id === activeEnvironmentId ? "active" : ""}`}
-                        onClick={() => {
-                          if (env.id !== activeEnvironmentId) {
-                            onSwitchEnvironment(env.id);
-                          }
-                          setEnvDropdownOpen(false);
-                        }}
-                      >
-                        <span>{env.name}</span>
-                        {env.id === activeEnvironmentId && (
-                          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                            <path d="M3 7L6 10L11 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        )}
-                      </button>
-                    ))}
+                    .map((env) => {
+                      const removable = Boolean(
+                        onRemoveEnvironment && env.type === "cloud" && env.id !== activeEnvironmentId,
+                      );
+
+                      return (
+                        <div
+                          key={env.id}
+                          className={`chat-env-row ${removable ? "removable" : ""}`}
+                        >
+                          <button
+                            type="button"
+                            className={`chat-env-option ${env.id === activeEnvironmentId ? "active" : ""}`}
+                            onClick={() => {
+                              if (env.id !== activeEnvironmentId) {
+                                onSwitchEnvironment?.(env.id);
+                              }
+                              setEnvDropdownOpen(false);
+                            }}
+                          >
+                            <span>{env.name}</span>
+                            {env.id === activeEnvironmentId && (
+                              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                                <path d="M3 7L6 10L11 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
+                          </button>
+                          {removable && (
+                            <button
+                              type="button"
+                              className="chat-env-remove"
+                              aria-label={`Remove saved remote ${env.name}`}
+                              data-testid={`remove-environment-${env.id}`}
+                              onClick={() => {
+                                setPendingRemoveEnvironment(env);
+                                setEnvDropdownOpen(false);
+                              }}
+                            >
+                              <span aria-hidden="true">&times;</span>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
                   {onAddEnvironment && (
                     <>
                       <div className="chat-env-divider" />
@@ -216,6 +256,18 @@ export default function ChatSidebar({
         />
         <div className="chat-sidebar-status">{connectionLabel}</div>
       </div>
+      <ConfirmDialog
+        open={Boolean(pendingRemoveEnvironment)}
+        title="Remove Remote Environment"
+        description={pendingRemoveEnvironment
+          ? `Remove saved remote "${pendingRemoveEnvironment.name}"? This only forgets the saved shortcut and will not change anything on the server.`
+          : undefined}
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={handleConfirmRemoveEnvironment}
+        onCancel={handleCancelRemoveEnvironment}
+      />
     </aside>
   );
 }

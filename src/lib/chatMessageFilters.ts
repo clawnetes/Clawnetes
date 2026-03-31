@@ -79,7 +79,26 @@ export function isToolPayloadJson(text: string) {
   const parsed = parseJsonObject(text);
   if (!parsed) return false;
 
+  const looksLikeSessionHistoryPayload =
+    Array.isArray(parsed.sessions) &&
+    typeof parsed.count === "number" &&
+    parsed.sessions.some((session) => {
+      if (typeof session !== "object" || session === null) return false;
+      const record = session as Record<string, unknown>;
+      return (
+        typeof record.key === "string" ||
+        typeof record.sessionId === "string" ||
+        typeof record.displayName === "string" ||
+        typeof record.updatedAt === "number" ||
+        Array.isArray(record.childSessions) ||
+        typeof record.estimatedCostUsd === "number" ||
+        typeof record.contextTokens === "number" ||
+        typeof record.systemSent === "boolean"
+      );
+    });
+
   return (
+    looksLikeSessionHistoryPayload ||
     typeof parsed.tool === "string" ||
     typeof parsed.finalUrl === "string" ||
     typeof parsed.externalContent === "object" ||
@@ -242,6 +261,18 @@ function looksLikeInternalPlanningText(text: string) {
     /^(?:I['’]ll|I am|I'm|I’m|Let me)\s+(?:do a quick|check|scan|look|browse|inspect|review|pull|open|search|verify)\b/i.test(normalized) ||
     /^(?:I['’]m|I am|I'm|I’m)\s+(?:checking|looking|browsing|using)\b/i.test(normalized) ||
     /^Web search isn['’]t configured\b/i.test(normalized)
+  );
+}
+
+function isInternalAutomationScaffoldingText(text: string) {
+  const normalized = normalizeTranscriptText(text);
+  if (!normalized) return false;
+
+  return (
+    /^\[cron:[^\]]+\]/i.test(text.trim()) ||
+    /Overnight\s+[A-Za-z0-9_-]+\s+check:/i.test(normalized) ||
+    /Return your summary as plain text; it will be delivered automatically\./i.test(normalized) ||
+    /If the task explicitly calls for messaging a specific external recipient/i.test(normalized)
   );
 }
 
@@ -488,6 +519,31 @@ function sanitizeTranscriptSectionText(text: string) {
   return sanitizeVisibleAssistantText(candidate, true);
 }
 
+function sanitizeUserTranscriptSectionText(text: string) {
+  let candidate = stripLeadingTranscriptLabels(stripTerminalControlSequences(text)).trim();
+  if (!candidate) return "";
+  if (isBootstrapNoiseText(candidate)) return "";
+  if (isSkillFrontmatterNoiseText(candidate)) return "";
+  if (isToolPayloadJson(candidate)) return "";
+  if (isInternalAutomationScaffoldingText(candidate)) return "";
+
+  if (hasWrappedExternalContent(candidate)) {
+    candidate = stripLeadingTranscriptLabels(stripWrappedExternalContent(candidate));
+  }
+
+  if (hasMessagingTranscriptWrappers(candidate)) {
+    candidate = stripMessagingTranscriptWrappers(candidate);
+  }
+
+  candidate = stripLeadingTranscriptLabels(candidate).trim();
+  if (!candidate) return "";
+  if (isBootstrapNoiseText(candidate)) return "";
+  if (isToolPayloadJson(candidate)) return "";
+  if (isInternalAutomationScaffoldingText(candidate)) return "";
+
+  return collapseTranscriptWhitespace(candidate);
+}
+
 function extractVisibleSectionsFromAgentTranscript(text: string) {
   const sections = splitStructuredTranscriptSections(text);
   if (sections.length === 0) return "";
@@ -500,6 +556,21 @@ function extractVisibleSectionsFromAgentTranscript(text: string) {
     const visible = sanitizeTranscriptSectionText(section.lines.join("\n"));
     if (visible) {
       if (looksLikeInternalPlanningText(visible)) continue;
+      visibleSections.push(visible);
+    }
+  }
+
+  return collapseTranscriptWhitespace(dedupeCumulativeSections(visibleSections).join("\n\n"));
+}
+
+function extractVisibleSectionsFromUserTranscript(text: string) {
+  const sections = splitStructuredTranscriptSections(text);
+  if (sections.length === 0) return "";
+
+  const visibleSections: string[] = [];
+  for (const section of sections) {
+    const visible = sanitizeUserTranscriptSectionText(section.lines.join("\n"));
+    if (visible) {
       visibleSections.push(visible);
     }
   }
@@ -558,6 +629,12 @@ export function sanitizeTranscriptText(text: string) {
   if (hasWrappedExternalContent(trimmed)) {
     return stripLeadingTranscriptLabels(stripWrappedExternalContent(trimmed));
   }
+
+  if (hasStructuredTranscriptSections(trimmed)) {
+    return extractVisibleSectionsFromUserTranscript(trimmed);
+  }
+
+  if (isInternalAutomationScaffoldingText(trimmed)) return "";
 
   if (isWeatherToolNoiseText(rawText) || hasAnsiColorNoise(rawText)) {
     return stripLeadingTranscriptLabels(stripTerminalControlSequences(extractReplyFromToolNoise(rawText)));

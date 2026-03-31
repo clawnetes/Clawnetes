@@ -46,6 +46,14 @@ export function saveLastRemoteConnection(ip: string, user: string): void {
   writeJson(REMOTE_CONNECTION_KEY, { ip, user });
 }
 
+function connectionsMatch(
+  stored: StoredRemoteConnection | null,
+  ip: string,
+  user: string,
+): stored is StoredRemoteConnection {
+  return Boolean(stored && stored.ip === ip && stored.user === user);
+}
+
 export function clearLastRemoteConnection(): void {
   const storage = getSafeLocalStorage();
   if (!storage) {
@@ -57,4 +65,13 @@ export function clearLastRemoteConnection(): void {
   } catch {
     // Ignore storage failures.
   }
+}
+
+export function clearLastRemoteConnectionIfMatches(ip: string, user: string): boolean {
+  if (!connectionsMatch(loadLastRemoteConnection(), ip, user)) {
+    return false;
+  }
+
+  clearLastRemoteConnection();
+  return true;
 }
