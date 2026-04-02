@@ -645,9 +645,29 @@ export class GatewayChatClient {
 
     const payload = { type: "req", id, method, params };
     const response = new Promise<T>((resolve, reject) => {
+      let timer: number | undefined;
+
+      const cleanup = () => {
+        if (timer !== undefined) {
+          window.clearTimeout(timer);
+        }
+        this.pending.delete(id);
+      };
+
+      timer = window.setTimeout(() => {
+        cleanup();
+        reject(new Error(`Gateway request timed out: ${method}`));
+      }, 30000);
+
       this.pending.set(id, {
-        resolve: (value) => resolve(value as T),
-        reject,
+        resolve: (value) => {
+          cleanup();
+          resolve(value as T);
+        },
+        reject: (error) => {
+          cleanup();
+          reject(error);
+        },
       });
     });
 

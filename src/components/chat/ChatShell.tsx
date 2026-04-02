@@ -327,7 +327,7 @@ function finalizeRunMessages(messages: ChatMessage[], runId?: string | null) {
   });
 }
 
-function ensurePendingAssistantMessage(messages: ChatMessage[], runId: string) {
+function ensurePendingAssistantMessage(messages: ChatMessage[], runId: string): ChatMessage[] {
   const existingIndex = messages.findIndex((message) => message.runId === runId);
   if (existingIndex >= 0) {
     return messages;
@@ -342,11 +342,11 @@ function ensurePendingAssistantMessage(messages: ChatMessage[], runId: string) {
       rawText: "",
       runId,
       pending: true,
-    },
+    } as ChatMessage,
   ];
 }
 
-function ensurePendingAssistantPlaceholder(messages: ChatMessage[]) {
+function ensurePendingAssistantPlaceholder(messages: ChatMessage[]): ChatMessage[] {
   const existingPendingAssistant = messages.find(
     (message) =>
       message.role === "assistant" &&
@@ -366,11 +366,11 @@ function ensurePendingAssistantPlaceholder(messages: ChatMessage[]) {
       text: "",
       rawText: "",
       pending: true,
-    },
+    } as ChatMessage,
   ];
 }
 
-function attachPendingAssistantRunId(messages: ChatMessage[], runId: string) {
+function attachPendingAssistantRunId(messages: ChatMessage[], runId: string): ChatMessage[] {
   if (messages.some((message) => message.runId === runId)) {
     return messages;
   }
@@ -392,7 +392,7 @@ function attachPendingAssistantRunId(messages: ChatMessage[], runId: string) {
       ...message,
       id: `assistant-${runId}`,
       runId,
-    };
+    } as ChatMessage;
   });
 }
 
@@ -1511,7 +1511,7 @@ function ChatShell({
     const sessionKey = activeSessionKeyRef.current;
     const threadId = activeThreadIdRef.current;
     const threadMessages = threadId
-      ? (threadsRef.current.find((thread) => thread.id === threadId)?.messages || []).map((message) => ({ ...message }))
+      ? (threadsRef.current.find((thread) => thread.id === threadId)?.messages || []).map((message) => ({ ...message } as ChatMessage))
       : [];
     const currentMessages = messagesRef.current.length > 0 ? messagesRef.current : threadMessages;
     const reconcileTail = buildReconcileTail(currentMessages, runId);
@@ -1610,6 +1610,14 @@ function ChatShell({
 
   function handleAgentEvent(event: GatewayAgentEventPayload) {
     if (!event.runId || event.stream !== "assistant") return;
+
+    if (activeRunIdRef.current && event.runId !== activeRunIdRef.current) {
+      const isPendingForCurrentView = messagesRef.current.some((m) => m.runId === event.runId && m.pending);
+      if (!isPendingForCurrentView) {
+        return;
+      }
+    }
+
     const delta = typeof event.data.text === "string" ? event.data.text : "";
     if (!delta) return;
     clearStreamIdleFinalize();

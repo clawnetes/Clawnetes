@@ -402,6 +402,7 @@ describe("ChatSidebar", () => {
     archivedThreads: [],
     activeThreadId: "",
     onThreadSwitch: vi.fn(),
+    onDeleteThread: vi.fn(),
     themePreference: "dark" as const,
     onThemeChange: vi.fn(),
     onOpenConfigure: vi.fn(),
