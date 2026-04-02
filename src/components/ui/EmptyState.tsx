@@ -9,11 +9,16 @@ interface EmptyStateProps {
     onClick: () => void;
   };
   className?: string;
+  align?: "center" | "left";
 }
 
-function EmptyState({ icon, title, description, action, className = "" }: EmptyStateProps) {
+function EmptyState({ icon, title, description, action, className = "", align = "center" }: EmptyStateProps) {
+  const alignmentClassName = align === "left"
+    ? "items-start text-left"
+    : "items-center justify-center text-center";
+
   return (
-    <div className={`flex flex-col items-center justify-center gap-3 py-8 px-4 text-center ${className}`}>
+    <div className={`flex flex-col gap-3 py-8 px-4 ${alignmentClassName} ${className}`}>
       {icon && (
         <div className="w-10 h-10 flex items-center justify-center rounded-lg bg-surface-hover text-t-muted">
           {icon}

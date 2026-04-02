@@ -13,8 +13,149 @@ use crate::pairing::{
     extract_telegram_dm_policy_from_config, telegram_allow_from_is_linked_local,
     telegram_pairing_status_from_dm_policy,
 };
-use crate::system::{shell_command, shell_single_quote};
+use crate::system::shell_command;
 use crate::types::{AgentConfig, AgentData, CronJobConfig, CurrentConfig};
+
+fn profile_has_usable_credential(profile: &serde_json::Value) -> bool {
+    profile
+        .get("token")
+        .and_then(|value| value.as_str())
+        .map(|value| !value.is_empty())
+        .unwrap_or(false)
+        || profile
+            .get("access")
+            .and_then(|value| value.as_str())
+            .map(|value| !value.is_empty())
+            .unwrap_or(false)
+}
+
+fn provider_auth_is_usable(auth: &crate::types::ProviderAuthData) -> bool {
+    if !auth.token.is_empty() {
+        return true;
+    }
+
+    auth.profile
+        .as_ref()
+        .map(profile_has_usable_credential)
+        .unwrap_or(false)
+}
+
+fn is_remote_provider(provider: &str) -> bool {
+    !matches!(provider, "ollama" | "lmstudio" | "local")
+}
+
+fn collect_referenced_remote_providers(config: &AgentConfig) -> std::collections::BTreeSet<String> {
+    let mut providers = std::collections::BTreeSet::new();
+
+    let mut collect_from_model = |model_ref: &str| {
+        if let Some(provider) = model_ref.split('/').next() {
+            let normalized = normalize_provider_for_ui(provider);
+            if is_remote_provider(&normalized) {
+                providers.insert(normalized);
+            }
+        }
+    };
+
+    collect_from_model(&config.model);
+    for fallback in config.fallback_models.as_ref().into_iter().flatten() {
+        collect_from_model(fallback);
+    }
+    for agent in config.agents.as_ref().into_iter().flatten() {
+        collect_from_model(&agent.model);
+        for fallback in agent.fallback_models.as_ref().into_iter().flatten() {
+            collect_from_model(fallback);
+        }
+    }
+
+    if providers.is_empty() && is_remote_provider(&config.provider) {
+        providers.insert(config.provider.clone());
+    }
+
+    providers
+}
+
+fn parse_auth_profiles_doc(contents: &str) -> serde_json::Value {
+    serde_json::from_str(contents).unwrap_or_else(|_| serde_json::json!({}))
+}
+
+fn merge_auth_profiles_doc(
+    generated: &serde_json::Value,
+    existing: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let mut result = existing.cloned().unwrap_or_else(|| serde_json::json!({}));
+
+    if let Some(existing_obj) = result.as_object_mut() {
+        existing_obj.insert("version".to_string(), serde_json::json!(1));
+    } else {
+        result = serde_json::json!({ "version": 1 });
+    }
+
+    let result_obj = result
+        .as_object_mut()
+        .expect("auth profile document should be an object");
+
+    let mut merged_profiles = existing
+        .and_then(|value| value.get("profiles"))
+        .and_then(|value| value.as_object())
+        .cloned()
+        .unwrap_or_default();
+    if let Some(profiles) = generated.get("profiles").and_then(|value| value.as_object()) {
+        for (key, value) in profiles {
+            merged_profiles.insert(key.clone(), value.clone());
+        }
+    }
+
+    let mut merged_last_good = existing
+        .and_then(|value| value.get("lastGood"))
+        .and_then(|value| value.as_object())
+        .cloned()
+        .unwrap_or_default();
+    if let Some(last_good) = generated.get("lastGood").and_then(|value| value.as_object()) {
+        for (key, value) in last_good {
+            merged_last_good.insert(key.clone(), value.clone());
+        }
+    }
+
+    let merged_usage_stats = existing
+        .and_then(|value| value.get("usageStats"))
+        .cloned()
+        .or_else(|| generated.get("usageStats").cloned())
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    result_obj.insert(
+        "profiles".to_string(),
+        serde_json::Value::Object(merged_profiles),
+    );
+    result_obj.insert(
+        "lastGood".to_string(),
+        serde_json::Value::Object(merged_last_good),
+    );
+    result_obj.insert("usageStats".to_string(), merged_usage_stats);
+
+    result
+}
+
+fn recover_provider_auths_from_doc(
+    provider_auths: &mut std::collections::HashMap<String, crate::types::ProviderAuthData>,
+    referenced_providers: &std::collections::BTreeSet<String>,
+    auth_config: &serde_json::Value,
+) {
+    for provider in referenced_providers {
+        let needs_recovery = provider_auths
+            .get(provider)
+            .map(|auth| !provider_auth_is_usable(auth))
+            .unwrap_or(true);
+        if !needs_recovery {
+            continue;
+        }
+
+        if let Some(auth) = resolve_provider_auth_data(provider, auth_config) {
+            if provider_auth_is_usable(&auth) {
+                provider_auths.insert(provider.clone(), auth);
+            }
+        }
+    }
+}
 
 pub fn apply_agent_overrides(agent_obj: &mut serde_json::Value, agent: &AgentData) {
     if let Some(tools) = &agent.tools {
@@ -350,18 +491,80 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
         }
     };
 
-    let provider_auths = get_provider_auth_map(&config);
-    let primary_provider_auth = provider_auths
-        .get(&config.provider)
+    let existing_main_auth_config = {
+        let existing_auth_profiles_path = format!("{}/auth-profiles.json", agents_dir);
+        let contents = read_file_fn(&existing_auth_profiles_path);
+        if contents.is_empty() {
+            serde_json::json!({})
+        } else {
+            parse_auth_profiles_doc(&contents)
+        }
+    };
+
+    let mut provider_auths = get_provider_auth_map(&config);
+    let referenced_remote_providers = collect_referenced_remote_providers(&config);
+    recover_provider_auths_from_doc(
+        &mut provider_auths,
+        &referenced_remote_providers,
+        &existing_main_auth_config,
+    );
+
+    let all_agent_dirs = {
+        #[cfg(target_os = "windows")]
+        {
+            crate::system::wsl_list_dirs(&format!("{}/agents", openclaw_root))
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            fs::read_dir(format!("{}/agents", openclaw_root))
+                .map(|entries| {
+                    entries
+                        .filter_map(|entry| entry.ok())
+                        .filter(|entry| entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+                        .filter_map(|entry| entry.file_name().into_string().ok())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        }
+    };
+
+    for agent_dir_name in all_agent_dirs {
+        let agent_auth_path = format!("{}/agents/{}/agent/auth-profiles.json", openclaw_root, agent_dir_name);
+        let contents = read_file_fn(&agent_auth_path);
+        if contents.is_empty() {
+            continue;
+        }
+        let auth_config = parse_auth_profiles_doc(&contents);
+        recover_provider_auths_from_doc(
+            &mut provider_auths,
+            &referenced_remote_providers,
+            &auth_config,
+        );
+    }
+
+    let missing_providers = referenced_remote_providers
+        .iter()
+        .filter(|provider| {
+            provider_auths
+                .get(*provider)
+                .map(|auth| !provider_auth_is_usable(auth))
+                .unwrap_or(true)
+        })
         .cloned()
-        .unwrap_or_else(|| {
-            default_provider_auth(
-                &config.provider,
-                &config.api_key,
-                config.auth_method.as_deref().unwrap_or("token"),
-                config.local_base_url.as_ref(),
-            )
-        });
+        .collect::<Vec<_>>();
+    if !missing_providers.is_empty() {
+        return Err(format!(
+            "Missing authentication for provider(s): {}. Configure auth for those providers before saving this model selection.",
+            missing_providers.join(", ")
+        ));
+    }
+
+    let primary_provider = config
+        .model
+        .split('/')
+        .next()
+        .map(normalize_provider_for_ui)
+        .unwrap_or_else(|| config.provider.clone());
     let effective_primary_model = apply_model_provider_auth(&config.model, &provider_auths);
     let effective_fallback_models = config
         .fallback_models
@@ -370,10 +573,6 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
         .into_iter()
         .map(|model| apply_model_provider_auth(&model, &provider_auths))
         .collect::<Vec<_>>();
-    let primary_auth_provider =
-        auth_provider_id_for_config(&config.provider, &primary_provider_auth, &provider_auths);
-    let profile_name = resolve_profile_name(&config.provider, &primary_provider_auth);
-    let auth_mode = normalize_auth_mode(&primary_provider_auth.auth_method);
     let required_plugin_ids = collect_required_plugin_ids(&provider_auths, config.skills.as_ref());
 
     let gateway_port = config.gateway_port.unwrap_or(18789);
@@ -657,12 +856,20 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
         .and_then(|a| a.get_mut("profiles"))
         .and_then(|p| p.as_object_mut())
     {
-        let profile = serde_json::json!({
-            "provider": primary_auth_provider,
-            "mode": auth_mode
-        });
+        for (provider, provider_auth) in &provider_auths {
+            let auth_profile_provider =
+                auth_provider_id_for_config(provider, provider_auth, &provider_auths);
+            let auth_profile_name = resolve_profile_name(provider, provider_auth);
+            let auth_profile_mode = normalize_auth_mode(&provider_auth.auth_method);
 
-        profiles.insert(profile_name.clone(), profile);
+            profiles.insert(
+                auth_profile_name,
+                serde_json::json!({
+                    "provider": auth_profile_provider,
+                    "mode": auth_profile_mode
+                }),
+            );
+        }
     }
 
     if let Some(defaults) = config_json
@@ -836,11 +1043,6 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
         &config_json_raw,
     )?;
 
-    let _ = shell_command(&format!(
-        "openclaw config set gateway.auth.token {}",
-        shell_single_quote(&gateway_token)
-    ));
-
     {
         let mut meta = serde_json::Map::new();
         if let Some(agent_type) = &config.agent_type {
@@ -927,11 +1129,28 @@ Serve {}."#,
                     .as_ref()
                     .or(config.fallback_models.as_ref()),
                 config.local_base_url.as_ref(),
-                &config.provider,
+                &agent
+                    .model
+                    .split('/')
+                    .next()
+                    .map(normalize_provider_for_ui)
+                    .unwrap_or_else(|| primary_provider.clone()),
+            );
+            let existing_agent_auth_config = {
+                let contents = read_file_fn(&format!("{}/auth-profiles.json", agent_config_dir));
+                if contents.is_empty() {
+                    None
+                } else {
+                    Some(parse_auth_profiles_doc(&contents))
+                }
+            };
+            let merged_agent_auth_profiles = merge_auth_profiles_doc(
+                &agent_auth_profiles,
+                existing_agent_auth_config.as_ref(),
             );
 
-            let agent_auth_json =
-                serde_json::to_string_pretty(&agent_auth_profiles).map_err(|e| e.to_string())?;
+            let agent_auth_json = serde_json::to_string_pretty(&merged_agent_auth_profiles)
+                .map_err(|e| e.to_string())?;
             write_file_fn(
                 &format!("{}/auth-profiles.json", agent_config_dir),
                 &agent_auth_json,
@@ -950,11 +1169,13 @@ Serve {}."#,
         &provider_auths,
         config.fallback_models.as_ref(),
         config.local_base_url.as_ref(),
-        &config.provider,
+        &primary_provider,
     );
+    let merged_auth_profiles_val =
+        merge_auth_profiles_doc(&auth_profiles_val, Some(&existing_main_auth_config));
 
     let auth_profiles_json =
-        serde_json::to_string_pretty(&auth_profiles_val).map_err(|e| e.to_string())?;
+        serde_json::to_string_pretty(&merged_auth_profiles_val).map_err(|e| e.to_string())?;
     write_file_fn(
         &format!("{}/auth-profiles.json", agents_dir),
         &auth_profiles_json,
@@ -1240,13 +1461,6 @@ pub fn get_current_config(
         "all"
     };
 
-    let mut provider_auths = std::collections::HashMap::new();
-    for referenced_provider in &referenced_providers {
-        if let Some(auth) = resolve_provider_auth_data(referenced_provider, &auth_config) {
-            provider_auths.insert(referenced_provider.clone(), auth);
-        }
-    }
-
     let fallbacks = fallback_models.clone();
 
     let heartbeat = defaults.get("heartbeat").unwrap_or(&empty_json);
@@ -1430,6 +1644,13 @@ pub fn get_current_config(
         }
     }
 
+    let mut provider_auths = std::collections::HashMap::new();
+    for referenced_provider in &referenced_providers {
+        if let Some(auth) = resolve_provider_auth_data(referenced_provider, &auth_config) {
+            provider_auths.insert(referenced_provider.clone(), auth);
+        }
+    }
+
     let credentials_dir = std::path::PathBuf::from(&home_dir)
         .join(".openclaw")
         .join("credentials");
@@ -1572,6 +1793,218 @@ pub fn get_current_config(
 mod tests {
     use super::*;
     use crate::types::{AgentData, AgentToolsConfig, ElevatedToolConfig, SubagentConfig};
+    use lazy_static::lazy_static;
+    use std::sync::Mutex;
+
+    lazy_static! {
+        static ref COMPAT_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
+    }
+
+    const COMPAT_OPENCLAW_JSON: &str =
+        include_str!("../tests/fixtures/openclaw_compat/openclaw.json");
+    const COMPAT_MAIN_AUTH_PROFILES: &str =
+        include_str!("../tests/fixtures/openclaw_compat/auth-profiles.main.json");
+    const COMPAT_SUB_AUTH_PROFILES: &str =
+        include_str!("../tests/fixtures/openclaw_compat/auth-profiles.subagent.json");
+    const COMPAT_MAIN_IDENTITY: &str =
+        include_str!("../tests/fixtures/openclaw_compat/IDENTITY.main.md");
+    const COMPAT_MAIN_USER: &str =
+        include_str!("../tests/fixtures/openclaw_compat/USER.main.md");
+    const COMPAT_MAIN_SOUL: &str =
+        include_str!("../tests/fixtures/openclaw_compat/SOUL.main.md");
+    const COMPAT_SUB_IDENTITY: &str =
+        include_str!("../tests/fixtures/openclaw_compat/IDENTITY.sub.md");
+    const COMPAT_SUB_USER: &str =
+        include_str!("../tests/fixtures/openclaw_compat/USER.sub.md");
+    const COMPAT_SUB_SOUL: &str =
+        include_str!("../tests/fixtures/openclaw_compat/SOUL.sub.md");
+
+    struct CompatEnvGuard {
+        original_home: Option<String>,
+        original_path: Option<String>,
+        root: std::path::PathBuf,
+    }
+
+    impl Drop for CompatEnvGuard {
+        fn drop(&mut self) {
+            if let Some(home) = &self.original_home {
+                std::env::set_var("HOME", home);
+            } else {
+                std::env::remove_var("HOME");
+            }
+
+            if let Some(path) = &self.original_path {
+                std::env::set_var("PATH", path);
+            } else {
+                std::env::remove_var("PATH");
+            }
+
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn replace_fixture_home(input: &str, home: &str) -> String {
+        input.replace("__HOME__", home)
+    }
+
+    fn write_compat_fixture_tree() -> Result<(std::path::PathBuf, CompatEnvGuard), String> {
+        let root = std::env::temp_dir().join(format!("clawnetes-openclaw-compat-{}", uuid::Uuid::new_v4()));
+        let home = root.join("home");
+        let openclaw_root = home.join(".openclaw");
+        let workspace = openclaw_root.join("workspace");
+        let main_agent_dir = openclaw_root.join("agents/main/agent");
+        let sub_agent_dir = openclaw_root.join("agents/agent-compat-1/agent");
+        let sub_workspace = openclaw_root.join("agents/agent-compat-1/workspace");
+        let fake_bin_dir = root.join("bin");
+
+        std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&main_agent_dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&sub_agent_dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&sub_workspace).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(fake_bin_dir.clone()).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(workspace.join("skills/github")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(sub_workspace.join("skills/web-search")).map_err(|e| e.to_string())?;
+
+        let home_str = home.to_string_lossy().to_string();
+        std::fs::write(
+            openclaw_root.join("openclaw.json"),
+            replace_fixture_home(COMPAT_OPENCLAW_JSON, &home_str),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(main_agent_dir.join("auth-profiles.json"), COMPAT_MAIN_AUTH_PROFILES)
+            .map_err(|e| e.to_string())?;
+        std::fs::write(sub_agent_dir.join("auth-profiles.json"), COMPAT_SUB_AUTH_PROFILES)
+            .map_err(|e| e.to_string())?;
+        std::fs::write(workspace.join("IDENTITY.md"), COMPAT_MAIN_IDENTITY).map_err(|e| e.to_string())?;
+        std::fs::write(workspace.join("USER.md"), COMPAT_MAIN_USER).map_err(|e| e.to_string())?;
+        std::fs::write(workspace.join("SOUL.md"), COMPAT_MAIN_SOUL).map_err(|e| e.to_string())?;
+        std::fs::write(sub_workspace.join("IDENTITY.md"), COMPAT_SUB_IDENTITY).map_err(|e| e.to_string())?;
+        std::fs::write(sub_workspace.join("USER.md"), COMPAT_SUB_USER).map_err(|e| e.to_string())?;
+        std::fs::write(sub_workspace.join("SOUL.md"), COMPAT_SUB_SOUL).map_err(|e| e.to_string())?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let fake_openclaw = fake_bin_dir.join("openclaw");
+            std::fs::write(&fake_openclaw, "#!/bin/sh\nexit 0\n").map_err(|e| e.to_string())?;
+            let mut perms = std::fs::metadata(&fake_openclaw).map_err(|e| e.to_string())?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&fake_openclaw, perms).map_err(|e| e.to_string())?;
+        }
+
+        let original_home = std::env::var("HOME").ok();
+        let original_path = std::env::var("PATH").ok();
+        let mut new_path = fake_bin_dir.to_string_lossy().to_string();
+        if let Some(existing_path) = &original_path {
+            new_path.push(':');
+            new_path.push_str(existing_path);
+        }
+        std::env::set_var("HOME", &home_str);
+        std::env::set_var("PATH", new_path);
+
+        Ok((
+            home,
+            CompatEnvGuard {
+                original_home,
+                original_path,
+                root,
+            },
+        ))
+    }
+
+    fn compat_agent_config() -> crate::types::AgentConfig {
+        crate::types::AgentConfig {
+            provider: "google".to_string(),
+            api_key: "".to_string(),
+            auth_method: Some("token".to_string()),
+            model: "google/gemini-3.1-pro-preview".to_string(),
+            user_name: "Compat User".to_string(),
+            agent_name: "Compat Main".to_string(),
+            agent_vibe: Some("Compatibility first".to_string()),
+            telegram_token: Some("fixture-bot-token".to_string()),
+            gateway_port: Some(18789),
+            gateway_bind: Some("loopback".to_string()),
+            gateway_auth_mode: Some("token".to_string()),
+            tailscale_mode: Some("off".to_string()),
+            node_manager: None,
+            skills: Some(vec!["github".to_string()]),
+            service_keys: None,
+            provider_auths: Some(std::collections::HashMap::from([
+                (
+                    "google".to_string(),
+                    crate::types::ProviderAuthData {
+                        auth_method: "token".to_string(),
+                        token: "AIza-compat-google".to_string(),
+                        profile_key: Some("google:default".to_string()),
+                        profile: Some(serde_json::json!({
+                            "provider": "google",
+                            "token": "AIza-compat-google",
+                            "type": "token"
+                        })),
+                        oauth_provider_id: None,
+                    },
+                ),
+                (
+                    "openai".to_string(),
+                    crate::types::ProviderAuthData {
+                        auth_method: "openai-codex".to_string(),
+                        token: "compat-openai-access".to_string(),
+                        profile_key: Some("openai-codex:default".to_string()),
+                        profile: Some(serde_json::json!({
+                            "provider": "openai-codex",
+                            "access": "compat-openai-access",
+                            "type": "oauth"
+                        })),
+                        oauth_provider_id: Some("openai-codex".to_string()),
+                    },
+                ),
+            ])),
+            sandbox_mode: Some("off".to_string()),
+            tools_mode: Some("all".to_string()),
+            tools_profile: Some("full".to_string()),
+            allowed_tools: Some(vec![]),
+            denied_tools: Some(vec![]),
+            fallback_models: Some(vec!["openai/gpt-5.4".to_string()]),
+            heartbeat_mode: Some("1h".to_string()),
+            idle_timeout_ms: None,
+            identity_md: Some(COMPAT_MAIN_IDENTITY.to_string()),
+            user_md: Some(COMPAT_MAIN_USER.to_string()),
+            soul_md: Some(COMPAT_MAIN_SOUL.to_string()),
+            agents: Some(vec![crate::types::AgentData {
+                id: "agent-compat-1".to_string(),
+                name: "Compat Sub".to_string(),
+                model: "openai/gpt-5.4".to_string(),
+                fallback_models: Some(vec!["google/gemini-3.1-pro-preview".to_string()]),
+                skills: Some(vec!["web-search".to_string()]),
+                vibe: None,
+                emoji: Some("🛠".to_string()),
+                identity_md: Some(COMPAT_SUB_IDENTITY.to_string()),
+                user_md: Some(COMPAT_SUB_USER.to_string()),
+                soul_md: Some(COMPAT_SUB_SOUL.to_string()),
+                tools_md: None,
+                agents_md: None,
+                heartbeat_md: None,
+                memory_md: None,
+                heartbeat_mode: Some("30m".to_string()),
+                idle_timeout_ms: None,
+                subagents: None,
+                tools: None,
+            }]),
+            preserve_state: Some(true),
+            agent_type: Some("custom".to_string()),
+            tools_md: None,
+            agents_md: None,
+            heartbeat_md: None,
+            memory_md: None,
+            memory_enabled: Some(false),
+            cron_jobs: None,
+            local_base_url: None,
+            thinking_level: None,
+            whatsapp_enabled: Some(false),
+            whatsapp_dm_policy: None,
+            whatsapp_phone_number: None,
+        }
+    }
 
     #[test]
     fn test_apply_agent_overrides_with_tools() {
@@ -1591,6 +2024,8 @@ mod tests {
             agents_md: None,
             heartbeat_md: None,
             memory_md: None,
+            heartbeat_mode: None,
+            idle_timeout_ms: None,
             subagents: None,
             tools: Some(AgentToolsConfig {
                 profile: Some("custom".to_string()),
@@ -1621,6 +2056,8 @@ mod tests {
             agents_md: None,
             heartbeat_md: None,
             memory_md: None,
+            heartbeat_mode: None,
+            idle_timeout_ms: None,
             subagents: Some(SubagentConfig {
                 allow_agents: vec!["agent1".to_string()],
             }),
@@ -1628,6 +2065,368 @@ mod tests {
         };
         apply_agent_overrides(&mut agent_obj, &agent);
         assert!(agent_obj.get("subagents").is_some());
+    }
+
+    #[test]
+    fn test_merge_auth_profiles_doc_preserves_existing_profiles() {
+        let existing = serde_json::json!({
+            "version": 1,
+            "profiles": {
+                "google:default": {
+                    "provider": "google",
+                    "token": "google-key",
+                    "type": "token"
+                }
+            },
+            "lastGood": {
+                "google": "google:default"
+            },
+            "usageStats": {
+                "google:default": {
+                    "lastUsed": 123
+                }
+            }
+        });
+        let generated = serde_json::json!({
+            "version": 1,
+            "profiles": {
+                "openai-codex:default": {
+                    "provider": "openai-codex",
+                    "type": "oauth",
+                    "access": "token"
+                }
+            },
+            "lastGood": {
+                "openai": "openai-codex:default"
+            },
+            "usageStats": {}
+        });
+
+        let merged = merge_auth_profiles_doc(&generated, Some(&existing));
+
+        assert!(merged.get("profiles").and_then(|value| value.get("google:default")).is_some());
+        assert!(merged
+            .get("profiles")
+            .and_then(|value| value.get("openai-codex:default"))
+            .is_some());
+        assert_eq!(
+            merged
+                .get("lastGood")
+                .and_then(|value| value.get("google"))
+                .and_then(|value| value.as_str()),
+            Some("google:default")
+        );
+        assert_eq!(
+            merged
+                .get("usageStats")
+                .and_then(|value| value.get("google:default"))
+                .and_then(|value| value.get("lastUsed"))
+                .and_then(|value| value.as_u64()),
+            Some(123)
+        );
+    }
+
+    #[test]
+    fn test_recover_provider_auths_from_doc_uses_referenced_provider_profile() {
+        let mut provider_auths = std::collections::HashMap::new();
+        provider_auths.insert(
+            "google".to_string(),
+            crate::types::ProviderAuthData {
+                auth_method: "token".to_string(),
+                token: "".to_string(),
+                profile_key: None,
+                profile: Some(serde_json::json!({
+                    "provider": "google",
+                    "type": "token",
+                    "token": ""
+                })),
+                oauth_provider_id: None,
+            },
+        );
+        let referenced_providers =
+            std::collections::BTreeSet::from(["google".to_string(), "openai".to_string()]);
+        let auth_doc = serde_json::json!({
+            "version": 1,
+            "profiles": {
+                "google:default": {
+                    "provider": "google",
+                    "type": "token",
+                    "token": "AIza-test"
+                }
+            },
+            "lastGood": {
+                "google": "google:default"
+            }
+        });
+
+        recover_provider_auths_from_doc(&mut provider_auths, &referenced_providers, &auth_doc);
+
+        assert_eq!(
+            provider_auths.get("google").map(|auth| auth.token.as_str()),
+            Some("AIza-test")
+        );
+        assert!(provider_auths.get("openai").is_none());
+    }
+
+    #[test]
+    fn test_collect_referenced_remote_providers_prefers_model_refs() {
+        let config: AgentConfig = serde_json::from_value(serde_json::json!({
+            "provider": "openai",
+            "api_key": "",
+            "auth_method": "token",
+            "model": "google/gemini-3.1-pro-preview",
+            "user_name": "User",
+            "agent_name": "Agent",
+            "agents": [
+                {
+                    "id": "agent-1",
+                    "name": "Sub",
+                    "model": "openai/gpt-5.4",
+                    "fallback_models": ["ollama/llama3.2"]
+                }
+            ]
+        }))
+        .expect("config should deserialize");
+
+        let providers = collect_referenced_remote_providers(&config);
+
+        assert_eq!(
+            providers.into_iter().collect::<Vec<_>>(),
+            vec!["google".to_string(), "openai".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_openclaw_fixture_loads_with_current_config_parser() {
+        let _lock = COMPAT_FIXTURE_LOCK.lock().unwrap();
+        let (_home, _guard) = write_compat_fixture_tree().expect("fixture tree should be created");
+
+        let current = get_current_config(None).expect("fixture config should load");
+
+        assert_eq!(current.provider, "google");
+        assert_eq!(current.model, "google/gemini-3.1-pro-preview");
+        assert_eq!(current.fallback_models, vec!["openai/gpt-5.4".to_string()]);
+        assert!(current.enable_multi_agent);
+        assert_eq!(current.agent_configs.len(), 1);
+        assert_eq!(current.agent_configs[0].model, "openai/gpt-5.4");
+        assert_eq!(
+            current.provider_auths.get("google").map(|auth| auth.token.as_str()),
+            Some("AIza-compat-google")
+        );
+        assert_eq!(
+            current
+                .provider_auths
+                .get("openai")
+                .and_then(|auth| auth.oauth_provider_id.as_deref()),
+            Some("openai-codex")
+        );
+    }
+
+    #[test]
+    fn test_openclaw_fixture_round_trips_without_losing_auth_contract() {
+        let _lock = COMPAT_FIXTURE_LOCK.lock().unwrap();
+        let (home, _guard) = write_compat_fixture_tree().expect("fixture tree should be created");
+
+        configure_agent(compat_agent_config()).expect("fixture config should be writable");
+
+        let written_openclaw_json = std::fs::read_to_string(home.join(".openclaw/openclaw.json"))
+            .expect("openclaw.json should exist");
+        let written_openclaw: serde_json::Value =
+            serde_json::from_str(&written_openclaw_json).expect("openclaw.json should parse");
+        let written_main_auth_json =
+            std::fs::read_to_string(home.join(".openclaw/agents/main/agent/auth-profiles.json"))
+                .expect("main auth profiles should exist");
+        let written_main_auth: serde_json::Value =
+            serde_json::from_str(&written_main_auth_json).expect("auth-profiles should parse");
+        let written_sub_auth_json = std::fs::read_to_string(
+            home.join(".openclaw/agents/agent-compat-1/agent/auth-profiles.json"),
+        )
+        .expect("subagent auth profiles should exist");
+        let written_sub_auth: serde_json::Value =
+            serde_json::from_str(&written_sub_auth_json).expect("sub auth should parse");
+        let reloaded = get_current_config(None).expect("round-tripped config should still load");
+
+        assert_eq!(
+            written_openclaw
+                .get("auth")
+                .and_then(|value| value.get("profiles"))
+                .and_then(|value| value.get("google:default"))
+                .and_then(|value| value.get("provider"))
+                .and_then(|value| value.as_str()),
+            Some("google")
+        );
+        assert_eq!(
+            written_openclaw
+                .get("auth")
+                .and_then(|value| value.get("profiles"))
+                .and_then(|value| value.get("openai-codex:default"))
+                .and_then(|value| value.get("provider"))
+                .and_then(|value| value.as_str()),
+            Some("openai-codex")
+        );
+        assert_eq!(
+            written_main_auth
+                .get("profiles")
+                .and_then(|value| value.get("google:default"))
+                .and_then(|value| value.get("token"))
+                .and_then(|value| value.as_str()),
+            Some("AIza-compat-google")
+        );
+        assert_eq!(
+            written_main_auth
+                .get("lastGood")
+                .and_then(|value| value.get("openai"))
+                .and_then(|value| value.as_str()),
+            Some("openai-codex:default")
+        );
+        assert_eq!(
+            written_sub_auth
+                .get("profiles")
+                .and_then(|value| value.get("google:default"))
+                .and_then(|value| value.get("provider"))
+                .and_then(|value| value.as_str()),
+            Some("google")
+        );
+        assert_eq!(reloaded.provider, "google");
+        assert_eq!(reloaded.agent_configs[0].model, "openai/gpt-5.4");
+        assert_eq!(
+            reloaded
+                .provider_auths
+                .get("openai")
+                .and_then(|auth| auth.oauth_provider_id.as_deref()),
+            Some("openai-codex")
+        );
+    }
+
+    #[test]
+    fn test_configure_agent_does_not_shell_mutate_openclaw_json_after_write() {
+        let _lock = COMPAT_FIXTURE_LOCK.lock().unwrap();
+        let (home, _guard) = write_compat_fixture_tree().expect("fixture tree should be created");
+
+        let fake_bin_dir = home
+            .parent()
+            .expect("home should have test root")
+            .join("bin");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let fake_openclaw = fake_bin_dir.join("openclaw");
+            std::fs::write(
+                &fake_openclaw,
+                format!(
+                    "#!/bin/sh\nif [ \"$1\" = \"config\" ] && [ \"$2\" = \"set\" ]; then printf '\\n}}' >> \"$HOME/.openclaw/openclaw.json\"; fi\nexit 0\n"
+                ),
+            )
+            .expect("should overwrite fake openclaw");
+            let mut perms = std::fs::metadata(&fake_openclaw)
+                .expect("fake openclaw metadata")
+                .permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&fake_openclaw, perms).expect("should chmod fake openclaw");
+        }
+
+        configure_agent(compat_agent_config()).expect("fixture config should still be writable");
+
+        let written_openclaw_json = std::fs::read_to_string(home.join(".openclaw/openclaw.json"))
+            .expect("openclaw.json should exist");
+        serde_json::from_str::<serde_json::Value>(&written_openclaw_json)
+            .expect("openclaw.json should remain valid JSON");
+    }
+
+    #[test]
+    fn test_get_current_config_loads_provider_auths_referenced_only_by_subagent_models() {
+        let _lock = COMPAT_FIXTURE_LOCK.lock().unwrap();
+        let (home, _guard) = write_compat_fixture_tree().expect("fixture tree should be created");
+
+        let home_str = home.to_string_lossy().to_string();
+        let openclaw_root = home.join(".openclaw");
+        let main_agent_dir = openclaw_root.join("agents/main/agent");
+
+        let subagent_only_provider_fixture = serde_json::json!({
+            "auth": {
+                "profiles": {
+                    "google:default": {
+                        "provider": "google",
+                        "mode": "token"
+                    },
+                    "openai-codex:default": {
+                        "provider": "openai-codex",
+                        "mode": "oauth"
+                    }
+                }
+            },
+            "agents": {
+                "defaults": {
+                    "workspace": format!("{}/.openclaw/workspace", home_str),
+                    "model": {
+                        "primary": "openai/gpt-5.4"
+                    },
+                    "models": {
+                        "openai/gpt-5.4": {}
+                    }
+                },
+                "list": [
+                    {
+                        "id": "main",
+                        "name": "Compat Main",
+                        "workspace": format!("{}/.openclaw/workspace", home_str),
+                        "agentDir": format!("{}/.openclaw/agents/main/agent", home_str),
+                        "model": {
+                            "primary": "openai/gpt-5.4"
+                        }
+                    },
+                    {
+                        "id": "agent-compat-1",
+                        "name": "Compat Sub",
+                        "workspace": format!("{}/.openclaw/agents/agent-compat-1/workspace", home_str),
+                        "agentDir": format!("{}/.openclaw/agents/agent-compat-1/agent", home_str),
+                        "model": {
+                            "primary": "google/gemini-3.1-pro-preview"
+                        }
+                    }
+                ]
+            }
+        });
+        std::fs::write(
+            openclaw_root.join("openclaw.json"),
+            serde_json::to_string_pretty(&subagent_only_provider_fixture).expect("fixture json"),
+        )
+        .expect("should write fixture openclaw.json");
+        std::fs::write(
+            main_agent_dir.join("auth-profiles.json"),
+            serde_json::json!({
+                "version": 1,
+                "profiles": {
+                    "google:default": {
+                        "provider": "google",
+                        "token": "AIza-subagent-only",
+                        "type": "token"
+                    },
+                    "openai-codex:default": {
+                        "provider": "openai-codex",
+                        "access": "openai-access",
+                        "type": "oauth"
+                    }
+                },
+                "lastGood": {
+                    "google": "google:default",
+                    "openai": "openai-codex:default"
+                }
+            })
+            .to_string(),
+        )
+        .expect("should write auth profiles");
+
+        let current = get_current_config(None).expect("fixture config should load");
+
+        assert_eq!(current.provider, "openai");
+        assert_eq!(current.model, "openai/gpt-5.4");
+        assert_eq!(current.agent_configs[0].model, "google/gemini-3.1-pro-preview");
+        assert_eq!(
+            current.provider_auths.get("google").map(|auth| auth.token.as_str()),
+            Some("AIza-subagent-only")
+        );
     }
 
     #[test]

@@ -14,6 +14,7 @@ import {
   LOCAL_PROVIDERS,
   applyModelProviderAuth,
   createDefaultProviderAuth,
+  getMissingReferencedProviders,
   getBaseProvider,
   getBaseProviderFromModel,
   getDefaultModelForProvider,
@@ -197,6 +198,19 @@ function AddAgentModal({
   }, [skillSearch]);
 
   const isValid = formState.name.trim().length > 0 && formState.model.length > 0;
+  const nextFormState = useMemo(
+    () => remapAgentModels(formState, draftProviderAuths),
+    [draftProviderAuths, formState],
+  );
+  const missingReferencedProviders = useMemo(() => getMissingReferencedProviders({
+    primaryModel: nextFormState.model,
+    fallbackModels: nextFormState.fallbackModels,
+    providerAuths: draftProviderAuths,
+    options: {
+      allowPendingOAuth: true,
+      oauthHandlerAvailable: !!onStartOAuth,
+    },
+  }), [draftProviderAuths, nextFormState, onStartOAuth]);
 
   function getProviderAuth(provider: string) {
     return draftProviderAuths[provider] || createDefaultProviderAuth(provider);
@@ -393,10 +407,10 @@ function AddAgentModal({
 
   async function handleSubmit() {
     if (!isValid || isSubmitting) return;
+    if (missingReferencedProviders.length > 0) return;
 
     setIsSubmitting(true);
     try {
-      const nextFormState = remapAgentModels(formState, draftProviderAuths);
       const pendingOAuthProviders = getPendingOAuthProviders(nextFormState);
       await flushProviderAuthDrafts();
       await onSubmit(nextFormState);
@@ -1138,6 +1152,14 @@ function AddAgentModal({
           <div className="flex items-center gap-3 border-t border-[var(--border)] bg-[var(--surface-panel)] px-6 py-4">
             <div className="text-xs text-[var(--text-muted)]">
               Agent creation is committed when you click <span className="font-semibold text-[var(--text-main)]">Add Agent</span>.
+              {missingReferencedProviders.length > 0 && (
+                <span
+                  className="block mt-1 text-[var(--error,#dc2626)]"
+                  data-testid="add-agent-missing-provider-auth-error"
+                >
+                  Missing authentication for {missingReferencedProviders.join(", ")}.
+                </span>
+              )}
             </div>
             <button
               type="button"
@@ -1149,7 +1171,7 @@ function AddAgentModal({
             <button
               type="button"
               onClick={() => void handleSubmit()}
-              disabled={!isValid || isSubmitting}
+              disabled={!isValid || isSubmitting || missingReferencedProviders.length > 0}
               className="primary"
             >
               {isSubmitting ? "Adding..." : "Add Agent"}

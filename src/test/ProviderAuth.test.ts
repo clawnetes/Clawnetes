@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyModelProviderAuth, buildDeferredOAuthQueue, buildReferencedProviders, createDefaultProviderAuth, getDefaultModelForProvider, getDisplayModelOptions, getProviderAuthOptions, isOAuthMethod, normalizeModelRefForUi, normalizeProviderAuths } from "../utils/providerAuth";
+import { applyModelProviderAuth, buildDeferredOAuthQueue, buildReferencedProviders, canUseProviderAuth, createDefaultProviderAuth, ensureProviderAuth, getDefaultModelForProvider, getDisplayModelOptions, getMissingReferencedProviders, getProviderAuthOptions, hasUsableProviderAuth, isOAuthMethod, normalizeModelRefForUi, normalizeProviderAuths } from "../utils/providerAuth";
 
 describe("providerAuth utilities", () => {
   it("builds a deduplicated set of referenced remote providers", () => {
@@ -18,6 +18,27 @@ describe("providerAuth utilities", () => {
     const auths = normalizeProviderAuths({}, "openai", "sk-test", "token");
     expect(auths.openai.token).toBe("sk-test");
     expect(auths.openai.auth_method).toBe("token");
+  });
+
+  it("does not copy the previously selected provider credentials into a new provider entry", () => {
+    const auths = ensureProviderAuth({
+      openai: {
+        auth_method: "token",
+        token: "sk-openai",
+        profile_key: null,
+        profile: null,
+        oauth_provider_id: "openai-codex",
+      },
+    }, "google");
+
+    expect(auths.openai.token).toBe("sk-openai");
+    expect(auths.google).toEqual({
+      auth_method: "token",
+      token: "",
+      profile_key: null,
+      profile: null,
+      oauth_provider_id: "google-gemini-cli",
+    });
   });
 
   it("includes OAuth options for supported providers", () => {
@@ -49,6 +70,52 @@ describe("providerAuth utilities", () => {
     expect(isOAuthMethod("token")).toBe(false);
     expect(isOAuthMethod("setup-token")).toBe(false);
     expect(isOAuthMethod("claude-cli")).toBe(false);
+  });
+
+  it("recognizes usable token and oauth auth records", () => {
+    expect(hasUsableProviderAuth("google", {
+      auth_method: "token",
+      token: "AIza-test",
+      profile_key: null,
+      profile: null,
+      oauth_provider_id: "google-gemini-cli",
+    })).toBe(true);
+
+    expect(hasUsableProviderAuth("google", {
+      auth_method: "google-gemini-cli",
+      token: "",
+      profile_key: "google-gemini-cli:default",
+      profile: { type: "oauth" },
+      oauth_provider_id: "google-gemini-cli",
+    })).toBe(true);
+
+    expect(hasUsableProviderAuth("google", {
+      auth_method: "token",
+      token: "",
+      profile_key: null,
+      profile: null,
+      oauth_provider_id: "google-gemini-cli",
+    })).toBe(false);
+  });
+
+  it("treats pending oauth as usable only when the caller can launch oauth", () => {
+    const auth = {
+      auth_method: "google-gemini-cli",
+      token: "",
+      profile_key: null,
+      profile: null,
+      oauth_provider_id: "google-gemini-cli",
+    };
+
+    expect(canUseProviderAuth("google", auth)).toBe(false);
+    expect(canUseProviderAuth("google", auth, {
+      allowPendingOAuth: true,
+      oauthHandlerAvailable: false,
+    })).toBe(false);
+    expect(canUseProviderAuth("google", auth, {
+      allowPendingOAuth: true,
+      oauthHandlerAvailable: true,
+    })).toBe(true);
   });
 
   it("creates a default provider auth record", () => {
@@ -115,6 +182,29 @@ describe("providerAuth utilities", () => {
     expect(queue).toEqual([
       expect.objectContaining({ id: "provider:google", targetProvider: "google", authMethod: "google-gemini-cli" }),
     ]);
+  });
+
+  it("reports missing auth for referenced providers", () => {
+    expect(getMissingReferencedProviders({
+      primaryModel: "google/gemini-3.1-pro-preview",
+      fallbackModels: ["openai/gpt-5.4"],
+      providerAuths: {
+        openai: {
+          auth_method: "token",
+          token: "sk-openai",
+          profile_key: null,
+          profile: null,
+          oauth_provider_id: "openai-codex",
+        },
+        google: {
+          auth_method: "token",
+          token: "",
+          profile_key: null,
+          profile: null,
+          oauth_provider_id: "google-gemini-cli",
+        },
+      },
+    })).toEqual(["google"]);
   });
 
   it("builds a deferred OAuth queue for Gemini skill auth even when no model references google", () => {
@@ -191,6 +281,30 @@ describe("providerAuth utilities", () => {
 
     expect(normalizeModelRefForUi("openai/gpt-5.4", auths)).toBe("openai-codex/gpt-5.4");
     expect(normalizeModelRefForUi("openai-codex/gpt-5.4", auths)).toBe("openai-codex/gpt-5.4");
+  });
+
+  it("repairs corrupted gemini model refs leaked into the openai-codex namespace", () => {
+    const auths = {
+      openai: {
+        auth_method: "openai-codex",
+        token: "",
+        profile_key: "openai-codex:default",
+        profile: {},
+        oauth_provider_id: "openai-codex",
+      },
+      google: {
+        auth_method: "token",
+        token: "AIza-test",
+        profile_key: null,
+        profile: null,
+        oauth_provider_id: null,
+      },
+    };
+
+    expect(normalizeModelRefForUi("openai-codex/gemini-3.1-pro-preview", auths)).toBe("google/gemini-3.1-pro-preview");
+    expect(applyModelProviderAuth("openai-codex/gemini-3.1-pro-preview", auths)).toBe("google/gemini-3.1-pro-preview");
+    expect(getDisplayModelOptions("google", auths, { google: [{ value: "google/gemini-3.1-pro-preview", label: "Gemini" }] })[0]?.value)
+      .toBe("google/gemini-3.1-pro-preview");
   });
 
   it("keeps referenced providers keyed by the base provider when codex models are selected", () => {

@@ -35,6 +35,9 @@ export default function ChatTranscript({
   activeSessionKey,
   onSetComposerValue,
 }: ChatTranscriptProps) {
+  const showBlockingHistoryState = loadingHistory && messages.length === 0;
+  const showInlineErrorBanner = !!shellError && messages.length > 0;
+
   return (
     <div className="chat-transcript">
       <div ref={transcriptRef} className="chat-transcript-scroll">
@@ -44,12 +47,18 @@ export default function ChatTranscript({
           </div>
         )}
 
+        {showInlineErrorBanner && (
+          <div className="chat-config-banner error" data-testid="chat-inline-error-banner">
+            {shellError}
+          </div>
+        )}
+
         {showConnectingState ? (
           <div className="chat-state-card" data-testid="chat-connecting-state">
             <h3>Connecting to OpenClaw</h3>
             <p>{connectionLabel}</p>
           </div>
-        ) : shellError ? (
+        ) : shellError && !showInlineErrorBanner ? (
           <div className="chat-state-card error" data-testid="chat-error-state">
             <h3>Gateway connection failed</h3>
             <p>{shellError}</p>
@@ -59,7 +68,7 @@ export default function ChatTranscript({
             <h3>No agents available</h3>
             <p>The OpenClaw gateway is connected, but it did not return any configured agents.</p>
           </div>
-        ) : loadingHistory ? (
+        ) : showBlockingHistoryState ? (
           <div className="chat-state-card">
             <h3>Loading session</h3>
             <p>Fetching the latest transcript from OpenClaw.</p>

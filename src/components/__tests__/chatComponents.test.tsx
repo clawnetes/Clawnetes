@@ -239,7 +239,7 @@ describe("ChatHeader", () => {
         providerAuths={{
           anthropic: {
             auth_method: "token",
-            token: "",
+            token: "anthropic-test-key",
             profile_key: null,
             profile: null,
             oauth_provider_id: null,

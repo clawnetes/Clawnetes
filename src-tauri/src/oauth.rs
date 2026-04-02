@@ -157,6 +157,9 @@ pub fn auth_provider_id_for_config(
 
 pub fn normalize_model_ref_for_ui(model_ref: &str) -> String {
     if let Some(rest) = model_ref.strip_prefix("openai-codex/") {
+        if rest.starts_with("gemini") {
+            return format!("google/{}", rest);
+        }
         format!("openai/{}", rest)
     } else {
         model_ref.to_string()

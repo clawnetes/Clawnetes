@@ -20,6 +20,8 @@ function createReconnectMockWebSocket(options?: {
   historyMessages?: Array<Record<string, unknown>>;
   sessions?: MockSession[];
   onChatSend?: (sessionKey: string) => void;
+  resolveSessionsForAgent?: (agentId: string, sessions: Map<string, MockSession>) => MockSession[];
+  resolveHistoryForSession?: (sessionKey: string, sessions: Map<string, MockSession>) => MockSession | undefined;
 }) {
   const initialSessions = options?.sessions || [
     {
@@ -98,9 +100,11 @@ function createReconnectMockWebSocket(options?: {
         case "sessions.list":
           {
             const requestedAgentId = parsed.params?.agentId || "main";
-            const visibleSessions = [...sessions.values()].filter((session) =>
-              session.agentId === requestedAgentId || (parsed.params?.includeGlobal && session.agentId === "main"),
-            );
+            const visibleSessions = options?.resolveSessionsForAgent
+              ? options.resolveSessionsForAgent(requestedAgentId, sessions)
+              : [...sessions.values()].filter((session) =>
+                session.agentId === requestedAgentId || (parsed.params?.includeGlobal && session.agentId === "main"),
+              );
             respond({
               type: "res",
               id: parsed.id,
@@ -119,7 +123,9 @@ function createReconnectMockWebSocket(options?: {
           break;
         case "chat.history":
           {
-            const session = sessions.get(parsed.params.sessionKey);
+            const session = options?.resolveHistoryForSession
+              ? options.resolveHistoryForSession(parsed.params.sessionKey, sessions)
+              : sessions.get(parsed.params.sessionKey);
             respond({
               type: "res",
               id: parsed.id,
@@ -278,7 +284,7 @@ async function openInstalledLocalChat(user: ReturnType<typeof userEvent.setup> =
   await user.click(screen.getByTestId("btn-continue"));
 
   await waitFor(() => {
-    expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-sidebar-brand")).toHaveTextContent("Clawnetes");
   });
 
   return user;
@@ -373,7 +379,7 @@ async function openRemoteInstalledChat(user: ReturnType<typeof userEvent.setup>)
   await user.click(screen.getByTestId("btn-continue"));
 
   await waitFor(() => {
-    expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-sidebar-brand")).toHaveTextContent("Clawnetes");
   });
 }
 
@@ -441,7 +447,7 @@ describe("Installed-state chat shell", () => {
       expect(screen.getByTestId("step-environment")).toBeInTheDocument();
     });
 
-    expect(screen.queryByText("Agent Workspace")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("chat-sidebar-brand")).not.toBeInTheDocument();
   });
 
   it("opens the native chat workspace after the local environment is confirmed", async () => {
@@ -452,6 +458,49 @@ describe("Installed-state chat shell", () => {
     });
 
     expect(screen.getAllByText("Welcome back.").length).toBeGreaterThan(0);
+  });
+
+  it("shows the updated OpenClaw connection label", async () => {
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByText("Clawnetes with OpenClaw 2.0.0")).toBeInTheDocument();
+    });
+  });
+
+  it("normalizes duplicated OpenClaw text in the footer status label", async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "check_prerequisites") {
+        return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: true });
+      }
+      if (cmd === "get_openclaw_version") {
+        return Promise.resolve("OpenClaw 2026.3.24 (cff6dc9)");
+      }
+      if (cmd === "has_saved_license") {
+        return Promise.resolve(false);
+      }
+      if (cmd === "prepare_gateway_chat_connection") {
+        return Promise.resolve({
+          wsUrl: "ws://127.0.0.1:18789",
+          authToken: "token-123",
+          targetEnvironment: "local",
+          gatewayPort: 18789,
+          tunnelActive: false,
+          openClawVersion: "OpenClaw 2026.3.24 (cff6dc9)",
+        });
+      }
+      if (cmd === "run_doctor_repair") {
+        return Promise.resolve("repair-ok");
+      }
+      return Promise.resolve(null);
+    });
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByText("Clawnetes with OpenClaw 2026.3.24 (cff6dc9)")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Clawnetes with OpenClaw OpenClaw 2026.3.24 (cff6dc9)")).not.toBeInTheDocument();
   });
 
   it("removes a saved previous remote from the environment dropdown and clears matching legacy storage", async () => {
@@ -519,11 +568,32 @@ describe("Installed-state chat shell", () => {
     await user.click(screen.getByTestId("right-panel-close"));
 
     await waitFor(() => {
-      expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-sidebar-brand")).toHaveTextContent("Clawnetes");
     });
   });
 
-  it("restores the transcript scroll position after closing Settings", async () => {
+  it("keeps the Recent empty state centered", async () => {
+    const user = userEvent.setup();
+    await openInstalledLocalChat(user);
+
+    const emptyState = screen.getByText("No past chats").closest(".text-center");
+    expect(emptyState).not.toBeNull();
+    expect(emptyState?.className).toContain("items-center");
+  });
+
+  it("opens the transcript at the bottom of the active chat", async () => {
+    const user = userEvent.setup();
+    const scrollState = mockTranscriptScrollState(0);
+    await openInstalledLocalChat(user);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-sidebar-brand")).toHaveTextContent("Clawnetes");
+    });
+
+    expect(scrollState.getTop()).toBe(1600);
+  });
+
+  it("returns to the bottom of the active transcript after closing Settings", async () => {
     const user = userEvent.setup();
     const scrollState = mockTranscriptScrollState(420);
     await openInstalledLocalChat(user);
@@ -533,10 +603,10 @@ describe("Installed-state chat shell", () => {
     await user.click(screen.getByTestId("right-panel-close"));
 
     await waitFor(() => {
-      expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-sidebar-brand")).toHaveTextContent("Clawnetes");
     });
 
-    expect(scrollState.getTop()).toBe(420);
+    expect(scrollState.getTop()).toBe(1600);
   });
 
   it("keeps internal weather transcript noise hidden after opening and closing Settings", async () => {
@@ -625,7 +695,7 @@ Tomorrow looks clear and cool.`,
     });
   });
 
-  it("ignores stale handed-off scroll snapshots when the thread no longer matches", async () => {
+  it("restores an external handed-off snapshot when the agent and session still match even if the local thread id changed", async () => {
     const scrollState = mockTranscriptScrollState(0);
     const onConsumeReturnScrollSnapshot = vi.fn();
     vi.stubGlobal("WebSocket", createReconnectMockWebSocket());
@@ -651,7 +721,7 @@ Tomorrow looks clear and cool.`,
       expect(screen.getAllByText("Welcome back.").length).toBeGreaterThan(0);
     });
 
-    expect(scrollState.getTop()).toBe(0);
+    expect(scrollState.getTop()).toBe(300);
     expect(onConsumeReturnScrollSnapshot).toHaveBeenCalledTimes(1);
   });
 
@@ -707,6 +777,139 @@ Tomorrow looks clear and cool.`,
     });
 
     expect(sentSessionKeys[sentSessionKeys.length - 1]).toBe("agent:ops:main");
+  });
+
+  it("deletes archived chats after confirmation and removes them from persisted storage", async () => {
+    const user = userEvent.setup();
+    await openInstalledLocalChat(user);
+
+    await user.click(screen.getByTestId("chat-new-session"));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Fresh start.").length).toBeGreaterThan(0);
+    });
+
+    const recentSectionHeader = screen.getByText("Recent").closest(".chat-sidebar-section");
+    expect(recentSectionHeader).not.toBeNull();
+    const archivedDeleteButton = recentSectionHeader
+      ? Array.from(recentSectionHeader.querySelectorAll("button"))
+        .find((button) => button.getAttribute("aria-label")?.includes("Delete chat"))
+      : undefined;
+
+    expect(archivedDeleteButton).toBeDefined();
+    if (!archivedDeleteButton) {
+      return;
+    }
+
+    await user.click(archivedDeleteButton);
+    await waitFor(() => {
+      expect(screen.getByText("Delete archived chat")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("No past chats")).toBeInTheDocument();
+    });
+
+    const storedThreads = JSON.parse(localStorage.getItem("clawnetes.chat.threads.v1") || "{}");
+    expect(JSON.stringify(storedThreads)).not.toContain("\"status\":\"archived\"");
+  });
+
+  it("deletes live chats after confirmation and persists the local dismissal", async () => {
+    const user = userEvent.setup();
+    await openInstalledLocalChat(user);
+
+    await waitFor(() => {
+      expect(screen.getByText("Welcome back.")).toBeInTheDocument();
+    });
+
+    const liveDeleteButton = screen.getAllByRole("button")
+      .find((button) => button.getAttribute("data-testid")?.startsWith("delete-chat-thread-"));
+    expect(liveDeleteButton).toBeDefined();
+    if (!liveDeleteButton) {
+      return;
+    }
+
+    await user.click(liveDeleteButton);
+    await waitFor(() => {
+      expect(screen.getByText("Delete live chat")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("No active chats")).toBeInTheDocument();
+    });
+
+    expect(localStorage.getItem("clawnetes.chat.hiddenLiveSessions.v1")).toContain("main");
+  });
+
+  it("preserves the selected sub-agent when the chat shell remounts", async () => {
+    vi.stubGlobal("WebSocket", createReconnectMockWebSocket({
+      sessions: [
+        {
+          agentId: "main",
+          key: "agent:main:main",
+          sessionId: "sess-1",
+          displayName: "Main Session",
+          derivedTitle: "Main Session",
+          messages: [{ role: "assistant", content: [{ type: "text", text: "Welcome back." }], timestamp: Date.now() }],
+        },
+        {
+          agentId: "ops",
+          key: "agent:ops:main",
+          sessionId: "sess-ops",
+          displayName: "Ops Session",
+          derivedTitle: "Ops Session",
+          messages: [{ role: "assistant", content: [{ type: "text", text: "Ops ready." }], timestamp: Date.now() }],
+        },
+      ],
+    }));
+
+    const onAgentSwitch = vi.fn();
+    const { unmount } = render(
+      <ChatShell
+        bootstrap={DIRECT_CHAT_BOOTSTRAP}
+        bootstrapping={false}
+        bootstrapError=""
+        onRetryConnection={vi.fn()}
+        onOpenConfigure={vi.fn()}
+        onAgentSwitch={onAgentSwitch}
+        activeAgentId="ops"
+        agents={[
+          { id: "ops", name: "Ops Agent", emoji: "🛠️" },
+        ] as any}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Ops ready.").length).toBeGreaterThan(0);
+    });
+
+    expect(screen.getByTestId("chat-active-agent")).toHaveTextContent("Ops Agent");
+
+    unmount();
+
+    render(
+      <ChatShell
+        bootstrap={DIRECT_CHAT_BOOTSTRAP}
+        bootstrapping={false}
+        bootstrapError=""
+        onRetryConnection={vi.fn()}
+        onOpenConfigure={vi.fn()}
+        onAgentSwitch={onAgentSwitch}
+        activeAgentId="ops"
+        agents={[
+          { id: "ops", name: "Ops Agent", emoji: "🛠️" },
+        ] as any}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Ops ready.").length).toBeGreaterThan(0);
+    });
+
+    expect(screen.getByTestId("chat-active-agent")).toHaveTextContent("Ops Agent");
+    expect(onAgentSwitch).not.toHaveBeenCalled();
   });
 
   it("routes main-agent chat sends to the canonical main session key", async () => {
@@ -1089,5 +1292,90 @@ Tomorrow looks clear and cool.`,
       expect(document.documentElement.dataset.theme).toBe("light");
     });
     expect(localStorage.getItem("clawnetes.chat.theme.v1")).toBe("light");
+  });
+
+  it("disables chat sends while a config update is in progress", async () => {
+    vi.stubGlobal("WebSocket", createReconnectMockWebSocket());
+
+    render(
+      <ChatShell
+        bootstrap={DIRECT_CHAT_BOOTSTRAP}
+        bootstrapping={false}
+        bootstrapError=""
+        onRetryConnection={vi.fn()}
+        onOpenConfigure={vi.fn()}
+        isConfigUpdating
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Welcome back.").length).toBeGreaterThan(0);
+    });
+
+    expect(screen.getByTestId("chat-composer")).toBeDisabled();
+    expect(screen.getByTestId("chat-send")).toBeDisabled();
+    expect(screen.getByTestId("chat-config-banner")).toBeInTheDocument();
+  });
+
+  it("refreshes the active session after a config update completes", async () => {
+    let phase: "before" | "after" = "before";
+
+    vi.stubGlobal("WebSocket", createReconnectMockWebSocket({
+      resolveSessionsForAgent: (_agentId) => [{
+        agentId: "main",
+        key: "agent:main:main",
+        sessionId: phase === "before" ? "sess-before" : "sess-after",
+        displayName: "Main Session",
+        derivedTitle: "Main Session",
+        messages: [],
+      }],
+      resolveHistoryForSession: (sessionKey) => ({
+        agentId: "main",
+        key: sessionKey,
+        sessionId: phase === "before" ? "sess-before" : "sess-after",
+        displayName: "Main Session",
+        derivedTitle: "Main Session",
+        messages: [{
+          role: "assistant",
+          content: [{
+            type: "text",
+            text: phase === "before" ? "Before reconfigure." : "After reconfigure.",
+          }],
+          timestamp: Date.now(),
+        }],
+      }),
+    }));
+
+    const { rerender } = render(
+      <ChatShell
+        bootstrap={DIRECT_CHAT_BOOTSTRAP}
+        bootstrapping={false}
+        bootstrapError=""
+        onRetryConnection={vi.fn()}
+        onOpenConfigure={vi.fn()}
+        isConfigUpdating
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Before reconfigure.").length).toBeGreaterThan(0);
+    });
+
+    phase = "after";
+
+    rerender(
+      <ChatShell
+        bootstrap={DIRECT_CHAT_BOOTSTRAP}
+        bootstrapping={false}
+        bootstrapError=""
+        onRetryConnection={vi.fn()}
+        onOpenConfigure={vi.fn()}
+        isConfigUpdating={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("After reconfigure.").length).toBeGreaterThan(0);
+    });
   });
 });

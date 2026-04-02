@@ -276,6 +276,29 @@ describe("ModelSwitcherPanel", () => {
     expect(onModelChange).toHaveBeenCalledWith("openai/gpt-5.4");
   });
 
+  it("blocks saving a Gemini model when Google auth is missing", async () => {
+    const user = userEvent.setup();
+    const onModelChange = vi.fn();
+
+    render(
+      <ModelSwitcherPanel
+        currentModel="anthropic/claude-opus-4-6"
+        fallbackModels={[]}
+        onModelChange={onModelChange}
+        providerAuths={{}}
+      />,
+    );
+
+    await user.click(screen.getByTestId("provider-dropdown").querySelector("button")!);
+    await user.click(screen.getByTestId("dropdown-option-google"));
+
+    expect(screen.getByTestId("missing-provider-auth-error")).toHaveTextContent(
+      "Missing authentication for google.",
+    );
+    expect(screen.getByTestId("model-save-btn")).toBeDisabled();
+    expect(onModelChange).not.toHaveBeenCalled();
+  });
+
   it("detects Ollama models and saves the first detected model by default", async () => {
     const user = userEvent.setup();
     const onModelChange = vi.fn();

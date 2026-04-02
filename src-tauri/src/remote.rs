@@ -560,12 +560,6 @@ pub async fn setup_remote_openclaw(
         &serde_json::to_string_pretty(&config_val)?,
     )?;
 
-    let _ = executor.run(&format!(
-        "{}openclaw config set gateway.auth.token {}",
-        nvm_prefix,
-        shell_single_quote(&gateway_token)
-    ));
-
     let mut meta = serde_json::Map::new();
     if let Some(agent_type) = &config.agent_type {
         meta.insert(

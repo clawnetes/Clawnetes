@@ -21,6 +21,9 @@ function createMockWebSocket(options?: {
   sessions?: MockSessionState[];
   sendErrorMessage?: string;
   streamTexts?: string[];
+  finalHistoryText?: string;
+  suppressAgentStream?: boolean;
+  omitPersistedAssistantReply?: boolean;
   hangAfterSend?: boolean;
   completeThroughSessionRefresh?: boolean;
   abortErrorMessage?: string;
@@ -32,6 +35,9 @@ function createMockWebSocket(options?: {
   sessionsChangedAbortedLastRun?: boolean;
   streamDelayMs?: number;
   staleHistoryLoadsAfterSend?: number;
+  historyDelayMs?: number;
+  emitSessionsChangedBeforeFinal?: boolean;
+  preFinalSessionsChangedDelayMs?: number;
 }) {
   const sentMethods: string[] = [];
   const sentChatSessionKeys: string[] = [];
@@ -161,10 +167,7 @@ function createMockWebSocket(options?: {
             staleHistoryLoadsRemaining > 0 && staleHistoryMessages
               ? staleHistoryMessages
               : main?.messages || [];
-          if (staleHistoryLoadsRemaining > 0) {
-            staleHistoryLoadsRemaining -= 1;
-          }
-          respond({
+          const payload = {
             type: "res",
             id: parsed.id,
             ok: true,
@@ -173,7 +176,13 @@ function createMockWebSocket(options?: {
               sessionId: main?.sessionId || null,
               messages,
             },
-          });
+          };
+          schedule(() => {
+            if (staleHistoryLoadsRemaining > 0) {
+              staleHistoryLoadsRemaining -= 1;
+            }
+            respond(payload);
+          }, options?.historyDelayMs ?? 0);
           break;
         }
         case "chat.send": {
@@ -249,6 +258,7 @@ function createMockWebSocket(options?: {
             const finalText = options?.streamTexts?.length
               ? options.streamTexts[options.streamTexts.length - 1]
               : "Done.";
+            const persistedFinalText = options?.finalHistoryText ?? finalText;
             if ((options?.staleHistoryLoadsAfterSend || 0) > 0) {
               staleHistoryLoadsRemaining = options?.staleHistoryLoadsAfterSend || 0;
               staleHistoryMessages = main.messages.map((message) => ({ ...message }));
@@ -256,23 +266,47 @@ function createMockWebSocket(options?: {
             main.messages = [
               ...main.messages,
               { role: "user", text: parsed.params.message, timestamp: Date.now() },
-              { role: "assistant", content: [{ type: "text", text: finalText }], timestamp: Date.now() + 1 },
+              ...(options?.omitPersistedAssistantReply
+                ? []
+                : [{ role: "assistant", content: [{ type: "text", text: persistedFinalText }], timestamp: Date.now() + 1 }]),
             ];
             sessions.set("main", main);
             const streamTexts = options?.streamTexts?.length ? options.streamTexts : ["Done."];
             if (!options?.hangAfterSend) {
               const streamDelayMs = options?.streamDelayMs ?? 0;
-              streamTexts.forEach((text, index) => {
+              if (!options?.suppressAgentStream) {
+                streamTexts.forEach((text, index) => {
+                  schedule(() => {
+                    this.emit("message", {
+                      data: JSON.stringify({
+                        type: "event",
+                        event: "agent",
+                        payload: { runId, stream: "assistant", data: { text } },
+                      }),
+                    });
+                  }, streamDelayMs * (index + 1));
+                });
+              }
+
+              if (options?.emitSessionsChangedBeforeFinal) {
                 schedule(() => {
                   this.emit("message", {
                     data: JSON.stringify({
                       type: "event",
-                      event: "agent",
-                      payload: { runId, stream: "assistant", data: { text } },
+                      event: "sessions.changed",
+                      payload: {
+                        sessionKey: sessionsChangedSessionKey,
+                        sessionId: main.sessionId,
+                        updatedAt: main.updatedAt,
+                        reason: "message",
+                        status: null,
+                        endedAt: null,
+                        abortedLastRun: null,
+                      },
                     }),
                   });
-                }, streamDelayMs * (index + 1));
-              });
+                }, options?.preFinalSessionsChangedDelayMs ?? streamDelayMs);
+              }
 
               schedule(() => {
                 if (options?.completeThroughSessionRefresh) {
@@ -398,7 +432,7 @@ async function openInstalledLocalChat(user: ReturnType<typeof userEvent.setup> =
   await user.click(screen.getByTestId("btn-continue"));
 
   await waitFor(() => {
-    expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-sidebar-brand")).toHaveTextContent("Clawnetes");
   });
 
   return user;
@@ -1023,6 +1057,34 @@ HEARTBEAT_OK`,
     expect(screen.queryByText(/<final>/i)).not.toBeInTheDocument();
   });
 
+  it("hides streamed startup persona chatter instead of rendering it as a reply", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      streamTexts: [
+        `SUPERMAN
+console.log("System online. Hello, Mulugeta.");
+👨‍💻 I'm ready to write, debug, or review some code. What are we building or fixing today?`,
+      ],
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "fix the build");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/System online\. Hello, Mulugeta\./i)).not.toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/What are we building or fixing today\?/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^SUPERMAN$/i)).not.toBeInTheDocument();
+  });
+
   it("clears thinking state when a reply completes through session refresh without a final chat event", async () => {
     const user = userEvent.setup();
     const { WebSocket } = createMockWebSocket({
@@ -1112,6 +1174,273 @@ HEARTBEAT_OK`,
     expect(screen.queryByText("Agent is thinking...")).not.toBeInTheDocument();
   });
 
+  it("retries history reconciliation when the final event arrives before any visible assistant text", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      suppressAgentStream: true,
+      finalHistoryText: "Heya, it's google/gemini-3.1-pro-preview.",
+      staleHistoryLoadsAfterSend: 1,
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "heya what's the model");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      const transcript = document.querySelector(".chat-transcript-scroll");
+      expect(transcript).not.toBeNull();
+      expect(within(transcript as HTMLElement).getByText("heya what's the model")).toBeInTheDocument();
+      expect(within(transcript as HTMLElement).getByText("Heya, it's google/gemini-3.1-pro-preview.")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("Agent is thinking...")).not.toBeInTheDocument();
+  });
+
+  it("keeps retrying terminal reconciliation until the assistant reply appears", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      suppressAgentStream: true,
+      finalHistoryText: "Recovered after multiple stale history polls.",
+      staleHistoryLoadsAfterSend: 2,
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "show the final answer");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      const transcript = document.querySelector(".chat-transcript-scroll");
+      expect(transcript).not.toBeNull();
+      expect(within(transcript as HTMLElement).getByText("Recovered after multiple stale history polls.")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("Agent is thinking...")).not.toBeInTheDocument();
+  });
+
+  it("keeps polling terminal history beyond the old retry cap without sync-status UI", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      suppressAgentStream: true,
+      finalHistoryText: "Slow tool-heavy answer finally arrived.",
+      staleHistoryLoadsAfterSend: 5,
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "what's the status on this project");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-send")).toBeDisabled();
+      expect(screen.getByTestId("chat-composer")).not.toBeDisabled();
+      expect(screen.queryByText("Syncing final reply...")).not.toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Slow tool-heavy answer finally arrived.")).toBeInTheDocument();
+    }, { timeout: 4000 });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-composer")).not.toBeDisabled();
+      expect(screen.getByText("Enter sends, Shift+Enter adds a new line")).toBeInTheDocument();
+    });
+  });
+
+  it("recovers two consecutive no-stream replies without reopening the app", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      suppressAgentStream: true,
+      finalHistoryText: "Gemini reply loaded from history.",
+      staleHistoryLoadsAfterSend: 1,
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "first question");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Gemini reply loaded from history.")).toHaveLength(1);
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "second question");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Gemini reply loaded from history.")).toHaveLength(2);
+    });
+
+    const transcript = document.querySelector(".chat-transcript-scroll");
+    expect(transcript).not.toBeNull();
+    expect(within(transcript as HTMLElement).getByText("first question")).toBeInTheDocument();
+    expect(within(transcript as HTMLElement).getByText("second question")).toBeInTheDocument();
+  });
+
+  it("shows a friendly inline retry message when a final reply never appears in history", async () => {
+    const user = userEvent.setup();
+    const nowSpy = vi.spyOn(Date, "now");
+    let mockedNow = 1_000;
+    nowSpy.mockImplementation(() => mockedNow);
+    try {
+      const { WebSocket } = createMockWebSocket({
+        suppressAgentStream: true,
+        omitPersistedAssistantReply: true,
+        staleHistoryLoadsAfterSend: 99,
+      });
+      vi.stubGlobal("WebSocket", WebSocket);
+
+      await openInstalledLocalChat();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
+      });
+
+      await user.type(screen.getByTestId("chat-composer"), "where is the reply");
+      await user.click(screen.getByTestId("chat-send"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-send")).toBeDisabled();
+        expect(screen.queryByText("Syncing final reply...")).not.toBeInTheDocument();
+      });
+
+      mockedNow = 40_000;
+
+      await waitFor(() => {
+        expect(screen.getByText("That reply didn’t come through. Try sending it again.")).toBeInTheDocument();
+      }, { timeout: 5000 });
+
+      expect(screen.queryByText("Syncing final reply...")).not.toBeInTheDocument();
+      expect(screen.queryByText(/final reply did not sync into chat/i)).not.toBeInTheDocument();
+      expect(screen.queryByTestId("chat-inline-error-banner")).not.toBeInTheDocument();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("does not let a non-terminal sessions.changed refresh clobber an in-flight reply", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      streamTexts: ["Partial reply", "Partial reply complete."],
+      emitSessionsChangedBeforeFinal: true,
+      staleHistoryLoadsAfterSend: 1,
+      streamDelayMs: 20,
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "hello");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      const transcript = document.querySelector(".chat-transcript-scroll");
+      expect(transcript).not.toBeNull();
+      expect(within(transcript as HTMLElement).getByText("Partial reply complete.")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Agent is thinking...")).not.toBeInTheDocument();
+    });
+  });
+
+  it("keeps the current transcript mounted during background history refreshes", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      historyMessages: [
+        { role: "assistant", content: [{ type: "text", text: "Welcome back." }], timestamp: 1 },
+      ],
+      streamTexts: ["Background refresh reply."],
+      historyDelayMs: 50,
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    await waitFor(() => {
+      expect(screen.getByText("Welcome back.")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "hello");
+    await user.click(screen.getByTestId("chat-send"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Background refresh reply.")).toBeInTheDocument();
+    });
+
+    const transcript = document.querySelector(".chat-transcript-scroll");
+    expect(transcript).not.toBeNull();
+    expect(within(transcript as HTMLElement).getByText("Welcome back.")).toBeInTheDocument();
+    expect(within(transcript as HTMLElement).getByText("hello")).toBeInTheDocument();
+    expect(screen.queryByText("Loading session")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("chat-history-refresh-banner")).not.toBeInTheDocument();
+  });
+
+  it("keeps the transcript pinned to the bottom when a reply arrives through history refresh", async () => {
+    const user = userEvent.setup();
+    const { WebSocket } = createMockWebSocket({
+      suppressAgentStream: true,
+      finalHistoryText: "Heya, it's google/gemini-3.1-pro-preview.",
+      staleHistoryLoadsAfterSend: 1,
+    });
+    vi.stubGlobal("WebSocket", WebSocket);
+
+    await openInstalledLocalChat();
+
+    const transcript = document.querySelector(".chat-transcript-scroll") as HTMLDivElement;
+    let scrollTop = 600;
+    let scrollHeight = 1000;
+
+    Object.defineProperty(transcript, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(transcript, "scrollHeight", {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(transcript, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+
+    await user.type(screen.getByTestId("chat-composer"), "heya what's the model");
+    await user.click(screen.getByTestId("chat-send"));
+
+    scrollHeight = 1400;
+
+    await waitFor(() => {
+      expect(screen.getByText("Heya, it's google/gemini-3.1-pro-preview.")).toBeInTheDocument();
+    });
+
+    expect(scrollTop).toBe(1400);
+  });
+
   it("clears thinking state from a terminal sessions.changed snapshot even without a final chat event", async () => {
     const user = userEvent.setup();
     const { WebSocket } = createMockWebSocket({
@@ -1175,7 +1504,7 @@ HEARTBEAT_OK`,
     await openInstalledLocalChat();
 
     await waitFor(() => {
-      expect(document.querySelectorAll('[data-testid^="chat-thread-"]')).toHaveLength(1);
+      expect(document.querySelectorAll('[data-testid^="chat-thread-row-"]')).toHaveLength(1);
     });
 
     expect(screen.getByRole("button", { name: "Main Session" })).toBeInTheDocument();
@@ -1215,7 +1544,7 @@ HEARTBEAT_OK`,
       expect(screen.getByText("First chunk. Second chunk. Third chunk.")).toBeInTheDocument();
     });
 
-    expect(scrollIntoViewMock.mock.calls.length).toBeGreaterThan(2);
+    expect(scrollToMock.mock.calls.length).toBeGreaterThan(2);
   });
 
   it("pauses streaming auto-follow after manual scroll-up and re-enables it on the next reply", async () => {
@@ -1252,7 +1581,7 @@ HEARTBEAT_OK`,
       expect(screen.getByText("Chunk one.")).toBeInTheDocument();
     });
 
-    const followCallsBeforePause = scrollIntoViewMock.mock.calls.length;
+    const followCallsBeforePause = scrollToMock.mock.calls.length;
     scrollTop = 200;
     scrollHeight = 1200;
     fireEvent.scroll(transcript);
@@ -1261,7 +1590,7 @@ HEARTBEAT_OK`,
       expect(screen.getByText("Chunk one. Chunk two. Chunk three.")).toBeInTheDocument();
     });
 
-    const followCallsAfterPause = scrollIntoViewMock.mock.calls.length;
+    const followCallsAfterPause = scrollToMock.mock.calls.length;
     expect(followCallsAfterPause).toBe(followCallsBeforePause);
 
     scrollTop = 800;
@@ -1272,7 +1601,7 @@ HEARTBEAT_OK`,
     await user.click(screen.getByTestId("chat-send"));
 
     await waitFor(() => {
-      expect(scrollIntoViewMock.mock.calls.length).toBeGreaterThan(followCallsAfterPause);
+      expect(scrollToMock.mock.calls.length).toBeGreaterThan(followCallsAfterPause);
     });
   });
 });
@@ -1378,7 +1707,7 @@ describe("ChatShell fresh chat flow", () => {
     await openInstalledLocalChat();
 
     await waitFor(() => {
-      expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-sidebar-brand")).toHaveTextContent("Clawnetes");
     });
 
     await user.click(screen.getByRole("button", { name: "light" }));
@@ -1420,7 +1749,7 @@ describe("ChatShell fresh chat flow", () => {
     await openInstalledLocalChat();
 
     await waitFor(() => {
-      expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-sidebar-brand")).toHaveTextContent("Clawnetes");
     });
 
     expect(screen.getByTestId("chat-new-session").querySelector("svg")).not.toBeNull();

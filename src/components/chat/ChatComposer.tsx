@@ -72,7 +72,11 @@ export default function ChatComposer({
         )}
       </div>
       <span className="chat-composer-status">
-        {sending ? "Agent is thinking..." : activeThreadIsArchived ? "Read-only archived transcript" : "Enter sends, Shift+Enter adds a new line"}
+        {sending
+          ? "Agent is thinking..."
+          : activeThreadIsArchived
+            ? "Read-only archived transcript"
+            : "Enter sends, Shift+Enter adds a new line"}
       </span>
     </div>
   );

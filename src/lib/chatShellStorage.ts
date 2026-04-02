@@ -27,6 +27,7 @@ export interface StoredChatThread {
 const THREADS_KEY = "clawnetes.chat.threads.v1";
 const SELECTION_KEY = "clawnetes.chat.selection.v1";
 const THEME_KEY = "clawnetes.chat.theme.v1";
+const HIDDEN_LIVE_SESSIONS_KEY = "clawnetes.chat.hiddenLiveSessions.v1";
 const MAX_THREADS_PER_SCOPE = 30;
 const MAX_MESSAGES_PER_THREAD = 80;
 
@@ -110,6 +111,55 @@ export function saveStoredSelection(scopeKey: string, agentId: string, threadId:
   writeJson(SELECTION_KEY, selections);
 }
 
+export function removeStoredSelection(scopeKey: string, agentId: string, expectedThreadId?: string) {
+  const selections = readJson<Record<string, string>>(SELECTION_KEY) || {};
+  const selectionKey = `${scopeKey}|${agentId}`;
+  if (expectedThreadId && selections[selectionKey] !== expectedThreadId) {
+    return;
+  }
+  delete selections[selectionKey];
+  if (Object.keys(selections).length === 0) {
+    removeKey(SELECTION_KEY);
+    return;
+  }
+  writeJson(SELECTION_KEY, selections);
+}
+
+export function loadHiddenLiveSessions(scopeKey: string): string[] {
+  const hiddenSessions = readJson<Record<string, string[]>>(HIDDEN_LIVE_SESSIONS_KEY) || {};
+  return Array.isArray(hiddenSessions[scopeKey]) ? hiddenSessions[scopeKey] : [];
+}
+
+export function saveHiddenLiveSessions(scopeKey: string, sessionKeys: string[]) {
+  const hiddenSessions = readJson<Record<string, string[]>>(HIDDEN_LIVE_SESSIONS_KEY) || {};
+  const uniqueKeys = [...new Set(sessionKeys.filter((key) => key.trim()))];
+  if (uniqueKeys.length === 0) {
+    delete hiddenSessions[scopeKey];
+    if (Object.keys(hiddenSessions).length === 0) {
+      removeKey(HIDDEN_LIVE_SESSIONS_KEY);
+      return;
+    }
+    writeJson(HIDDEN_LIVE_SESSIONS_KEY, hiddenSessions);
+    return;
+  }
+
+  hiddenSessions[scopeKey] = uniqueKeys;
+  writeJson(HIDDEN_LIVE_SESSIONS_KEY, hiddenSessions);
+}
+
+export function hideLiveSession(scopeKey: string, sessionKey: string) {
+  const nextHiddenSessions = loadHiddenLiveSessions(scopeKey);
+  if (nextHiddenSessions.includes(sessionKey)) {
+    return;
+  }
+  saveHiddenLiveSessions(scopeKey, [...nextHiddenSessions, sessionKey]);
+}
+
+export function unhideLiveSession(scopeKey: string, sessionKey: string) {
+  const nextHiddenSessions = loadHiddenLiveSessions(scopeKey).filter((storedKey) => storedKey !== sessionKey);
+  saveHiddenLiveSessions(scopeKey, nextHiddenSessions);
+}
+
 export function loadThemePreference(): ChatThemePreference {
   const storage = getSafeLocalStorage();
   return parseThemePreference(storage?.getItem(THEME_KEY)) ?? "system";
@@ -149,4 +199,5 @@ export function clearAllChatShellStorage() {
   removeKey(THREADS_KEY);
   removeKey(SELECTION_KEY);
   removeKey(THEME_KEY);
+  removeKey(HIDDEN_LIVE_SESSIONS_KEY);
 }

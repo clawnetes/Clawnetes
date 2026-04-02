@@ -5,6 +5,7 @@ import {
   DEFAULT_MODELS,
 } from "../../presets/modelsByProvider";
 import {
+  getMissingReferencedProviders,
   getBaseProviderFromModel,
   getProviderAuthOptions,
   isOAuthMethod,
@@ -473,6 +474,38 @@ function ModelSwitcherPanel({
     return modelChanged || fallbacksChanged;
   }, [draftModel, draftProvider, currentModel, draftFallbacks, fallbackModels]);
 
+  const effectiveProviderAuths = useMemo(() => ({
+    ...providerAuths,
+    ...(draftProvider && !LOCAL_PROVIDERS.has(draftProvider) ? { [draftProvider]: draftAuth } : {}),
+  }), [draftAuth, draftProvider, providerAuths]);
+
+  const currentMissingReferencedProviders = useMemo(() => getMissingReferencedProviders({
+    primaryModel: currentModel,
+    fallbackModels,
+    providerAuths,
+    options: {
+      allowPendingOAuth: true,
+      oauthHandlerAvailable: !!onStartOAuth,
+    },
+  }), [currentModel, fallbackModels, onStartOAuth, providerAuths]);
+
+  const nextMissingReferencedProviders = useMemo(() => getMissingReferencedProviders({
+    primaryModel: draftModel,
+    fallbackModels: draftFallbacks,
+    providerAuths: effectiveProviderAuths,
+    options: {
+      allowPendingOAuth: true,
+      oauthHandlerAvailable: !!onStartOAuth,
+    },
+  }), [draftFallbacks, draftModel, effectiveProviderAuths, onStartOAuth]);
+
+  const introducedMissingProviders = useMemo(
+    () => nextMissingReferencedProviders.filter(
+      (provider) => !currentMissingReferencedProviders.includes(provider),
+    ),
+    [currentMissingReferencedProviders, nextMissingReferencedProviders],
+  );
+
   const currentProvider = getBaseProviderFromModel(currentModel);
   const currentModelName = currentModel
     ? currentModel.split("/").slice(1).join("/")
@@ -576,6 +609,10 @@ function ModelSwitcherPanel({
     setSaveError("");
 
     try {
+      if (introducedMissingProviders.length > 0) {
+        throw new Error(`Missing authentication for ${introducedMissingProviders.join(", ")}.`);
+      }
+
       // Check if OAuth is needed
       const isLocal = LOCAL_PROVIDERS.has(draftProvider);
       const needsOAuth =
@@ -635,6 +672,7 @@ function ModelSwitcherPanel({
     onProviderAuthChange,
     onStartOAuth,
     onFallbacksChange,
+    introducedMissingProviders,
   ]);
 
   const handleCancel = useCallback(() => {
@@ -747,13 +785,19 @@ function ModelSwitcherPanel({
               <p className="text-[0.7rem] text-red-500">{saveError}</p>
             )}
 
+            {!saveError && introducedMissingProviders.length > 0 && (
+              <p className="text-[0.7rem] text-red-500" data-testid="missing-provider-auth-error">
+                Missing authentication for {introducedMissingProviders.join(", ")}.
+              </p>
+            )}
+
             {/* Save / Cancel */}
             {isDirty && (
               <div className="flex items-center gap-2 pt-1">
                 <button
                   type="button"
                   onClick={handleSave}
-                  disabled={saving}
+                  disabled={saving || introducedMissingProviders.length > 0}
                   className="px-3 py-2 rounded-md text-xs font-medium bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
                   data-testid="model-save-btn"
                 >
