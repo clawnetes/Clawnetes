@@ -258,13 +258,13 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
         {currentAgentProvider === "lmstudio" && (
           <div style={{ marginTop: "0.75rem" }}>
             <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>LM Studio Base URL</label>
-            <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} />
+            <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:1234" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} />
           </div>
         )}
         {currentAgentProvider === "local" && (
           <div style={{ marginTop: "0.75rem" }}>
             <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Custom Base URL</label>
-            <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} />
+            <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:8080" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} />
           </div>
         )}
       </div>
@@ -327,13 +327,13 @@ export default function StepAgentConfigLoop({ renderProviderAuthEditor, getProvi
               {currentFallbackProvider === "lmstudio" && (
                 <div style={{ marginTop: "0.75rem" }}>
                   <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>LM Studio Base URL</label>
-                  <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:1234/v1" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} />
+                  <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:1234" value={lmstudioBaseUrl} onChange={(e) => setField("lmstudioBaseUrl", e.target.value)} />
                 </div>
               )}
               {currentFallbackProvider === "local" && (
                 <div style={{ marginTop: "0.75rem" }}>
                   <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Custom Base URL</label>
-                  <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:8080/v1" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} />
+                  <input {...TEXT_ENTRY_PROPS} type="text" placeholder="http://localhost:8080" value={localBaseUrl} onChange={(e) => setField("localBaseUrl", e.target.value)} />
                 </div>
               )}
             </>

@@ -182,6 +182,31 @@ describe("AddAgentModal", () => {
     );
   });
 
+  it("blocks Add Agent when the selected provider is missing auth and oauth cannot be launched", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+
+    render(
+      <AddAgentModal
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+        providerAuths={defaultProviderAuths}
+        onProviderAuthChange={vi.fn()}
+        onDetectLocalModels={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("tab", { name: "Model" }));
+    await user.click(screen.getByTestId("add-agent-primary-provider").querySelector("button")!);
+    await user.click(screen.getAllByText("Google").at(-1)!);
+
+    expect(screen.getByTestId("add-agent-missing-provider-auth-error")).toHaveTextContent(
+      "Missing authentication for google.",
+    );
+    expect(screen.getByRole("button", { name: "Add Agent" })).toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it("deduplicates inline auth blocks for repeated providers and hides them when credentials already exist", async () => {
     const user = userEvent.setup();
     render(

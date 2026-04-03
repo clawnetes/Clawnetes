@@ -1,0 +1,120 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.3.24",
+    "lastTouchedAt": "2026-04-01T12:00:00.000Z"
+  },
+  "auth": {
+    "profiles": {
+      "google:default": {
+        "provider": "google",
+        "mode": "token"
+      },
+      "openai-codex:default": {
+        "provider": "openai-codex",
+        "mode": "oauth"
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "google/gemini-3.1-pro-preview",
+        "fallbacks": [
+          "openai/gpt-5.4"
+        ]
+      },
+      "models": {
+        "google/gemini-3.1-pro-preview": {},
+        "openai/gpt-5.4": {}
+      },
+      "workspace": "__HOME__/.openclaw/workspace",
+      "compaction": {
+        "mode": "safeguard"
+      },
+      "heartbeat": {
+        "every": "1h"
+      },
+      "maxConcurrent": 4,
+      "subagents": {
+        "maxConcurrent": 8
+      },
+      "sandbox": {
+        "mode": "off"
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "name": "Compat Main",
+        "workspace": "__HOME__/.openclaw/workspace",
+        "agentDir": "__HOME__/.openclaw/agents/main/agent",
+        "model": {
+          "primary": "google/gemini-3.1-pro-preview",
+          "fallbacks": [
+            "openai/gpt-5.4"
+          ]
+        }
+      },
+      {
+        "id": "agent-compat-1",
+        "name": "Compat Sub",
+        "workspace": "__HOME__/.openclaw/agents/agent-compat-1/workspace",
+        "agentDir": "__HOME__/.openclaw/agents/agent-compat-1/agent",
+        "model": {
+          "primary": "openai-codex/gpt-5.4",
+          "fallbacks": [
+            "google/gemini-3.1-pro-preview"
+          ]
+        },
+        "heartbeat": {
+          "every": "30m"
+        }
+      }
+    ]
+  },
+  "tools": {
+    "profile": "full",
+    "allow": [],
+    "deny": []
+  },
+  "messages": {
+    "ackReactionScope": "group-mentions"
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true,
+    "ownerDisplay": "raw"
+  },
+  "channels": {
+    "telegram": {
+      "accounts": {
+        "default": {
+          "name": "Primary Bot",
+          "dmPolicy": "pairing",
+          "botToken": "fixture-bot-token"
+        }
+      }
+    }
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "loopback",
+    "auth": {
+      "mode": "token",
+      "token": "fixture-gateway-token"
+    },
+    "tailscale": {
+      "mode": "off",
+      "resetOnExit": false
+    }
+  },
+  "plugins": {
+    "entries": {
+      "telegram": {
+        "enabled": true
+      }
+    }
+  }
+}

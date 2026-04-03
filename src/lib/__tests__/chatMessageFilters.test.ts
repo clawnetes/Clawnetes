@@ -266,6 +266,14 @@ Google Research: Google published TurboQuant.`;
 OpenAI / Sora: the biggest headline looks like turbulence around Sora.
 Google Research: Google published TurboQuant.`);
   });
+
+  it("drops startup persona chatter that leaked into the assistant transcript", () => {
+    const transcript = `SUPERMAN
+console.log("System online. Hello, Mulugeta.");
+👨‍💻 I'm ready to write, debug, or review some code. What are we building or fixing today?`;
+
+    expect(sanitizeAssistantTranscriptText(transcript)).toBe("");
+  });
 });
 
 describe("toChatMessages", () => {

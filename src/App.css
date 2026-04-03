@@ -261,14 +261,14 @@ html[data-theme="light"] .chat-env-remove:hover {
 
 .chat-sidebar-brand {
   display: flex;
-  flex-direction: column;
-  gap: 0.18rem;
+  align-items: center;
   padding: 0.35rem 0.2rem;
 }
 
 .chat-sidebar-brand h1 {
-  font-size: 0.96rem;
-  font-weight: 600;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
   letter-spacing: -0.015em;
   color: var(--text-strong);
 }
@@ -426,6 +426,12 @@ button:disabled {
   overflow: auto;
 }
 
+.chat-list-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
 .chat-list-item {
   width: 100%;
   padding: 0.5rem 0.58rem;
@@ -451,6 +457,33 @@ button:disabled {
 
 .chat-list-item.archived {
   opacity: 0.88;
+}
+
+.chat-list-delete {
+  width: 1.8rem;
+  height: 1.8rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-subtle);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.chat-list-row:hover .chat-list-delete,
+.chat-list-delete:focus-visible {
+  opacity: 1;
+}
+
+.chat-list-delete:hover,
+.chat-list-delete:focus-visible {
+  background: var(--surface-hover);
+  color: var(--text-main);
+  outline: none;
 }
 
 .chat-list-item strong {

@@ -239,7 +239,7 @@ describe("ChatHeader", () => {
         providerAuths={{
           anthropic: {
             auth_method: "token",
-            token: "",
+            token: "anthropic-test-key",
             profile_key: null,
             profile: null,
             oauth_provider_id: null,
@@ -402,6 +402,7 @@ describe("ChatSidebar", () => {
     archivedThreads: [],
     activeThreadId: "",
     onThreadSwitch: vi.fn(),
+    onDeleteThread: vi.fn(),
     themePreference: "dark" as const,
     onThemeChange: vi.fn(),
     onOpenConfigure: vi.fn(),

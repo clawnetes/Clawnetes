@@ -2,12 +2,17 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   clearAllChatShellStorage,
+  hideLiveSession,
   inferDocumentTheme,
+  loadHiddenLiveSessions,
   loadSavedThemePreference,
+  loadStoredSelection,
   loadThemePreference,
+  removeStoredSelection,
   saveThemePreference,
   saveStoredSelection,
   saveStoredThreads,
+  unhideLiveSession,
 } from "../lib/chatShellStorage";
 
 describe("chatShellStorage", () => {
@@ -35,12 +40,14 @@ describe("chatShellStorage", () => {
     ]);
     saveStoredSelection("scope-1", "main", "thread-1");
     saveThemePreference("dark");
+    hideLiveSession("scope-1", "agent:main:main");
 
     clearAllChatShellStorage();
 
     expect(localStorage.getItem("clawnetes.chat.threads.v1")).toBeNull();
     expect(localStorage.getItem("clawnetes.chat.selection.v1")).toBeNull();
     expect(localStorage.getItem("clawnetes.chat.theme.v1")).toBeNull();
+    expect(localStorage.getItem("clawnetes.chat.hiddenLiveSessions.v1")).toBeNull();
   });
 
   it("returns null when no explicit theme preference has been saved", () => {
@@ -63,5 +70,25 @@ describe("chatShellStorage", () => {
 
     document.documentElement.dataset.theme = "dark";
     expect(inferDocumentTheme()).toBe("dark");
+  });
+
+  it("removes a stored selection only when it matches the deleted thread", () => {
+    saveStoredSelection("scope-1", "main", "thread-1");
+
+    removeStoredSelection("scope-1", "main", "thread-2");
+    expect(loadStoredSelection("scope-1", "main")).toBe("thread-1");
+
+    removeStoredSelection("scope-1", "main", "thread-1");
+    expect(loadStoredSelection("scope-1", "main")).toBe("");
+  });
+
+  it("persists hidden live sessions and restores them", () => {
+    hideLiveSession("scope-1", "agent:main:main");
+    hideLiveSession("scope-1", "agent:main:main");
+
+    expect(loadHiddenLiveSessions("scope-1")).toEqual(["agent:main:main"]);
+
+    unhideLiveSession("scope-1", "agent:main:main");
+    expect(loadHiddenLiveSessions("scope-1")).toEqual([]);
   });
 });

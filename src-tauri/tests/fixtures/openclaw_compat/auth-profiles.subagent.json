@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "profiles": {
+    "google:default": {
+      "provider": "google",
+      "token": "AIza-compat-google-sub",
+      "type": "token"
+    },
+    "openai-codex:default": {
+      "provider": "openai-codex",
+      "type": "oauth",
+      "access": "compat-openai-sub-access"
+    }
+  },
+  "lastGood": {
+    "google": "google:default",
+    "openai": "openai-codex:default"
+  },
+  "usageStats": {}
+}

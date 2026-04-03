@@ -23,7 +23,8 @@ pub fn default_provider_auth(
 ) -> ProviderAuthData {
     let mut profile = serde_json::Map::new();
     let auth_type = normalize_auth_mode(auth_method);
-    let token = if provider == "ollama" || provider == "lmstudio" || provider == "local" {
+    let uses_local_runtime = matches!(provider, "ollama" | "lmstudio" | "local" | "llamacpp");
+    let token = if uses_local_runtime {
         "dummy-token".to_string()
     } else {
         api_key.to_string()
@@ -37,7 +38,7 @@ pub fn default_provider_auth(
         "provider".to_string(),
         serde_json::Value::String(provider.to_string()),
     );
-    if provider == "lmstudio" || provider == "local" {
+    if matches!(provider, "lmstudio" | "local" | "llamacpp") {
         profile.insert(
             "api".to_string(),
             serde_json::Value::String("openai".to_string()),
@@ -54,12 +55,14 @@ pub fn default_provider_auth(
             serde_json::Value::String(token.clone()),
         );
     }
-    if let Some(url) = base_url {
-        if !url.is_empty() {
-            profile.insert(
-                "baseUrl".to_string(),
-                serde_json::Value::String(url.clone()),
-            );
+    if matches!(provider, "lmstudio" | "local" | "llamacpp") {
+        if let Some(url) = base_url {
+            if !url.is_empty() {
+                profile.insert(
+                    "baseUrl".to_string(),
+                    serde_json::Value::String(url.clone()),
+                );
+            }
         }
     }
 
@@ -70,6 +73,62 @@ pub fn default_provider_auth(
         profile: Some(serde_json::Value::Object(profile)),
         oauth_provider_id: None,
     }
+}
+
+fn sanitized_profile_for_provider(
+    provider: &str,
+    provider_auth: &ProviderAuthData,
+    local_base_url: Option<&String>,
+) -> serde_json::Value {
+    let mut profile = provider_auth.profile.clone().unwrap_or_else(|| {
+        default_provider_auth(
+            provider,
+            &provider_auth.token,
+            &provider_auth.auth_method,
+            local_base_url,
+        )
+        .profile
+        .unwrap_or(serde_json::json!({}))
+    });
+
+    if let Some(obj) = profile.as_object_mut() {
+        let effective_provider = if matches!(provider, "lmstudio" | "local" | "llamacpp") {
+            provider.to_string()
+        } else {
+            obj.get("provider")
+                .and_then(|value| value.as_str())
+                .unwrap_or(provider)
+                .to_string()
+        };
+        obj.insert(
+            "provider".to_string(),
+            serde_json::Value::String(effective_provider),
+        );
+
+        if matches!(provider, "lmstudio" | "local" | "llamacpp") {
+            obj.insert(
+                "api".to_string(),
+                serde_json::Value::String("openai".to_string()),
+            );
+            if let Some(url) = local_base_url {
+                if !url.is_empty() {
+                    obj.insert(
+                        "baseUrl".to_string(),
+                        serde_json::Value::String(url.clone()),
+                    );
+                } else {
+                    obj.remove("baseUrl");
+                }
+            } else {
+                obj.remove("baseUrl");
+            }
+        } else {
+            obj.remove("api");
+            obj.remove("baseUrl");
+        }
+    }
+
+    profile
 }
 
 pub fn normalize_auth_mode(auth_method: &str) -> String {
@@ -87,6 +146,7 @@ pub fn normalize_auth_mode(auth_method: &str) -> String {
 
 pub fn normalize_provider_for_ui(provider: &str) -> String {
     match provider {
+        "llamacpp" => "local".to_string(),
         "openai-codex" => "openai".to_string(),
         "google-vertex" => "google".to_string(),
         _ => provider.to_string(),
@@ -97,6 +157,10 @@ pub fn effective_model_provider(
     provider: &str,
     provider_auths: &HashMap<String, ProviderAuthData>,
 ) -> String {
+    if provider == "local" {
+        return "llamacpp".to_string();
+    }
+
     match provider_auths
         .get(provider)
         .map(|auth| auth.auth_method.as_str())
@@ -156,7 +220,12 @@ pub fn auth_provider_id_for_config(
 }
 
 pub fn normalize_model_ref_for_ui(model_ref: &str) -> String {
-    if let Some(rest) = model_ref.strip_prefix("openai-codex/") {
+    if let Some(rest) = model_ref.strip_prefix("llamacpp/") {
+        format!("local/{}", rest)
+    } else if let Some(rest) = model_ref.strip_prefix("openai-codex/") {
+        if rest.starts_with("gemini") {
+            return format!("google/{}", rest);
+        }
         format!("openai/{}", rest)
     } else {
         model_ref.to_string()
@@ -314,33 +383,60 @@ pub fn build_auth_profiles_doc(
     let mut last_good = serde_json::Map::new();
 
     for (provider, provider_auth) in provider_auths {
-        let profile_key = resolve_profile_name(provider, provider_auth);
-        let profile = provider_auth.profile.clone().unwrap_or_else(|| {
-            default_provider_auth(
-                provider,
-                &provider_auth.token,
-                &provider_auth.auth_method,
-                local_base_url,
-            )
-            .profile
-            .unwrap_or(serde_json::json!({}))
-        });
+        let normalized_provider = normalize_provider_for_ui(provider);
+        let profile_key = resolve_profile_name(&normalized_provider, provider_auth);
+        let profile =
+            sanitized_profile_for_provider(&normalized_provider, provider_auth, local_base_url);
         profiles_map.insert(profile_key.clone(), profile);
-        last_good.insert(provider.clone(), serde_json::Value::String(profile_key));
+        last_good.insert(
+            normalized_provider.clone(),
+            serde_json::Value::String(profile_key),
+        );
+
+        if normalized_provider == "local" {
+            let runtime_profile_key = "llamacpp:default".to_string();
+            let runtime_profile =
+                sanitized_profile_for_provider("llamacpp", provider_auth, local_base_url);
+            profiles_map.insert(runtime_profile_key.clone(), runtime_profile);
+            last_good.insert(
+                "llamacpp".to_string(),
+                serde_json::Value::String(runtime_profile_key),
+            );
+        }
     }
 
     if let Some(fallbacks) = fallback_models {
         for model in fallbacks {
             if let Some(provider) = model.split('/').next() {
-                if provider == "ollama" || provider == "lmstudio" || provider == "local" {
+                let normalized_provider = normalize_provider_for_ui(provider);
+                if matches!(
+                    normalized_provider.as_str(),
+                    "ollama" | "lmstudio" | "local"
+                ) {
                     let fallback_auth =
-                        default_provider_auth(provider, "", "token", local_base_url);
-                    let profile_key = resolve_profile_name(provider, &fallback_auth);
-                    let profile = fallback_auth.profile.unwrap_or(serde_json::json!({}));
+                        default_provider_auth(&normalized_provider, "", "token", local_base_url);
+                    let profile_key = resolve_profile_name(&normalized_provider, &fallback_auth);
+                    let profile =
+                        fallback_auth.profile.clone().unwrap_or(serde_json::json!({}));
                     profiles_map.entry(profile_key.clone()).or_insert(profile);
                     last_good
-                        .entry(provider.to_string())
+                        .entry(normalized_provider.clone())
                         .or_insert(serde_json::Value::String(profile_key));
+
+                    if normalized_provider == "local" {
+                        let runtime_auth =
+                            default_provider_auth("llamacpp", "", "token", local_base_url);
+                        let runtime_profile_key =
+                            resolve_profile_name("llamacpp", &runtime_auth);
+                        let runtime_profile =
+                            runtime_auth.profile.unwrap_or(serde_json::json!({}));
+                        profiles_map
+                            .entry(runtime_profile_key.clone())
+                            .or_insert(runtime_profile);
+                        last_good
+                            .entry("llamacpp".to_string())
+                            .or_insert(serde_json::Value::String(runtime_profile_key));
+                    }
                 }
             }
         }
@@ -1469,9 +1565,72 @@ mod tests {
     }
 
     #[test]
+    fn test_default_provider_auth_llamacpp_provider() {
+        let auth = default_provider_auth(
+            "llamacpp",
+            "sk-123",
+            "token",
+            Some(&"http://localhost:8080".to_string()),
+        );
+        let profile = auth.profile.expect("llamacpp profile should be present");
+        assert_eq!(auth.token, "dummy-token");
+        assert_eq!(
+            profile.get("provider").and_then(|value| value.as_str()),
+            Some("llamacpp")
+        );
+        assert_eq!(
+            profile.get("baseUrl").and_then(|value| value.as_str()),
+            Some("http://localhost:8080")
+        );
+    }
+
+    #[test]
     fn test_default_provider_auth_normal_provider() {
         let auth = default_provider_auth("openai", "sk-123", "token", None);
         assert_eq!(auth.token, "sk-123");
+    }
+
+    #[test]
+    fn test_build_auth_profiles_doc_does_not_apply_local_base_url_to_google() {
+        let provider_auths = HashMap::from([(
+            "google".to_string(),
+            ProviderAuthData {
+                auth_method: "token".to_string(),
+                token: "AIza-test".to_string(),
+                profile_key: Some("google:default".to_string()),
+                profile: Some(serde_json::json!({
+                    "provider": "google",
+                    "type": "token",
+                    "token": "AIza-test",
+                    "baseUrl": "http://localhost:8080"
+                })),
+                oauth_provider_id: None,
+            },
+        )]);
+
+        let doc = build_auth_profiles_doc(
+            &provider_auths,
+            Some(&vec!["local/unsloth/test".to_string()]),
+            Some(&"http://localhost:8080".to_string()),
+            "google",
+        );
+
+        let google_profile = doc
+            .get("profiles")
+            .and_then(|value| value.get("google:default"))
+            .expect("google profile should exist");
+        let llamacpp_profile = doc
+            .get("profiles")
+            .and_then(|value| value.get("llamacpp:default"))
+            .expect("llamacpp profile should exist");
+
+        assert!(google_profile.get("baseUrl").is_none());
+        assert_eq!(
+            llamacpp_profile
+                .get("baseUrl")
+                .and_then(|value| value.as_str()),
+            Some("http://localhost:8080")
+        );
     }
 
     #[test]

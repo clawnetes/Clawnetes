@@ -11,11 +11,15 @@ import {
 } from "../../lib/gatewayChat";
 import {
   buildChatScopeKey,
+  hideLiveSession,
   inferDocumentTheme,
+  loadHiddenLiveSessions,
   loadSavedThemePreference,
   loadStoredSelection,
   loadStoredThreads,
+  removeStoredSelection,
   resolveThemePreference,
+  saveHiddenLiveSessions,
   saveStoredSelection,
   saveStoredThreads,
   saveThemePreference,
@@ -49,6 +53,7 @@ export type { StoredEnvironment };
 type ChatMessageTailEntry = {
   role: "user" | "assistant";
   text: string;
+  requireVisibleText?: boolean;
 };
 
 interface ChatShellProps {
@@ -68,10 +73,13 @@ interface ChatShellProps {
   agentModelRef?: string;
   agentFallbackCount?: number;
   agentFallbackModels?: string[];
+  localBaseUrl?: string;
+  lmstudioBaseUrl?: string;
   agentSkills?: string[];
   serviceKeys?: Record<string, string>;
   onModelChange?: (model: string) => void;
   onFallbacksChange?: (models: string[]) => void;
+  onLocalBaseUrlChange?: (provider: "lmstudio" | "local", baseUrl: string) => void;
   providerAuths?: Record<string, ProviderAuthConfig>;
   onProviderAuthChange?: (provider: string, auth: ProviderAuthConfig) => void | Promise<void>;
   onStartOAuth?: (provider: string, authMethod: string, oauthProviderId: string) => Promise<ProviderAuthConfig>;
@@ -145,6 +153,17 @@ function isNearBottom(element: HTMLDivElement, threshold = 96) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
 
+function formatOpenClawStatusLabel(version: string) {
+  const trimmedVersion = version.trim();
+  if (!trimmedVersion) {
+    return "Clawnetes with OpenClaw";
+  }
+  const normalizedVersion = /^openclaw\b/i.test(trimmedVersion)
+    ? trimmedVersion.replace(/^openclaw\s*/i, "")
+    : trimmedVersion;
+  return `Clawnetes with OpenClaw ${normalizedVersion}`.trim();
+}
+
 function isAssistantStreaming(messages: ChatMessage[]) {
   return messages.some((message) => message.role === "assistant" && message.pending);
 }
@@ -192,6 +211,58 @@ function buildRecentVisibleTail(messages: ChatMessage[]): ChatMessageTailEntry[]
   }];
 }
 
+function buildReconcileTail(messages: ChatMessage[], runId?: string | null): ChatMessageTailEntry[] {
+  const visibleTail = buildRecentVisibleTail(messages);
+  if (!runId) {
+    const lastVisible = visibleTail[visibleTail.length - 1];
+    if (lastVisible?.role === "user") {
+      return [
+        {
+          role: "user",
+          text: lastVisible.text,
+        },
+        {
+          role: "assistant",
+          text: "",
+          requireVisibleText: true,
+        },
+      ];
+    }
+    return visibleTail;
+  }
+
+  const assistantForRun = messages.find(
+    (message) => message.role === "assistant" && message.runId === runId,
+  );
+  const assistantText = (assistantForRun?.text || "").trim();
+  if (assistantForRun && assistantText) {
+    return visibleTail;
+  }
+
+  const visible = toStoredMessages(messages)
+    .filter((message) => (message.role === "user" || message.role === "assistant") && message.text.trim());
+  const lastUser = [...visible].reverse().find((message) => message.role === "user");
+  if (!lastUser) {
+    return [{
+      role: "assistant",
+      text: "",
+      requireVisibleText: true,
+    }];
+  }
+
+  return [
+    {
+      role: "user",
+      text: lastUser.text.trim(),
+    },
+    {
+      role: "assistant",
+      text: "",
+      requireVisibleText: true,
+    },
+  ];
+}
+
 function historyContainsRecentTail(messages: ChatMessage[], tail: ChatMessageTailEntry[]) {
   if (tail.length === 0) {
     return true;
@@ -209,9 +280,32 @@ function historyContainsRecentTail(messages: ChatMessage[], tail: ChatMessageTai
   }
 
   const recent = visible.slice(-tail.length);
-  return tail.every((entry, index) =>
-    recent[index]?.role === entry.role && recent[index]?.text === entry.text,
-  );
+  return tail.every((entry, index) => {
+    const candidate = recent[index];
+    if (!candidate || candidate.role !== entry.role) {
+      return false;
+    }
+    if (entry.requireVisibleText) {
+      return candidate.text.trim().length > 0;
+    }
+    return candidate.text === entry.text;
+  });
+}
+
+const HISTORY_RECONCILE_INTERVAL_MS = 350;
+const MAX_HISTORY_RECONCILE_MS = 20_000;
+const REPLY_RECOVERY_FAILURE_TEXT = "That reply didn’t come through. Try sending it again.";
+
+function runHasVisibleAssistantMessage(messages: ChatMessage[], runId?: string | null) {
+  if (!runId) {
+    return false;
+  }
+
+  return messages.some((message) => (
+    message.role === "assistant" &&
+    message.runId === runId &&
+    !!sanitizeAssistantTranscriptText(message.rawText || message.text).trim()
+  ));
 }
 
 function finalizeRunMessages(messages: ChatMessage[], runId?: string | null) {
@@ -236,7 +330,7 @@ function finalizeRunMessages(messages: ChatMessage[], runId?: string | null) {
   });
 }
 
-function ensurePendingAssistantMessage(messages: ChatMessage[], runId: string) {
+function ensurePendingAssistantMessage(messages: ChatMessage[], runId: string): ChatMessage[] {
   const existingIndex = messages.findIndex((message) => message.runId === runId);
   if (existingIndex >= 0) {
     return messages;
@@ -251,8 +345,106 @@ function ensurePendingAssistantMessage(messages: ChatMessage[], runId: string) {
       rawText: "",
       runId,
       pending: true,
+    } as ChatMessage,
+  ];
+}
+
+function ensurePendingAssistantPlaceholder(messages: ChatMessage[]): ChatMessage[] {
+  const existingPendingAssistant = messages.find(
+    (message) =>
+      message.role === "assistant" &&
+      message.pending &&
+      !message.runId &&
+      !sanitizeAssistantTranscriptText(message.rawText || message.text).trim(),
+  );
+  if (existingPendingAssistant) {
+    return messages;
+  }
+
+  return [
+    ...messages,
+    {
+      id: `assistant-pending-${Date.now()}`,
+      role: "assistant",
+      text: "",
+      rawText: "",
+      pending: true,
+    } as ChatMessage,
+  ];
+}
+
+function attachPendingAssistantRunId(messages: ChatMessage[], runId: string): ChatMessage[] {
+  if (messages.some((message) => message.runId === runId)) {
+    return messages;
+  }
+
+  let attached = false;
+  return messages.map((message) => {
+    if (
+      attached ||
+      message.role !== "assistant" ||
+      !message.pending ||
+      !!message.runId ||
+      !!sanitizeAssistantTranscriptText(message.rawText || message.text).trim()
+    ) {
+      return message;
+    }
+
+    attached = true;
+    return {
+      ...message,
+      id: `assistant-${runId}`,
+      runId,
+    } as ChatMessage;
+  });
+}
+
+function replacePendingAssistantWithRecoveryNotice(messages: ChatMessage[], runId?: string | null) {
+  if (runHasVisibleAssistantMessage(messages, runId)) {
+    return messages.map((message) => (
+      message.role === "assistant" && message.runId === runId && message.pending
+        ? { ...message, pending: false }
+        : message
+    ));
+  }
+
+  const nextMessages = messages.flatMap((message) => {
+    if (
+      message.role === "assistant" &&
+      message.runId === runId &&
+      message.pending &&
+      !sanitizeAssistantTranscriptText(message.rawText || message.text).trim()
+    ) {
+      return [];
+    }
+
+    return [message];
+  });
+
+  return [
+    ...nextMessages,
+    {
+      id: `reply-recovery-${runId || Date.now()}`,
+      role: "system" as const,
+      text: REPLY_RECOVERY_FAILURE_TEXT,
+      timestamp: Date.now(),
     },
   ];
+}
+
+function removePendingAssistantPlaceholder(messages: ChatMessage[], runId?: string | null) {
+  return messages.flatMap((message) => {
+    if (
+      message.role === "assistant" &&
+      message.pending &&
+      message.runId === runId &&
+      !sanitizeAssistantTranscriptText(message.rawText || message.text).trim()
+    ) {
+      return [];
+    }
+
+    return [message];
+  });
 }
 
 function asSessionLifecycleSnapshot(
@@ -284,8 +476,8 @@ function ChatShell({
   environments, activeEnvironmentId, onSwitchEnvironment, onAddEnvironment, onRemoveEnvironment, onAgentSwitch,
   agents: propAgents,
   activeAgentId: chatActiveAgentId,
-  agentModelRef, agentFallbackCount, agentFallbackModels, agentSkills, serviceKeys,
-  onModelChange, onFallbacksChange, providerAuths, onProviderAuthChange, onStartOAuth, onDetectLocalModels, onSaveSkillsConfig, skillsSaving, onSetupIntegration, onAddAgent, onRemoveAgent,
+  agentModelRef, agentFallbackCount, agentFallbackModels, localBaseUrl, lmstudioBaseUrl, agentSkills, serviceKeys,
+  onModelChange, onFallbacksChange, onLocalBaseUrlChange, providerAuths, onProviderAuthChange, onStartOAuth, onDetectLocalModels, onSaveSkillsConfig, skillsSaving, onSetupIntegration, onAddAgent, onRemoveAgent,
   identityMd, soulMd, toolsMd, agentsMd, heartbeatMd, memoryMd,
   onIdentitySave, identitySaving,
   targetEnvironment, remoteSummary, gatewayPort, gatewayBind, gatewayAuthMode,
@@ -301,9 +493,11 @@ function ChatShell({
   const activeSessionKeyRef = useRef("");
   const activeThreadIdRef = useRef("");
   const activeRunIdRef = useRef("");
+  const sendingRef = useRef(false);
+  const settledRunIdsRef = useRef<string[]>([]);
   const threadsRef = useRef<StoredChatThread[]>([]);
   const shouldAutoScrollRef = useRef(true);
-  const pendingScrollBehaviorRef = useRef<ScrollBehavior | null>("auto");
+  const pendingScrollBehaviorRef = useRef<ScrollBehavior | null>(null);
   const streamFollowEnabledRef = useRef(false);
   const streamFollowRunIdRef = useRef("");
   const userPausedStreamFollowRef = useRef(false);
@@ -314,9 +508,16 @@ function ChatShell({
     sessionKey: string;
     threadId: string;
     tail: ChatMessageTailEntry[];
+    runId?: string;
     retries: number;
+    startedAt: number;
+    requiresVisibleAssistant: boolean;
   } | null>(null);
   const historyReconcileTimerRef = useRef<number | null>(null);
+  const streamIdleFinalizeTimerRef = useRef<number | null>(null);
+  const deferredSessionRefreshRef = useRef<GatewaySessionsChangedPayload | null>(null);
+  const pendingSessionListRefreshRef = useRef(false);
+  const configUpdatingRef = useRef(isConfigUpdating);
 
   const [connectionLabel, setConnectionLabel] = useState("Connecting to gateway...");
   const [connectionState, setConnectionState] = useState<GatewayConnectState["status"]>("connecting");
@@ -338,6 +539,7 @@ function ChatShell({
   const [composerValue, setComposerValue] = useState("");
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [sending, setSending] = useState(false);
+  const [replyRecoveryPending, setReplyRecoveryPending] = useState(false);
   const [activeRunId, setActiveRunId] = useState("");
   const [shellError, setShellError] = useState("");
   const initialThemeStateRef = useRef<{
@@ -378,6 +580,13 @@ function ChatShell({
     }
   }, [onConsumeReturnScrollSnapshot, returnScrollSnapshot]);
 
+  const hasPendingReturnScrollSnapshot = useCallback(() => {
+    const externalSnapshot = returnScrollSnapshot && consumedExternalReturnScrollSnapshotRef.current !== returnScrollSnapshot
+      ? returnScrollSnapshot
+      : null;
+    return !!(internalReturnScrollSnapshotRef.current || externalSnapshot);
+  }, [returnScrollSnapshot]);
+
   useEffect(() => {
     if (!returnScrollSnapshot) {
       consumedExternalReturnScrollSnapshotRef.current = null;
@@ -403,11 +612,72 @@ function ChatShell({
   const activeThread = threads.find((thread) => thread.id === activeThreadId) || null;
   const activeThreadIsArchived = activeThread?.status === "archived";
 
+  const isSessionHidden = useCallback((agentId: string, sessionKey: string) => {
+    if (!scopeKey || !sessionKey) {
+      return false;
+    }
+    return loadHiddenLiveSessions(scopeKey).some((hiddenSessionKey) => (
+      sessionMatchesActiveContext({
+        sessionKey: hiddenSessionKey,
+        activeSessionKey: sessionKey,
+        agentId,
+      })
+    ));
+  }, [scopeKey]);
+
+  const restoreLiveSession = useCallback((agentId: string, sessionKey: string) => {
+    if (!scopeKey || !sessionKey) {
+      return;
+    }
+    const nextHiddenSessions = loadHiddenLiveSessions(scopeKey).filter((hiddenSessionKey) => !sessionMatchesActiveContext({
+      sessionKey: hiddenSessionKey,
+      activeSessionKey: sessionKey,
+      agentId,
+    }));
+    saveHiddenLiveSessions(scopeKey, nextHiddenSessions);
+  }, [scopeKey]);
+
+  const ensureDraftThreadForActiveSession = useCallback(() => {
+    if (!activeAgentIdRef.current || !activeSessionKeyRef.current) {
+      return "";
+    }
+
+    const existing = threadsRef.current.find((thread) =>
+      thread.agentId === activeAgentIdRef.current &&
+      thread.status !== "archived" &&
+      sessionMatchesActiveContext({
+        sessionKey: thread.sessionKey,
+        activeSessionKey: activeSessionKeyRef.current,
+        agentId: activeAgentIdRef.current,
+      }),
+    );
+    if (existing) {
+      return existing.id;
+    }
+
+    const nextThread = createThread({
+      agentId: activeAgentIdRef.current,
+      sessionKey: activeSessionKeyRef.current,
+      status: "draft",
+      title: "New chat",
+      preview: "Fresh conversation",
+    });
+    updateThreads((current) => [nextThread, ...current]);
+    activeThreadIdRef.current = nextThread.id;
+    setActiveThreadId(nextThread.id);
+    return nextThread.id;
+  }, []);
+
   useEffect(() => {
     const transcript = transcriptRef.current;
     if (!transcript) return;
 
     const updatePosition = () => {
+      const hasTranscriptContent = messagesRef.current.length > 0;
+      if (!hasTranscriptContent && !activeRunIdRef.current) {
+        return;
+      }
+
       const nearBottom = isNearBottom(transcript);
       shouldAutoScrollRef.current = nearBottom;
 
@@ -446,10 +716,9 @@ function ChatShell({
     const shouldScroll = !!scrollBehavior;
 
     if (shouldScroll) {
-      if (transcriptEndRef.current && typeof transcriptEndRef.current.scrollIntoView === "function") {
-        transcriptEndRef.current.scrollIntoView({ behavior: scrollBehavior, block: "end" });
-      } else if (typeof transcript.scrollTo === "function") {
+      if (typeof transcript.scrollTo === "function") {
         transcript.scrollTo({ top: transcript.scrollHeight, behavior: scrollBehavior });
+        transcript.scrollTop = transcript.scrollHeight;
       } else {
         transcript.scrollTop = transcript.scrollHeight;
       }
@@ -468,10 +737,11 @@ function ChatShell({
     }
 
     const transcript = transcriptRef.current;
+    const internalSnapshot = internalReturnScrollSnapshotRef.current;
     const externalSnapshot = returnScrollSnapshot && consumedExternalReturnScrollSnapshotRef.current !== returnScrollSnapshot
       ? returnScrollSnapshot
       : null;
-    const snapshot = internalReturnScrollSnapshotRef.current ?? externalSnapshot;
+    const snapshot = internalSnapshot ?? externalSnapshot;
     if (!transcript || !snapshot) {
       return;
     }
@@ -480,7 +750,20 @@ function ChatShell({
       return;
     }
 
-    const sameThread = snapshot.threadId === activeThreadId;
+    if (internalSnapshot) {
+      const sameAgent = snapshot.agentId === activeAgentId;
+      if (!sameAgent) {
+        clearReturnScrollSnapshots(false);
+        return;
+      }
+
+      pendingScrollBehaviorRef.current = null;
+      transcript.scrollTop = snapshot.scrollTop;
+      shouldAutoScrollRef.current = isNearBottom(transcript);
+      clearReturnScrollSnapshots(false);
+      return;
+    }
+
     const sameSession = sessionMatchesActiveContext({
       sessionKey: snapshot.sessionKey,
       activeSessionKey,
@@ -488,8 +771,11 @@ function ChatShell({
     });
     const sameAgent = snapshot.agentId === activeAgentId;
 
-    if (!sameThread || !sameSession || !sameAgent) {
+    if (!sameSession || !sameAgent) {
       clearReturnScrollSnapshots(Boolean(returnScrollSnapshot));
+      if (shouldAutoScrollRef.current) {
+        transcript.scrollTop = transcript.scrollHeight;
+      }
       return;
     }
 
@@ -503,6 +789,7 @@ function ChatShell({
     activeThreadId,
     bootstrap,
     clearReturnScrollSnapshots,
+    hasPendingReturnScrollSnapshot,
     panelOpen,
     returnScrollSnapshot,
   ]);
@@ -560,6 +847,27 @@ function ChatShell({
   }, [activeRunId]);
 
   useEffect(() => {
+    const wasConfigUpdating = configUpdatingRef.current;
+    configUpdatingRef.current = isConfigUpdating;
+
+    if (isConfigUpdating || !wasConfigUpdating) {
+      return;
+    }
+
+    if (!clientRef.current || connectionState !== "connected" || !activeAgentIdRef.current) {
+      return;
+    }
+
+    clearHistoryReconcile();
+    setShellError("");
+    setSendingState(false);
+    activeRunIdRef.current = "";
+    setActiveRunId("");
+    endStreamAutoFollow();
+    void refreshSessions(activeAgentIdRef.current, clientRef.current, undefined);
+  }, [clearHistoryReconcile, connectionState, isConfigUpdating]);
+
+  useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
 
@@ -569,10 +877,32 @@ function ChatShell({
 
   function clearHistoryReconcile() {
     historyReconcileRef.current = null;
+    deferredSessionRefreshRef.current = null;
+    pendingSessionListRefreshRef.current = false;
+    setReplyRecoveryPending(false);
     if (historyReconcileTimerRef.current !== null) {
       window.clearTimeout(historyReconcileTimerRef.current);
       historyReconcileTimerRef.current = null;
     }
+  }
+
+  function clearStreamIdleFinalize() {
+    if (streamIdleFinalizeTimerRef.current !== null) {
+      window.clearTimeout(streamIdleFinalizeTimerRef.current);
+      streamIdleFinalizeTimerRef.current = null;
+    }
+  }
+
+  async function syncSessionList(agentId: string, client = clientRef.current) {
+    if (!client || !agentId) {
+      setLiveSessions([]);
+      return [];
+    }
+
+    const sessionPayload = await client.listSessions(agentId || undefined);
+    const nextSessions = (sessionPayload.sessions || []).filter((session) => !isSessionHidden(agentId, session.key));
+    setLiveSessions(nextSessions);
+    return nextSessions;
   }
 
   function scheduleHistoryReconcileRetry(
@@ -588,7 +918,7 @@ function ChatShell({
     historyReconcileTimerRef.current = window.setTimeout(() => {
       historyReconcileTimerRef.current = null;
       void loadHistory(sessionKey, threadId, client, sessionSnapshot);
-    }, 350);
+    }, HISTORY_RECONCILE_INTERVAL_MS);
   }
 
   useEffect(() => {
@@ -647,6 +977,9 @@ function ChatShell({
     if (historyReconcileTimerRef.current !== null) {
       window.clearTimeout(historyReconcileTimerRef.current);
     }
+    if (streamIdleFinalizeTimerRef.current !== null) {
+      window.clearTimeout(streamIdleFinalizeTimerRef.current);
+    }
   }, []);
 
   useEffect(() => {
@@ -684,6 +1017,24 @@ function ChatShell({
 
   function updateThreads(updater: (current: StoredChatThread[]) => StoredChatThread[]) {
     setThreads((current) => updater(current));
+  }
+
+  function updateMessageState(updater: (current: ChatMessage[]) => ChatMessage[]) {
+    setMessages((current) => {
+      const next = updater(current);
+      messagesRef.current = next;
+      return next;
+    });
+  }
+
+  function replaceMessageState(next: ChatMessage[]) {
+    messagesRef.current = next;
+    setMessages(next);
+  }
+
+  function setSendingState(next: boolean) {
+    sendingRef.current = next;
+    setSending(next);
   }
 
   function ensureLiveThread(params: {
@@ -781,7 +1132,7 @@ function ChatShell({
       setConnectionState(state.status);
 
       if (state.status === "connected") {
-        setConnectionLabel(`Connected to OpenClaw ${bootstrap.openClawVersion}`);
+        setConnectionLabel(formatOpenClawStatusLabel(bootstrap.openClawVersion));
         setShellError("");
       } else if (state.status === "reconnecting") {
         setConnectionLabel("Reconnecting to gateway...");
@@ -818,9 +1169,68 @@ function ChatShell({
     };
 
     client.onSessionsChanged = (payload) => {
-      if (activeAgentIdRef.current) {
-        void refreshSessions(activeAgentIdRef.current, client, activeThreadIdRef.current || undefined, payload);
+      if (!activeAgentIdRef.current) {
+        return;
       }
+
+      const terminalSnapshot = isTerminalSessionSnapshot(asSessionLifecycleSnapshot(payload));
+      const targetsActiveSession = sessionMatchesActiveContext({
+        sessionKey: payload.sessionKey ?? payload.session?.key,
+        activeSessionKey: activeSessionKeyRef.current,
+        agentId: activeAgentIdRef.current,
+      });
+
+      if (
+        targetsActiveSession &&
+        terminalSnapshot &&
+        (activeRunIdRef.current || historyReconcileRef.current || isAssistantStreaming(messagesRef.current) || sendingRef.current)
+      ) {
+        handleTerminalCompletion({
+          runId: activeRunIdRef.current || undefined,
+          sessionSnapshot: payload,
+          terminalState: payload.abortedLastRun || payload.status === "aborted" ? "aborted" : "final",
+        });
+        return;
+      }
+
+      if (targetsActiveSession && terminalSnapshot) {
+        void syncSessionList(activeAgentIdRef.current, client);
+        return;
+      }
+
+      if (targetsActiveSession && (activeRunIdRef.current || sendingRef.current) && !terminalSnapshot) {
+        clearStreamIdleFinalize();
+        streamIdleFinalizeTimerRef.current = window.setTimeout(() => {
+          streamIdleFinalizeTimerRef.current = null;
+          const visibleAssistantRunId = [...messagesRef.current]
+            .reverse()
+            .find((message) =>
+              message.role === "assistant" &&
+              !!sanitizeAssistantTranscriptText(message.rawText || message.text).trim(),
+            )?.runId;
+          const completionRunId = activeRunIdRef.current || visibleAssistantRunId;
+          if (
+            completionRunId &&
+            runHasVisibleAssistantMessage(messagesRef.current, completionRunId) &&
+            !historyReconcileRef.current
+          ) {
+            handleTerminalCompletion({
+              runId: completionRunId,
+              sessionSnapshot: payload,
+              terminalState: "final",
+            });
+          }
+        }, 150);
+        deferredSessionRefreshRef.current = payload;
+        return;
+      }
+
+      if (targetsActiveSession && historyReconcileRef.current) {
+        deferredSessionRefreshRef.current = payload;
+        return;
+      }
+
+      void refreshSessions(activeAgentIdRef.current, client, activeThreadIdRef.current || undefined, payload);
     };
 
     void (async () => {
@@ -850,9 +1260,18 @@ function ChatShell({
       const nextAgents = agentPayload.agents || [];
       setAgents(nextAgents);
 
-      const nextAgentId = agentPayload.defaultId || nextAgents[0]?.id || "";
+      const preferredAgentId =
+        chatActiveAgentId && nextAgents.some((agent) => agent.id === chatActiveAgentId)
+          ? chatActiveAgentId
+          : "";
+      const nextAgentId = preferredAgentId || agentPayload.defaultId || nextAgents[0]?.id || "";
       setActiveAgentId(nextAgentId);
+      if (nextAgentId && nextAgentId !== chatActiveAgentId) {
+        onAgentSwitch?.(nextAgentId);
+      }
       setMessages([]);
+      setReplyRecoveryPending(false);
+      activeRunIdRef.current = "";
       setActiveRunId("");
       endStreamAutoFollow();
 
@@ -880,12 +1299,13 @@ function ChatShell({
       setLiveSessions([]);
       setActiveSessionKey("");
       setMessages([]);
+      setReplyRecoveryPending(false);
       endStreamAutoFollow();
       return;
     }
 
     const sessionPayload = await client.listSessions(agentId || undefined);
-    const nextSessions = sessionPayload.sessions || [];
+    const nextSessions = (sessionPayload.sessions || []).filter((session) => !isSessionHidden(agentId, session.key));
     setLiveSessions(nextSessions);
 
     const desiredThreadId = preferredThreadId || loadStoredSelection(scopeKey, agentId) || "";
@@ -942,7 +1362,7 @@ function ChatShell({
     }
 
     queueScrollToBottom("auto");
-    setMessages(
+    replaceMessageState(
       selectedThread.messages.map((message) => ({
         ...message,
       })),
@@ -958,6 +1378,23 @@ function ChatShell({
     if (!client || !sessionKey) return;
     setLoadingHistory(true);
     try {
+      const terminalSnapshot = asSessionLifecycleSnapshot(sessionSnapshot);
+      const activeRunMatchesSession =
+        sessionMatchesActiveContext({
+          sessionKey,
+          activeSessionKey: activeSessionKeyRef.current,
+          agentId: activeAgentIdRef.current,
+        }) &&
+        !!activeRunIdRef.current;
+      const shouldDeferActiveRunHistory =
+        activeRunMatchesSession &&
+        !historyReconcileRef.current &&
+        !isTerminalSessionSnapshot(terminalSnapshot);
+
+      if (shouldDeferActiveRunHistory) {
+        return;
+      }
+
       const payload = await client.loadHistory(sessionKey);
       const nextMessages = toChatMessages(payload.messages);
       const pendingReconcile = historyReconcileRef.current;
@@ -969,26 +1406,28 @@ function ChatShell({
 
       if (shouldPreserveLocalMessages) {
         queueScrollToBottom("auto");
-        setActiveRunId("");
-        setSending(false);
-        endStreamAutoFollow();
-
-        if (pendingReconcile.retries < 1) {
-          historyReconcileRef.current = {
-            ...pendingReconcile,
-            retries: pendingReconcile.retries + 1,
-          };
-          scheduleHistoryReconcileRetry(sessionKey, threadId, client, sessionSnapshot);
+        const timedOut = Date.now() - pendingReconcile.startedAt >= MAX_HISTORY_RECONCILE_MS;
+        if (timedOut) {
+          clearHistoryReconcile();
+          replaceMessageState(
+            replacePendingAssistantWithRecoveryNotice(messagesRef.current, pendingReconcile.runId),
+          );
+          void syncSessionList(activeAgentIdRef.current, client);
+          return;
         }
+
+        historyReconcileRef.current = {
+          ...pendingReconcile,
+          retries: pendingReconcile.retries + 1,
+        };
+        scheduleHistoryReconcileRetry(sessionKey, threadId, client, sessionSnapshot);
         return;
       }
 
       if (pendingReconcile?.sessionKey === sessionKey && pendingReconcile.threadId === threadId) {
         clearHistoryReconcile();
       }
-
       const latestMessage = nextMessages[nextMessages.length - 1];
-      const terminalSnapshot = asSessionLifecycleSnapshot(sessionSnapshot);
       const shouldFinalizeActiveRun =
         sessionMatchesActiveContext({
           sessionKey,
@@ -998,12 +1437,33 @@ function ChatShell({
         !!activeRunIdRef.current &&
         (latestMessage?.role === "assistant" || isTerminalSessionSnapshot(terminalSnapshot));
 
-      queueScrollToBottom("auto");
-      setMessages(nextMessages);
+      const shouldFollowToBottom =
+        shouldFinalizeActiveRun || (
+          shouldAutoScrollRef.current &&
+          !hasPendingReturnScrollSnapshot()
+        );
+
+      if (shouldFollowToBottom) {
+        queueScrollToBottom("auto");
+      }
+      replaceMessageState(nextMessages);
       if (shouldFinalizeActiveRun) {
+        activeRunIdRef.current = "";
         setActiveRunId("");
-        setSending(false);
+        setSendingState(false);
         endStreamAutoFollow();
+      }
+      if (
+        pendingSessionListRefreshRef.current &&
+        sessionMatchesActiveContext({
+          sessionKey,
+          activeSessionKey: activeSessionKeyRef.current,
+          agentId: activeAgentIdRef.current,
+        })
+      ) {
+        pendingSessionListRefreshRef.current = false;
+        deferredSessionRefreshRef.current = null;
+        void syncSessionList(activeAgentIdRef.current, client);
       }
       updateThreads((current) =>
         current.map((thread) =>
@@ -1026,7 +1486,8 @@ function ChatShell({
       if (missingSession) {
         clearHistoryReconcile();
         queueScrollToBottom("auto");
-        setMessages([]);
+        replaceMessageState([]);
+        setReplyRecoveryPending(false);
         updateThreads((current) =>
           current.map((thread) =>
             thread.id !== threadId
@@ -1048,6 +1509,85 @@ function ChatShell({
     }
   }
 
+  function handleTerminalCompletion(params: {
+    runId?: string | null;
+    sessionSnapshot?: GatewayChatSession | GatewaySessionsChangedPayload | null;
+    terminalState: "final" | "aborted";
+  }) {
+    const runId = params.runId ?? activeRunIdRef.current ?? undefined;
+    if (runId) {
+      settledRunIdsRef.current = [...settledRunIdsRef.current.filter((id) => id !== runId), runId].slice(-50);
+    }
+
+    const sessionKey = activeSessionKeyRef.current;
+    const threadId = activeThreadIdRef.current;
+    const threadMessages = threadId
+      ? (threadsRef.current.find((thread) => thread.id === threadId)?.messages || []).map((message) => ({ ...message } as ChatMessage))
+      : [];
+    const currentMessages = messagesRef.current.length > 0 ? messagesRef.current : threadMessages;
+    const reconcileTail = buildReconcileTail(currentMessages, runId);
+    const hasError = !!runId && currentMessages.some((m) => m.runId === runId && m.error);
+    const requiresVisibleAssistantSync =
+      params.terminalState === "final" &&
+      !hasError &&
+      reconcileTail.some((entry) => entry.role === "assistant" && entry.requireVisibleText) &&
+      !runHasVisibleAssistantMessage(currentMessages, runId);
+    if (requiresVisibleAssistantSync && sessionKey && threadId && clientRef.current) {
+      historyReconcileRef.current = {
+        sessionKey,
+        threadId,
+        tail: reconcileTail,
+        runId: runId || undefined,
+        retries: 0,
+        startedAt: Date.now(),
+        requiresVisibleAssistant: true,
+      };
+      pendingSessionListRefreshRef.current = true;
+      replaceMessageState(
+        currentMessages.map((message) => (
+          runId && message.runId === runId ? { ...message, pending: true } : message
+        )),
+      );
+      setReplyRecoveryPending(true);
+      activeRunIdRef.current = "";
+      setActiveRunId("");
+      setSendingState(false);
+      endStreamAutoFollow();
+      void loadHistory(sessionKey, threadId, clientRef.current, params.sessionSnapshot);
+      return;
+    }
+
+    clearHistoryReconcile();
+    replaceMessageState(finalizeRunMessages(currentMessages, runId));
+    activeRunIdRef.current = "";
+    setActiveRunId("");
+    setSendingState(false);
+    endStreamAutoFollow();
+    void syncSessionList(activeAgentIdRef.current, clientRef.current || undefined);
+  }
+
+  function maybeCompleteDeferredVisibleReply(runId: string) {
+    const deferredRefresh = deferredSessionRefreshRef.current;
+    if (
+      !deferredRefresh ||
+      !sessionMatchesActiveContext({
+        sessionKey: deferredRefresh.sessionKey ?? deferredRefresh.session?.key,
+        activeSessionKey: activeSessionKeyRef.current,
+        agentId: activeAgentIdRef.current,
+      }) ||
+      !runHasVisibleAssistantMessage(messagesRef.current, runId)
+    ) {
+      return;
+    }
+
+    clearStreamIdleFinalize();
+    handleTerminalCompletion({
+      runId,
+      sessionSnapshot: deferredRefresh,
+      terminalState: "final",
+    });
+  }
+
   function handleChatEvent(event: GatewayChatEventPayload) {
     if (!sessionMatchesActiveContext({
       sessionKey: event.sessionKey,
@@ -1058,46 +1598,45 @@ function ChatShell({
     }
 
     if (event.errorMessage) {
+      clearStreamIdleFinalize();
       queueScrollToBottom("auto");
-      setMessages((current) => [
-        ...current,
-        { id: `error-${Date.now()}`, role: "system", text: event.errorMessage || "Gateway error.", error: true },
+      updateMessageState((current) => [
+        ...current.filter((m) => !(m.role === "assistant" && m.runId === event.runId && m.pending && !m.text.trim())),
+        { id: `error-${Date.now()}`, runId: event.runId || undefined, role: "system", text: event.errorMessage || "Gateway error.", error: true },
       ]);
+      setReplyRecoveryPending(false);
+      activeRunIdRef.current = "";
       setActiveRunId("");
-      setSending(false);
+      setSendingState(false);
       endStreamAutoFollow();
       return;
     }
 
     if (event.state === "final" || event.state === "aborted") {
-      const sessionKey = activeSessionKeyRef.current;
-      const threadId = activeThreadIdRef.current;
-      setMessages((current) => {
-        const finalizedMessages = finalizeRunMessages(current, event.runId);
-        historyReconcileRef.current = sessionKey && threadId
-          ? {
-              sessionKey,
-              threadId,
-              tail: buildRecentVisibleTail(finalizedMessages),
-              retries: 0,
-            }
-          : null;
-        return finalizedMessages;
+      clearStreamIdleFinalize();
+      handleTerminalCompletion({
+        runId: event.runId,
+        terminalState: event.state,
       });
-      setActiveRunId("");
-      setSending(false);
-      endStreamAutoFollow();
-      void refreshSessions(activeAgentIdRef.current, clientRef.current || undefined, threadId || undefined);
     }
   }
 
   function handleAgentEvent(event: GatewayAgentEventPayload) {
     if (!event.runId || event.stream !== "assistant") return;
+
+    if (activeRunIdRef.current && event.runId !== activeRunIdRef.current) {
+      const isPendingForCurrentView = messagesRef.current.some((m) => m.runId === event.runId && m.pending);
+      if (!isPendingForCurrentView) {
+        return;
+      }
+    }
+
     const delta = typeof event.data.text === "string" ? event.data.text : "";
     if (!delta) return;
+    clearStreamIdleFinalize();
     beginStreamAutoFollow(event.runId, "auto");
 
-    setMessages((current) => {
+    updateMessageState((current) => {
       const existingIndex = current.findIndex((message) => message.runId === event.runId);
       if (existingIndex >= 0) {
         return current.map((message, index) => {
@@ -1113,6 +1652,28 @@ function ChatShell({
             pending: true,
           };
         });
+      }
+
+      const placeholderIndex = current.findIndex((message) => (
+        message.role === "assistant" &&
+        message.pending &&
+        !message.runId &&
+        !sanitizeAssistantTranscriptText(message.rawText || message.text).trim()
+      ));
+      if (placeholderIndex >= 0) {
+        const rawText = delta;
+        return current.map((message, index) => (
+          index !== placeholderIndex
+            ? message
+            : {
+                ...message,
+                id: `assistant-${event.runId}`,
+                runId: event.runId,
+                rawText,
+                text: sanitizeAssistantTranscriptText(rawText),
+                pending: true,
+              }
+        ));
       }
 
       const rawText = delta;
@@ -1138,7 +1699,9 @@ function ChatShell({
     setLiveSessions([]);
     setActiveSessionKey("");
     setActiveThreadId("");
-    setMessages([]);
+    replaceMessageState([]);
+    setReplyRecoveryPending(false);
+    activeRunIdRef.current = "";
     setActiveRunId("");
     endStreamAutoFollow();
     await refreshSessions(agentId);
@@ -1152,7 +1715,9 @@ function ChatShell({
     setLiveSessions([]);
     setActiveSessionKey("");
     setActiveThreadId("");
-    setMessages([]);
+    replaceMessageState([]);
+    setReplyRecoveryPending(false);
+    activeRunIdRef.current = "";
     setActiveRunId("");
     endStreamAutoFollow();
     await onRemoveAgent?.(agentId);
@@ -1166,11 +1731,12 @@ function ChatShell({
     setActiveThreadId(threadId);
     setActiveSessionKey(thread.sessionKey);
     setShellError("");
+    setReplyRecoveryPending(false);
 
     if (thread.status === "archived") {
       endStreamAutoFollow();
       queueScrollToBottom("auto");
-      setMessages(
+      replaceMessageState(
         thread.messages.map((message) => ({
           ...message,
         })),
@@ -1182,8 +1748,11 @@ function ChatShell({
   }
 
   async function handleNewChat() {
-    if (!clientRef.current || !activeAgentId || !activeSessionKey || connectionState !== "connected") return;
+    if (isConfigUpdating || !clientRef.current || !activeAgentId || !activeSessionKey || connectionState !== "connected") return;
     clearHistoryReconcile();
+    restoreLiveSession(activeAgentId, activeSessionKey);
+
+    const currentThreadId = activeThreadId || ensureDraftThreadForActiveSession();
 
     const archivedMessages = toStoredMessages(messages);
     const freshThread = createThread({
@@ -1196,7 +1765,7 @@ function ChatShell({
 
     updateThreads((current) =>
       current.flatMap((thread) => {
-        if (thread.id !== activeThreadIdRef.current) {
+        if (thread.id !== currentThreadId) {
           return [thread];
         }
         const archivedThread = {
@@ -1214,26 +1783,51 @@ function ChatShell({
     activeThreadIdRef.current = freshThread.id;
     setActiveThreadId(freshThread.id);
     prepareNextRunAutoFollow("auto");
-    setMessages([]);
+    replaceMessageState([]);
     setShellError("");
-    setSending(true);
+    setSendingState(true);
+    setReplyRecoveryPending(false);
+    updateMessageState((current) => ensurePendingAssistantPlaceholder(current));
 
     try {
       const result = await clientRef.current.sendChat(activeSessionKey, "/new", "adaptive");
+      if (!sendingRef.current && !activeRunIdRef.current) {
+        settledRunIdsRef.current = [...settledRunIdsRef.current.filter((id) => id !== result.runId), result.runId].slice(-50);
+        if (historyReconcileRef.current && !historyReconcileRef.current.runId) {
+          historyReconcileRef.current = { ...historyReconcileRef.current, runId: result.runId };
+        }
+        return;
+      }
+      activeRunIdRef.current = result.runId;
       setActiveRunId(result.runId);
       beginStreamAutoFollow(result.runId, "auto");
-      setMessages((current) => ensurePendingAssistantMessage(current, result.runId));
+      updateMessageState((current) => {
+        if (settledRunIdsRef.current.includes(result.runId)) {
+          return current;
+        }
+        return ensurePendingAssistantMessage(attachPendingAssistantRunId(current, result.runId), result.runId);
+      });
+      maybeCompleteDeferredVisibleReply(result.runId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setSending(false);
+      setSendingState(false);
+      setReplyRecoveryPending(false);
       endStreamAutoFollow();
+      replaceMessageState(removePendingAssistantPlaceholder(messagesRef.current));
       setShellError(`Failed to start a fresh chat: ${message}`);
     }
   }
 
   async function handleSend() {
     const text = composerValue.trim();
-    if (!text || !clientRef.current || !activeSessionKey || connectionState !== "connected" || activeThreadIsArchived) {
+    if (
+      isConfigUpdating ||
+      !text ||
+      !clientRef.current ||
+      !activeSessionKey ||
+      connectionState !== "connected" ||
+      activeThreadIsArchived
+    ) {
       return;
     }
 
@@ -1243,44 +1837,70 @@ function ChatShell({
       return;
     }
 
-    if (sending) {
+    if (sending || replyRecoveryPending) {
       return;
     }
 
     clearHistoryReconcile();
+    restoreLiveSession(activeAgentId, activeSessionKey);
+    const ensuredThreadId = activeThreadId || ensureDraftThreadForActiveSession();
     setComposerValue("");
-    setSending(true);
+    setSendingState(true);
+    setReplyRecoveryPending(false);
     prepareNextRunAutoFollow("auto");
-    setMessages((current) => [
-      ...current,
-      { id: `user-${Date.now()}`, role: "user", text, timestamp: Date.now() },
-    ]);
+    updateMessageState((current) =>
+      ensurePendingAssistantPlaceholder([
+        ...current,
+        { id: `user-${Date.now()}`, role: "user", text, timestamp: Date.now() },
+      ]),
+    );
+
+    if (ensuredThreadId && activeThreadIdRef.current !== ensuredThreadId) {
+      activeThreadIdRef.current = ensuredThreadId;
+    }
 
     try {
       const result = await clientRef.current.sendChat(activeSessionKey, text, "adaptive");
+      if (!sendingRef.current && !activeRunIdRef.current) {
+        settledRunIdsRef.current = [...settledRunIdsRef.current.filter((id) => id !== result.runId), result.runId].slice(-50);
+        if (historyReconcileRef.current && !historyReconcileRef.current.runId) {
+          historyReconcileRef.current = { ...historyReconcileRef.current, runId: result.runId };
+        }
+        return;
+      }
+      activeRunIdRef.current = result.runId;
       setActiveRunId(result.runId);
       beginStreamAutoFollow(result.runId, "auto");
-      setMessages((current) => ensurePendingAssistantMessage(current, result.runId));
+      updateMessageState((current) => {
+        if (settledRunIdsRef.current.includes(result.runId)) {
+          return current;
+        }
+        return ensurePendingAssistantMessage(attachPendingAssistantRunId(current, result.runId), result.runId);
+      });
+      maybeCompleteDeferredVisibleReply(result.runId);
     } catch (error) {
-      setSending(false);
+      setSendingState(false);
+      setReplyRecoveryPending(false);
       endStreamAutoFollow();
       queueScrollToBottom("auto");
-      setMessages((current) => [
-        ...current,
+      updateMessageState((current) => [
+        ...removePendingAssistantPlaceholder(current),
         { id: `error-${Date.now()}`, role: "system", text: String(error), error: true },
       ]);
     }
   }
 
   async function handleAbort() {
-    if (!clientRef.current || !activeRunId || !activeSessionKey || connectionState !== "connected") return;
+    if (isConfigUpdating || !clientRef.current || !activeRunId || !activeSessionKey || connectionState !== "connected") return;
     clearHistoryReconcile();
     const runId = activeRunId;
 
-    setSending(false);
+    setSendingState(false);
+    setReplyRecoveryPending(false);
+    activeRunIdRef.current = "";
     setActiveRunId("");
     endStreamAutoFollow();
-    setMessages((current) =>
+    updateMessageState((current) =>
       current.map((message) => (message.runId === runId ? { ...message, pending: false } : message)),
     );
 
@@ -1292,29 +1912,49 @@ function ChatShell({
   }
 
   async function handleResetChat() {
-    if (!clientRef.current || !activeSessionKey || connectionState !== "connected" || activeThreadIsArchived) return;
+    if (isConfigUpdating || !clientRef.current || !activeSessionKey || connectionState !== "connected" || activeThreadIsArchived) return;
     clearHistoryReconcile();
+    restoreLiveSession(activeAgentId, activeSessionKey);
+    ensureDraftThreadForActiveSession();
     prepareNextRunAutoFollow("auto");
-    setMessages([]);
-    setSending(true);
+    replaceMessageState([]);
+    setSendingState(true);
+    setReplyRecoveryPending(false);
     setShellError("");
+    updateMessageState((current) => ensurePendingAssistantPlaceholder(current));
     try {
       const result = await clientRef.current.sendChat(activeSessionKey, "/reset", "adaptive");
+      if (!sendingRef.current && !activeRunIdRef.current) {
+        settledRunIdsRef.current = [...settledRunIdsRef.current.filter((id) => id !== result.runId), result.runId].slice(-50);
+        if (historyReconcileRef.current && !historyReconcileRef.current.runId) {
+          historyReconcileRef.current = { ...historyReconcileRef.current, runId: result.runId };
+        }
+        return;
+      }
+      activeRunIdRef.current = result.runId;
       setActiveRunId(result.runId);
       beginStreamAutoFollow(result.runId, "auto");
-      setMessages((current) => ensurePendingAssistantMessage(current, result.runId));
+      updateMessageState((current) => {
+        if (settledRunIdsRef.current.includes(result.runId)) {
+          return current;
+        }
+        return ensurePendingAssistantMessage(attachPendingAssistantRunId(current, result.runId), result.runId);
+      });
+      maybeCompleteDeferredVisibleReply(result.runId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setSending(false);
+      setSendingState(false);
+      setReplyRecoveryPending(false);
+      replaceMessageState(removePendingAssistantPlaceholder(messagesRef.current));
       setShellError(`Failed to reset chat: ${message}`);
     }
   }
 
   const gatewayConnected = connectionState === "connected";
-  const chatReady = !!bootstrap && !bootstrapping && gatewayConnected;
+  const chatReady = !!bootstrap && !bootstrapping && gatewayConnected && !isConfigUpdating;
   const canCreateChat = chatReady && !!activeAgentId && !!activeSessionKey;
   const canSend =
-    chatReady && !!activeAgentId && !!activeSessionKey && !!composerValue.trim() && !sending && !activeThreadIsArchived;
+    chatReady && !!activeAgentId && !!activeSessionKey && !!composerValue.trim() && !sending && !replyRecoveryPending && !activeThreadIsArchived;
   const activeAgentName = agents.find((agent) => agent.id === activeAgentId)?.name || activeAgentId;
   const showEmptyAgentState = gatewayConnected && agents.length === 0;
   const showConnectingState =
@@ -1330,6 +1970,66 @@ function ChatShell({
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const liveThreads = agentThreads.filter((thread) => thread.status !== "archived");
   const archivedThreads = agentThreads.filter((thread) => thread.status === "archived");
+
+  async function handleDeleteThread(threadId: string) {
+    const thread = threadsRef.current.find((candidate) => candidate.id === threadId);
+    if (!thread) {
+      return;
+    }
+
+    clearHistoryReconcile();
+    if (scopeKey) {
+      removeStoredSelection(scopeKey, thread.agentId, thread.id);
+      if (thread.status !== "archived") {
+        hideLiveSession(scopeKey, thread.sessionKey);
+      }
+    }
+
+    const remainingThreads = threadsRef.current
+      .filter((candidate) => candidate.id !== threadId)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    updateThreads(() => remainingThreads);
+
+    if (activeThreadIdRef.current !== threadId) {
+      return;
+    }
+
+    const nextThread = remainingThreads.find((candidate) => candidate.agentId === thread.agentId) || null;
+    activeRunIdRef.current = "";
+    setActiveRunId("");
+    setSendingState(false);
+    endStreamAutoFollow();
+
+    if (!nextThread) {
+      activeThreadIdRef.current = "";
+      setActiveThreadId("");
+      setMessages([]);
+      setShellError("");
+      if (thread.status === "archived") {
+        const fallbackSessionKey = resolveSessionKeyForAgent({
+          agentId: thread.agentId,
+          liveSessions,
+          preferredSessionKey: activeSessionKeyRef.current || thread.sessionKey,
+        });
+        activeSessionKeyRef.current = fallbackSessionKey;
+        setActiveSessionKey(fallbackSessionKey);
+      }
+      return;
+    }
+
+    activeThreadIdRef.current = nextThread.id;
+    activeSessionKeyRef.current = nextThread.sessionKey;
+    setActiveThreadId(nextThread.id);
+    setActiveSessionKey(nextThread.sessionKey);
+    setShellError("");
+
+    if (nextThread.status === "archived") {
+      setMessages(nextThread.messages.map((message) => ({ ...message })));
+      return;
+    }
+
+    await loadHistory(nextThread.sessionKey, nextThread.id);
+  }
 
   const panelContextValue = {
     panelOpen,
@@ -1371,9 +2071,12 @@ function ChatShell({
             activeAgentEmoji={activeDisplayAgent && "emoji" in activeDisplayAgent ? String(activeDisplayAgent.emoji || "") || undefined : undefined}
             modelRef={resolvedModelRef}
             fallbackModels={resolvedFallbackModels}
+            localBaseUrl={localBaseUrl}
+            lmstudioBaseUrl={lmstudioBaseUrl}
             skills={resolvedSkills}
             onModelChange={onModelChange}
             onFallbacksChange={onFallbacksChange}
+            onLocalBaseUrlChange={onLocalBaseUrlChange}
             providerAuths={providerAuths}
             onProviderAuthChange={onProviderAuthChange}
             onStartOAuth={onStartOAuth}
@@ -1431,6 +2134,7 @@ function ChatShell({
           archivedThreads={archivedThreads}
           activeThreadId={activeThreadId}
           onThreadSwitch={(threadId) => void handleThreadSwitch(threadId)}
+          onDeleteThread={(threadId) => void handleDeleteThread(threadId)}
           themePreference={themePreference}
           onThemeChange={setThemePreference}
           onOpenConfigure={() => onOpenConfigure(captureTranscriptScrollSnapshot())}
@@ -1476,7 +2180,7 @@ function ChatShell({
                 transcriptRef={transcriptRef}
                 transcriptEndRef={transcriptEndRef}
                 showConnectingState={showConnectingState}
-                isConfigUpdating={isConfigUpdating && connectionState !== "connected"}
+                isConfigUpdating={isConfigUpdating}
                 connectionLabel={connectionLabel}
                 shellError={shellError}
                 showEmptyAgentState={showEmptyAgentState}

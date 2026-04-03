@@ -5,6 +5,7 @@ import {
   DEFAULT_MODELS,
 } from "../../presets/modelsByProvider";
 import {
+  getMissingReferencedProviders,
   getBaseProviderFromModel,
   getProviderAuthOptions,
   isOAuthMethod,
@@ -18,8 +19,11 @@ import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 interface ModelSwitcherPanelProps {
   currentModel: string;
   fallbackModels: string[];
+  currentLocalBaseUrl?: string;
+  currentLmstudioBaseUrl?: string;
   onModelChange?: (model: string) => void;
   onFallbacksChange?: (models: string[]) => void;
+  onLocalBaseUrlChange?: (provider: "lmstudio" | "local", baseUrl: string) => void;
   providerAuths?: Record<string, ProviderAuthConfig>;
   onProviderAuthChange?: (provider: string, auth: ProviderAuthConfig) => void;
   onStartOAuth?: (provider: string, authMethod: string, oauthProviderId: string) => Promise<ProviderAuthConfig>;
@@ -281,7 +285,7 @@ function LocalModelSection({
           <input
             {...TEXT_ENTRY_PROPS}
             type="text"
-            placeholder="http://localhost:8080/v1"
+            placeholder="http://localhost:8080"
             value={baseUrl || ""}
             onChange={(e) => onBaseUrlChange?.(e.target.value)}
             className="w-full px-3 py-2 rounded-md bg-[var(--surface-1)] border border-[var(--sidebar-border)] text-sm text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)]/50"
@@ -354,7 +358,7 @@ function LocalModelSection({
           <input
             {...TEXT_ENTRY_PROPS}
             type="text"
-            placeholder="http://localhost:1234/v1"
+            placeholder="http://localhost:1234"
             value={baseUrl || ""}
             onChange={(e) => onBaseUrlChange?.(e.target.value)}
             className="w-full px-3 py-2 rounded-md bg-[var(--surface-1)] border border-[var(--sidebar-border)] text-sm text-[var(--text-main)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)]/50"
@@ -413,8 +417,11 @@ function LocalModelSection({
 function ModelSwitcherPanel({
   currentModel,
   fallbackModels,
+  currentLocalBaseUrl = "",
+  currentLmstudioBaseUrl = "",
   onModelChange,
   onFallbacksChange,
+  onLocalBaseUrlChange,
   providerAuths = {},
   onProviderAuthChange,
   onStartOAuth,
@@ -449,6 +456,12 @@ function ModelSwitcherPanel({
   const [fbLocalBaseUrl, setFbLocalBaseUrl] = useState("");
   const [fbCustomModelName, setFbCustomModelName] = useState("");
 
+  const getProviderBaseUrl = useCallback((provider: string) => {
+    if (provider === "lmstudio") return currentLmstudioBaseUrl;
+    if (provider === "local") return currentLocalBaseUrl;
+    return "";
+  }, [currentLocalBaseUrl, currentLmstudioBaseUrl]);
+
   // Re-sync draft state when props change (after save)
   const prevModelRef = useRef(currentModel);
   const prevFallbacksRef = useRef(fallbackModels);
@@ -460,18 +473,59 @@ function ModelSwitcherPanel({
         providerAuths[getBaseProviderFromModel(currentModel) || "anthropic"] || createDefaultProviderAuth(getBaseProviderFromModel(currentModel) || "anthropic"),
       );
       setDraftFallbacks(fallbackModels);
+      setLocalBaseUrl(getProviderBaseUrl(getBaseProviderFromModel(currentModel) || "anthropic"));
       prevModelRef.current = currentModel;
       prevFallbacksRef.current = fallbackModels;
       setSaveError("");
     }
-  }, [currentModel, fallbackModels, providerAuths]);
+  }, [currentModel, fallbackModels, getProviderBaseUrl, providerAuths]);
+
+  useEffect(() => {
+    if (draftProvider === "lmstudio" || draftProvider === "local") {
+      setLocalBaseUrl(getProviderBaseUrl(draftProvider));
+    }
+  }, [draftProvider, getProviderBaseUrl]);
 
   // Check if dirty
   const isDirty = useMemo(() => {
     const modelChanged = draftModel !== currentModel || draftProvider !== (getBaseProviderFromModel(currentModel) || "anthropic");
     const fallbacksChanged = JSON.stringify(draftFallbacks) !== JSON.stringify(fallbackModels);
-    return modelChanged || fallbacksChanged;
-  }, [draftModel, draftProvider, currentModel, draftFallbacks, fallbackModels]);
+    const baseUrlChanged = (draftProvider === "lmstudio" || draftProvider === "local")
+      && localBaseUrl !== getProviderBaseUrl(draftProvider);
+    return modelChanged || fallbacksChanged || baseUrlChanged;
+  }, [currentModel, draftFallbacks, draftModel, draftProvider, fallbackModels, getProviderBaseUrl, localBaseUrl]);
+
+  const effectiveProviderAuths = useMemo(() => ({
+    ...providerAuths,
+    ...(draftProvider && !LOCAL_PROVIDERS.has(draftProvider) ? { [draftProvider]: draftAuth } : {}),
+  }), [draftAuth, draftProvider, providerAuths]);
+
+  const currentMissingReferencedProviders = useMemo(() => getMissingReferencedProviders({
+    primaryModel: currentModel,
+    fallbackModels,
+    providerAuths,
+    options: {
+      allowPendingOAuth: true,
+      oauthHandlerAvailable: !!onStartOAuth,
+    },
+  }), [currentModel, fallbackModels, onStartOAuth, providerAuths]);
+
+  const nextMissingReferencedProviders = useMemo(() => getMissingReferencedProviders({
+    primaryModel: draftModel,
+    fallbackModels: draftFallbacks,
+    providerAuths: effectiveProviderAuths,
+    options: {
+      allowPendingOAuth: true,
+      oauthHandlerAvailable: !!onStartOAuth,
+    },
+  }), [draftFallbacks, draftModel, effectiveProviderAuths, onStartOAuth]);
+
+  const introducedMissingProviders = useMemo(
+    () => nextMissingReferencedProviders.filter(
+      (provider) => !currentMissingReferencedProviders.includes(provider),
+    ),
+    [currentMissingReferencedProviders, nextMissingReferencedProviders],
+  );
 
   const currentProvider = getBaseProviderFromModel(currentModel);
   const currentModelName = currentModel
@@ -515,7 +569,13 @@ function ModelSwitcherPanel({
       setDetectedModels([]);
       setDetecting(false);
       setCustomModelName("");
-      setLocalBaseUrl(provider === "lmstudio" ? "http://localhost:1234/v1" : provider === "local" ? "http://localhost:8080/v1" : "");
+      setLocalBaseUrl(
+        provider === "lmstudio"
+          ? (currentLmstudioBaseUrl || "http://localhost:1234")
+          : provider === "local"
+            ? (currentLocalBaseUrl || "http://localhost:8080")
+            : "",
+      );
       if (LOCAL_PROVIDERS.has(provider)) {
         setDraftModel(DEFAULT_MODELS[provider] || "");
       } else {
@@ -525,7 +585,7 @@ function ModelSwitcherPanel({
         providerAuths[provider] || createDefaultProviderAuth(provider),
       );
     },
-    [providerAuths],
+    [currentLmstudioBaseUrl, currentLocalBaseUrl, providerAuths],
   );
 
   const handleDetectModels = useCallback(async () => {
@@ -576,6 +636,10 @@ function ModelSwitcherPanel({
     setSaveError("");
 
     try {
+      if (introducedMissingProviders.length > 0) {
+        throw new Error(`Missing authentication for ${introducedMissingProviders.join(", ")}.`);
+      }
+
       // Check if OAuth is needed
       const isLocal = LOCAL_PROVIDERS.has(draftProvider);
       const needsOAuth =
@@ -618,6 +682,10 @@ function ModelSwitcherPanel({
       if (JSON.stringify(draftFallbacks) !== JSON.stringify(fallbackModels)) {
         onFallbacksChange?.(draftFallbacks);
       }
+
+      if ((draftProvider === "lmstudio" || draftProvider === "local") && localBaseUrl !== getProviderBaseUrl(draftProvider)) {
+        onLocalBaseUrlChange?.(draftProvider, localBaseUrl);
+      }
     } catch (e) {
       setSaveError(String(e));
     } finally {
@@ -630,11 +698,15 @@ function ModelSwitcherPanel({
     draftFallbacks,
     currentModel,
     fallbackModels,
+    getProviderBaseUrl,
+    localBaseUrl,
     providerAuths,
+    onLocalBaseUrlChange,
     onModelChange,
     onProviderAuthChange,
     onStartOAuth,
     onFallbacksChange,
+    introducedMissingProviders,
   ]);
 
   const handleCancel = useCallback(() => {
@@ -642,8 +714,9 @@ function ModelSwitcherPanel({
     setDraftProvider(getBaseProviderFromModel(currentModel) || "anthropic");
     setDraftAuth(providerAuths[getBaseProviderFromModel(currentModel) || "anthropic"] || createDefaultProviderAuth(getBaseProviderFromModel(currentModel) || "anthropic"));
     setDraftFallbacks(fallbackModels);
+    setLocalBaseUrl(getProviderBaseUrl(getBaseProviderFromModel(currentModel) || "anthropic"));
     setSaveError("");
-  }, [currentModel, fallbackModels, providerAuths]);
+  }, [currentModel, fallbackModels, getProviderBaseUrl, providerAuths]);
 
   function handleRemoveFallback(model: string) {
     setDraftFallbacks(draftFallbacks.filter((m) => m !== model));
@@ -652,6 +725,9 @@ function ModelSwitcherPanel({
   function handleAddFallback() {
     if (fbDraftModel) {
       setDraftFallbacks([...draftFallbacks, fbDraftModel]);
+      if ((fbDraftProvider === "lmstudio" || fbDraftProvider === "local") && fbLocalBaseUrl !== getProviderBaseUrl(fbDraftProvider)) {
+        onLocalBaseUrlChange?.(fbDraftProvider, fbLocalBaseUrl);
+      }
       // If auth was provided for fallback provider, save it immediately
       if (fbDraftAuth && fbDraftAuth.token) {
         onProviderAuthChange?.(fbDraftProvider, fbDraftAuth);
@@ -747,13 +823,19 @@ function ModelSwitcherPanel({
               <p className="text-[0.7rem] text-red-500">{saveError}</p>
             )}
 
+            {!saveError && introducedMissingProviders.length > 0 && (
+              <p className="text-[0.7rem] text-red-500" data-testid="missing-provider-auth-error">
+                Missing authentication for {introducedMissingProviders.join(", ")}.
+              </p>
+            )}
+
             {/* Save / Cancel */}
             {isDirty && (
               <div className="flex items-center gap-2 pt-1">
                 <button
                   type="button"
                   onClick={handleSave}
-                  disabled={saving}
+                  disabled={saving || introducedMissingProviders.length > 0}
                   className="px-3 py-2 rounded-md text-xs font-medium bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
                   data-testid="model-save-btn"
                 >
@@ -832,7 +914,13 @@ function ModelSwitcherPanel({
                 onChange={(p) => {
                   setFbDraftProvider(p);
                   setFbDetectedModels([]);
-                  setFbLocalBaseUrl(p === "lmstudio" ? "http://localhost:1234/v1" : p === "local" ? "http://localhost:8080/v1" : "");
+                  setFbLocalBaseUrl(
+                    p === "lmstudio"
+                      ? (currentLmstudioBaseUrl || "http://localhost:1234")
+                      : p === "local"
+                        ? (currentLocalBaseUrl || "http://localhost:8080")
+                        : "",
+                  );
                   setFbCustomModelName("");
                   setFbDraftModel(LOCAL_PROVIDERS.has(p) ? "" : (DEFAULT_MODELS[p] || ""));
                 }}

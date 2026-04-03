@@ -276,6 +276,29 @@ describe("ModelSwitcherPanel", () => {
     expect(onModelChange).toHaveBeenCalledWith("openai/gpt-5.4");
   });
 
+  it("blocks saving a Gemini model when Google auth is missing", async () => {
+    const user = userEvent.setup();
+    const onModelChange = vi.fn();
+
+    render(
+      <ModelSwitcherPanel
+        currentModel="anthropic/claude-opus-4-6"
+        fallbackModels={[]}
+        onModelChange={onModelChange}
+        providerAuths={{}}
+      />,
+    );
+
+    await user.click(screen.getByTestId("provider-dropdown").querySelector("button")!);
+    await user.click(screen.getByTestId("dropdown-option-google"));
+
+    expect(screen.getByTestId("missing-provider-auth-error")).toHaveTextContent(
+      "Missing authentication for google.",
+    );
+    expect(screen.getByTestId("model-save-btn")).toBeDisabled();
+    expect(onModelChange).not.toHaveBeenCalled();
+  });
+
   it("detects Ollama models and saves the first detected model by default", async () => {
     const user = userEvent.setup();
     const onModelChange = vi.fn();
@@ -327,6 +350,31 @@ describe("ModelSwitcherPanel", () => {
     await waitFor(() => {
       expect(onDetectLocalModels).toHaveBeenCalledWith("lmstudio", "http://127.0.0.1:1235/v1");
     });
+  });
+
+  it("shows the bare Custom Local URL and persists a base URL-only change", async () => {
+    const user = userEvent.setup();
+    const onLocalBaseUrlChange = vi.fn();
+
+    render(
+      <ModelSwitcherPanel
+        currentModel="local/unsloth/gemma-4-e4b-it-gguf:Q4_K_XL"
+        fallbackModels={[]}
+        currentLocalBaseUrl="http://localhost:8080"
+        onModelChange={vi.fn()}
+        onLocalBaseUrlChange={onLocalBaseUrlChange}
+      />,
+    );
+
+    const baseUrlInput = screen.getByTestId("local-base-url");
+    expect(baseUrlInput).toHaveAttribute("placeholder", "http://localhost:8080");
+    expect(baseUrlInput).toHaveValue("http://localhost:8080");
+
+    await user.clear(baseUrlInput);
+    await user.type(baseUrlInput, "http://127.0.0.1:8081");
+    await user.click(screen.getByTestId("model-save-btn"));
+
+    expect(onLocalBaseUrlChange).toHaveBeenCalledWith("local", "http://127.0.0.1:8081");
   });
 
   it("disables browser text assistance on local model configuration inputs", async () => {

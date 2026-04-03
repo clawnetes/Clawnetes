@@ -36,13 +36,6 @@ function matchesRequestSessionKeyAlias(params: {
     return false;
   }
 
-  // Only the main agent should treat a bare `main` alias as equivalent to a
-  // canonical agent-scoped main session key. For sub-agents, `main` refers to
-  // the global main-agent session, not `agent:<subagent>:main`.
-  if (params.bareSessionKey === "main" && params.parsed.requestSessionKey === "main") {
-    return params.parsed.agentId === "main" && matchesAgentScope(params.agentId, params.parsed);
-  }
-
   return matchesAgentScope(params.agentId, params.parsed);
 }
 

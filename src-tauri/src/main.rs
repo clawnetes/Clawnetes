@@ -516,6 +516,8 @@ mod tests {
             agents_md: None,
             heartbeat_md: None,
             memory_md: None,
+            heartbeat_mode: None,
+            idle_timeout_ms: None,
             subagents: Some(SubagentConfig {
                 allow_agents: vec!["reporting".to_string()],
             }),
@@ -579,6 +581,8 @@ mod tests {
             agents_md: None,
             heartbeat_md: None,
             memory_md: None,
+            heartbeat_mode: None,
+            idle_timeout_ms: None,
             subagents: None,
             tools: None,
         };

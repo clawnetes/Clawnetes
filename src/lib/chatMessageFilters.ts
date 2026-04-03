@@ -276,6 +276,22 @@ function isInternalAutomationScaffoldingText(text: string) {
   );
 }
 
+function isPersonaStartupChatterText(text: string) {
+  const normalized = normalizeTranscriptText(text);
+  if (!normalized) return false;
+
+  const hasStartupSignal =
+    /console\.log\(\s*["'`](?:System online|Hello,\s*[^"'`]+)[^"'`]*["'`]\s*\)/i.test(text) ||
+    /\bSystem online\b/i.test(normalized);
+  if (!hasStartupSignal) return false;
+
+  return (
+    /\b(?:I['’]m|I am)\s+ready\s+to\s+(?:write|debug|review)\b/i.test(normalized) ||
+    /What are we (?:building|fixing) today\?/i.test(normalized) ||
+    /Hello,\s*[^.!?]+[.!?]?\s*(?:I['’]m|I am)\s+ready\s+to\b/i.test(normalized)
+  );
+}
+
 function dedupeCumulativeSections(sections: string[]) {
   return sections.filter((section, index) => !sections.slice(index + 1).some((later) => later.startsWith(section)));
 }
@@ -422,6 +438,7 @@ export function isBootstrapNoiseText(text: string) {
   if (!normalized) return false;
 
   return (
+    isPersonaStartupChatterText(text) ||
     /A new session was started via \/new or \/reset\./i.test(normalized) ||
     /Run your Session Startup sequence/i.test(normalized) ||
     /^Current time:/i.test(normalized) ||

@@ -19,6 +19,7 @@ interface ChatSidebarProps {
   archivedThreads: StoredChatThread[];
   activeThreadId: string;
   onThreadSwitch: (threadId: string) => void;
+  onDeleteThread: (threadId: string) => void;
   themePreference: ChatThemePreference;
   onThemeChange: (theme: ChatThemePreference) => void;
   onOpenConfigure: () => void;
@@ -38,6 +39,7 @@ export default function ChatSidebar({
   archivedThreads,
   activeThreadId,
   onThreadSwitch,
+  onDeleteThread,
   themePreference,
   onThemeChange,
   onOpenConfigure,
@@ -46,6 +48,7 @@ export default function ChatSidebar({
 }: ChatSidebarProps) {
   const [envDropdownOpen, setEnvDropdownOpen] = useState(false);
   const [pendingRemoveEnvironment, setPendingRemoveEnvironment] = useState<StoredEnvironment | null>(null);
+  const [pendingDeleteThread, setPendingDeleteThread] = useState<StoredChatThread | null>(null);
   const envDropdownRef = useRef<HTMLDivElement>(null);
 
   const handleCancelRemoveEnvironment = () => {
@@ -58,6 +61,18 @@ export default function ChatSidebar({
     }
     onRemoveEnvironment(pendingRemoveEnvironment.id);
     setPendingRemoveEnvironment(null);
+  };
+
+  const handleCancelDeleteThread = () => {
+    setPendingDeleteThread(null);
+  };
+
+  const handleConfirmDeleteThread = () => {
+    if (!pendingDeleteThread) {
+      return;
+    }
+    onDeleteThread(pendingDeleteThread.id);
+    setPendingDeleteThread(null);
   };
 
   useEffect(() => {
@@ -157,9 +172,7 @@ export default function ChatSidebar({
           </div>
         )}
         <div className="chat-sidebar-brand">
-          <p className="chat-sidebar-kicker">Clawnetes</p>
-          <h1>Agent Workspace</h1>
-          <span className="chat-sidebar-subtle">OpenClaw desktop shell</span>
+          <h1 data-testid="chat-sidebar-brand">Clawnetes</h1>
         </div>
 
         <button
@@ -187,16 +200,34 @@ export default function ChatSidebar({
             />
           ) : (
             liveThreads.map((thread) => (
-              <button
+              <div
                 key={thread.id}
-                className={`chat-list-item ${activeThreadId === thread.id ? "active" : ""}`}
-                onClick={() => void onThreadSwitch(thread.id)}
-                data-testid={`chat-thread-${thread.id}`}
-                type="button"
+                className={`chat-list-row ${activeThreadId === thread.id ? "active" : ""}`}
+                data-testid={`chat-thread-row-${thread.id}`}
               >
-                <span className="chat-list-item-icon"><ChatIcon name="chat" /></span>
-                <strong title={thread.title}>{thread.title}</strong>
-              </button>
+                <button
+                  className={`chat-list-item ${activeThreadId === thread.id ? "active" : ""}`}
+                  onClick={() => void onThreadSwitch(thread.id)}
+                  data-testid={`chat-thread-${thread.id}`}
+                  type="button"
+                >
+                  <span className="chat-list-item-icon"><ChatIcon name="chat" /></span>
+                  <strong title={thread.title}>{thread.title}</strong>
+                </button>
+                <button
+                  type="button"
+                  className="chat-list-delete"
+                  data-testid={`delete-chat-thread-${thread.id}`}
+                  aria-label={`Delete chat ${thread.title}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setPendingDeleteThread(thread);
+                  }}
+                >
+                  <span aria-hidden="true">&times;</span>
+                </button>
+              </div>
             ))
           )}
         </div>
@@ -216,15 +247,33 @@ export default function ChatSidebar({
             />
           ) : (
             archivedThreads.map((thread) => (
-              <button
+              <div
                 key={thread.id}
-                className={`chat-list-item archived ${activeThreadId === thread.id ? "active" : ""}`}
-                onClick={() => void onThreadSwitch(thread.id)}
-                type="button"
+                className={`chat-list-row ${activeThreadId === thread.id ? "active" : ""}`}
+                data-testid={`chat-thread-row-${thread.id}`}
               >
-                <span className="chat-list-item-icon"><ChatIcon name="note" /></span>
-                <strong title={thread.title}>{thread.title}</strong>
-              </button>
+                <button
+                  className={`chat-list-item archived ${activeThreadId === thread.id ? "active" : ""}`}
+                  onClick={() => void onThreadSwitch(thread.id)}
+                  type="button"
+                >
+                  <span className="chat-list-item-icon"><ChatIcon name="note" /></span>
+                  <strong title={thread.title}>{thread.title}</strong>
+                </button>
+                <button
+                  type="button"
+                  className="chat-list-delete"
+                  data-testid={`delete-chat-thread-${thread.id}`}
+                  aria-label={`Delete chat ${thread.title}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setPendingDeleteThread(thread);
+                  }}
+                >
+                  <span aria-hidden="true">&times;</span>
+                </button>
+              </div>
             ))
           )}
         </div>
@@ -256,6 +305,18 @@ export default function ChatSidebar({
         />
         <div className="chat-sidebar-status">{connectionLabel}</div>
       </div>
+      <ConfirmDialog
+        open={Boolean(pendingDeleteThread)}
+        title={pendingDeleteThread?.status === "archived" ? "Delete archived chat" : "Delete live chat"}
+        description={pendingDeleteThread?.status === "archived"
+          ? `Delete "${pendingDeleteThread?.title}" from Clawnetes? This removes the archived transcript from local chat storage.`
+          : `Delete "${pendingDeleteThread?.title}" from Clawnetes? This dismisses the live session locally and removes its saved transcript from this app.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={handleConfirmDeleteThread}
+        onCancel={handleCancelDeleteThread}
+      />
       <ConfirmDialog
         open={Boolean(pendingRemoveEnvironment)}
         title="Remove Remote Environment"

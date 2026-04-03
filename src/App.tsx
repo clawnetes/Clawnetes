@@ -10,7 +10,7 @@ import { updateIdentityField, updateSoulMission } from "./utils/markdownHelpers"
 import { getAgentSessionInitIds } from "./utils/agentSessions";
 import { getAdvancedTransitionAction } from "./utils/licenseGate";
 import { getMessagingChannelFromConfig, getTelegramPairingDisplayCode, hasMessagingSettingsChanged, isMessagingLinked, shouldShowTelegramPairing, shouldShowWhatsAppPairing } from "./utils/messagingPairing";
-import { applyModelProviderAuth, buildDeferredOAuthQueue, buildReferencedProviders, createDefaultProviderAuth, getBaseProvider, getBaseProviderFromModel, getDefaultModelForProvider, getDisplayModelOptions, getProviderAuthOptions, isOAuthMethod, LOCAL_PROVIDERS, normalizeModelRefForUi, normalizeProviderAuths, OAUTH_METHODS_BY_PROVIDER } from "./utils/providerAuth";
+import { applyModelProviderAuth, buildDeferredOAuthQueue, buildReferencedProviders, createDefaultProviderAuth, ensureProviderAuth, getBaseProvider, getBaseProviderFromModel, getDefaultModelForProvider, getDisplayModelOptions, getProviderAuthOptions, isOAuthMethod, LOCAL_PROVIDERS, normalizeModelRefForUi, normalizeProviderAuths, OAUTH_METHODS_BY_PROVIDER } from "./utils/providerAuth";
 import ToolPolicyEditor from "./components/ToolPolicyEditor";
 import { createInheritedToolPolicy, DEFAULT_TOOL_POLICY, deriveToolPolicyFromLegacy, getSkillIdSet, materializeToolPolicy, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./utils/toolSelection";
 import { constructConfigPayload as buildConfigPayload, buildAgentToolsPayload as buildAgentTools } from "./utils/configPayload";
@@ -501,7 +501,7 @@ function App() {
   }, [step, deferredOAuthQueue, oauthCompletionRunning, oauthCompletionStarted]);
 
   useEffect(() => {
-    setProviderAuths(prev => normalizeProviderAuths(prev, provider, apiKey, authMethod));
+    setProviderAuths(prev => ensureProviderAuth(prev, provider));
   }, [provider]);
 
   useEffect(() => {
@@ -1599,6 +1599,7 @@ Managed by Clawnetes.`,
 
   const handlePanelModelChange = useCallback(async (newModel: string) => {
     let nextAgentConfigs = configPayloadRef.current.agentConfigs;
+    const nextProvider = getBaseProviderFromModel(newModel) || configPayloadRef.current.provider;
     if (activeAgentId && activeAgentId !== "main") {
       // Sub-agent: update that agent's model in agentConfigs
       nextAgentConfigs = nextAgentConfigs.map(a =>
@@ -1607,12 +1608,14 @@ Managed by Clawnetes.`,
       setAgentConfigs(nextAgentConfigs);
     } else {
       // Main agent: update main model state
+      setProvider(nextProvider);
       setModel(newModel);
     }
     try {
       const payload = buildConfigPayload({
         ...configPayloadRef.current,
         agentConfigs: nextAgentConfigs,
+        provider: activeAgentId === "main" ? nextProvider : configPayloadRef.current.provider,
         model: activeAgentId === "main" ? newModel : configPayloadRef.current.model,
       });
       await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
@@ -1620,7 +1623,7 @@ Managed by Clawnetes.`,
     } catch (e) {
       console.error("Failed to update model:", e);
     }
-  }, [activeAgentId, restartGatewayAfterPanelUpdate, setAgentConfigs, setModel]);
+  }, [activeAgentId, restartGatewayAfterPanelUpdate, setAgentConfigs, setModel, setProvider]);
 
   const handlePanelFallbacksChange = useCallback(async (newFallbacks: string[]) => {
     setFallbackModels(newFallbacks);
@@ -1632,6 +1635,25 @@ Managed by Clawnetes.`,
       console.error("Failed to update fallback models:", e);
     }
   }, [restartGatewayAfterPanelUpdate, setFallbackModels]);
+
+  const handlePanelLocalBaseUrlChange = useCallback(async (provider: "lmstudio" | "local", baseUrl: string) => {
+    if (provider === "lmstudio") {
+      setLmstudioBaseUrl(baseUrl);
+    } else {
+      setLocalBaseUrl(baseUrl);
+    }
+    try {
+      const payload = buildConfigPayload({
+        ...configPayloadRef.current,
+        lmstudioBaseUrl: provider === "lmstudio" ? baseUrl : configPayloadRef.current.lmstudioBaseUrl,
+        localBaseUrl: provider === "local" ? baseUrl : configPayloadRef.current.localBaseUrl,
+      });
+      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await restartGatewayAfterPanelUpdate();
+    } catch (e) {
+      console.error("Failed to update local base URL:", e);
+    }
+  }, [buildActiveRemoteConfig, restartGatewayAfterPanelUpdate, setLmstudioBaseUrl, setLocalBaseUrl, targetEnvironment]);
 
   const handlePanelProviderAuthChange = useCallback(async (provider: string, auth: ProviderAuthConfig) => {
     const nextProviderAuths = mergeProviderAuth(configPayloadRef.current.providerAuths, provider, auth);
@@ -1676,7 +1698,7 @@ Managed by Clawnetes.`,
       return invoke<string[]>("get_ollama_models", { remote });
     }
     return invoke<string[]>("get_lmstudio_models", {
-      baseUrl: baseUrl || (provider === "lmstudio" ? "http://localhost:1234/v1" : "http://localhost:8080/v1"),
+      baseUrl: baseUrl || (provider === "lmstudio" ? "http://localhost:1234" : "http://localhost:8080"),
       remote,
     });
   }, [targetEnvironment, buildActiveRemoteConfig]);
@@ -1967,10 +1989,13 @@ Managed by Clawnetes.`,
             agentModelRef={model}
             agentFallbackCount={fallbackModels.length}
             agentFallbackModels={fallbackModels}
+            localBaseUrl={localBaseUrl}
+            lmstudioBaseUrl={lmstudioBaseUrl}
             agentSkills={selectedSkills}
             serviceKeys={serviceKeys}
             onModelChange={handlePanelModelChange}
             onFallbacksChange={handlePanelFallbacksChange}
+            onLocalBaseUrlChange={handlePanelLocalBaseUrlChange}
             providerAuths={providerAuths}
             onProviderAuthChange={handlePanelProviderAuthChange}
             onStartOAuth={handlePanelStartOAuth}

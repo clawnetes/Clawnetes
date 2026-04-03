@@ -20,6 +20,20 @@ const BASE_PROVIDER_BY_MODEL_PROVIDER: Record<string, string> = {
   "google-vertex": "google",
 };
 
+function normalizeCrossProviderModelRef(modelRef: string): string {
+  if (!modelRef || !modelRef.includes("/")) return modelRef;
+  const [rawProvider, ...restParts] = modelRef.split("/");
+  const rest = restParts.join("/");
+  const baseProvider = getBaseProvider(rawProvider);
+
+  // Repair the specific corruption case where Gemini models leak into the OpenAI Codex namespace.
+  if (/^gemini(?:[-/]|$)/i.test(rest) && (rawProvider === "openai-codex" || baseProvider === "openai")) {
+    return `google/${rest}`;
+  }
+
+  return `${rawProvider}/${rest}`;
+}
+
 const LEGACY_AUTH_METHOD_BY_PROVIDER: Record<string, Record<string, string>> = {
   anthropic: {
     "claude-cli": "setup-token",
@@ -68,23 +82,25 @@ export function getEffectiveModelProvider(provider: string, providerAuths: Recor
 
 export function applyModelProviderAuth(modelRef: string, providerAuths: Record<string, ProviderAuthConfig>): string {
   if (!modelRef || !modelRef.includes("/")) return modelRef;
-  const [provider, ...rest] = modelRef.split("/");
+  const normalizedModelRef = normalizeCrossProviderModelRef(modelRef);
+  const [provider, ...rest] = normalizedModelRef.split("/");
   const effectiveProvider = getEffectiveModelProvider(provider, providerAuths);
-  if (effectiveProvider === provider) return modelRef;
+  if (effectiveProvider === provider) return normalizedModelRef;
   return `${effectiveProvider}/${rest.join("/")}`;
 }
 
 export function getBaseProviderFromModel(modelRef: string): string {
   if (!modelRef || !modelRef.includes("/")) return modelRef;
-  return getBaseProvider(modelRef.split("/")[0]);
+  return getBaseProvider(normalizeCrossProviderModelRef(modelRef).split("/")[0]);
 }
 
 export function normalizeModelRefForUi(modelRef: string, providerAuths?: Record<string, ProviderAuthConfig>): string {
   if (!modelRef || !modelRef.includes("/")) return modelRef;
+  const normalizedModelRef = normalizeCrossProviderModelRef(modelRef);
   if (providerAuths) {
-    return applyModelProviderAuth(modelRef, providerAuths);
+    return applyModelProviderAuth(normalizedModelRef, providerAuths);
   }
-  const [provider, ...rest] = modelRef.split("/");
+  const [provider, ...rest] = normalizedModelRef.split("/");
   return `${getBaseProvider(provider)}/${rest.join("/")}`;
 }
 
@@ -172,6 +188,15 @@ export function normalizeProviderAuths(providerAuths: Record<string, ProviderAut
   return next;
 }
 
+export function ensureProviderAuth(providerAuths: Record<string, ProviderAuthConfig> | undefined, provider: string): Record<string, ProviderAuthConfig> {
+  const normalizedProvider = getBaseProvider(provider);
+  const next = { ...(providerAuths || {}) };
+  if (!next[normalizedProvider]) {
+    next[normalizedProvider] = createDefaultProviderAuth(normalizedProvider);
+  }
+  return next;
+}
+
 export function getReferencedProviders(models: string[]): string[] {
   const unique = new Set<string>();
   for (const model of models) {
@@ -212,6 +237,71 @@ export function getProviderAuthOptions(provider: string): Array<{ value: string;
 
 export function isOAuthMethod(authMethod: string): boolean {
   return Object.values(OAUTH_METHODS_BY_PROVIDER).some((options) => options.some((option) => option.value === authMethod));
+}
+
+export function hasUsableProviderAuth(
+  provider: string,
+  auth: ProviderAuthConfig | undefined,
+): boolean {
+  if (!provider || LOCAL_PROVIDERS.has(provider)) {
+    return true;
+  }
+
+  if (!auth) {
+    return false;
+  }
+
+  return isOAuthMethod(auth.auth_method) ? !!auth.profile_key : !!auth.token;
+}
+
+export function canUseProviderAuth(
+  provider: string,
+  auth: ProviderAuthConfig | undefined,
+  options?: {
+    allowPendingOAuth?: boolean;
+    oauthHandlerAvailable?: boolean;
+  },
+): boolean {
+  if (hasUsableProviderAuth(provider, auth)) {
+    return true;
+  }
+
+  if (!provider || LOCAL_PROVIDERS.has(provider) || !auth) {
+    return false;
+  }
+
+  return (
+    !!options?.allowPendingOAuth
+    && !!options?.oauthHandlerAvailable
+    && isOAuthMethod(auth.auth_method)
+    && !!(
+      auth.oauth_provider_id
+      || OAUTH_METHODS_BY_PROVIDER[provider]?.find((option) => option.value === auth.auth_method)?.oauthProviderId
+    )
+  );
+}
+
+export function getMissingReferencedProviders(input: {
+  primaryModel: string;
+  fallbackModels: string[];
+  providerAuths: Record<string, ProviderAuthConfig>;
+  agentConfigs?: Array<{ model: string; fallbackModels: string[] }>;
+  options?: {
+    allowPendingOAuth?: boolean;
+    oauthHandlerAvailable?: boolean;
+  };
+}): string[] {
+  const referencedProviders = buildReferencedProviders({
+    primaryModel: input.primaryModel,
+    fallbackModels: input.fallbackModels,
+    agentConfigs: input.agentConfigs,
+  });
+
+  return referencedProviders.filter((provider) => !canUseProviderAuth(
+    provider,
+    input.providerAuths[provider],
+    input.options,
+  ));
 }
 
 export interface DeferredOAuthItem {
