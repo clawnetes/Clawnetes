@@ -73,10 +73,13 @@ interface ChatShellProps {
   agentModelRef?: string;
   agentFallbackCount?: number;
   agentFallbackModels?: string[];
+  localBaseUrl?: string;
+  lmstudioBaseUrl?: string;
   agentSkills?: string[];
   serviceKeys?: Record<string, string>;
   onModelChange?: (model: string) => void;
   onFallbacksChange?: (models: string[]) => void;
+  onLocalBaseUrlChange?: (provider: "lmstudio" | "local", baseUrl: string) => void;
   providerAuths?: Record<string, ProviderAuthConfig>;
   onProviderAuthChange?: (provider: string, auth: ProviderAuthConfig) => void | Promise<void>;
   onStartOAuth?: (provider: string, authMethod: string, oauthProviderId: string) => Promise<ProviderAuthConfig>;
@@ -397,6 +400,14 @@ function attachPendingAssistantRunId(messages: ChatMessage[], runId: string): Ch
 }
 
 function replacePendingAssistantWithRecoveryNotice(messages: ChatMessage[], runId?: string | null) {
+  if (runHasVisibleAssistantMessage(messages, runId)) {
+    return messages.map((message) => (
+      message.role === "assistant" && message.runId === runId && message.pending
+        ? { ...message, pending: false }
+        : message
+    ));
+  }
+
   const nextMessages = messages.flatMap((message) => {
     if (
       message.role === "assistant" &&
@@ -465,8 +476,8 @@ function ChatShell({
   environments, activeEnvironmentId, onSwitchEnvironment, onAddEnvironment, onRemoveEnvironment, onAgentSwitch,
   agents: propAgents,
   activeAgentId: chatActiveAgentId,
-  agentModelRef, agentFallbackCount, agentFallbackModels, agentSkills, serviceKeys,
-  onModelChange, onFallbacksChange, providerAuths, onProviderAuthChange, onStartOAuth, onDetectLocalModels, onSaveSkillsConfig, skillsSaving, onSetupIntegration, onAddAgent, onRemoveAgent,
+  agentModelRef, agentFallbackCount, agentFallbackModels, localBaseUrl, lmstudioBaseUrl, agentSkills, serviceKeys,
+  onModelChange, onFallbacksChange, onLocalBaseUrlChange, providerAuths, onProviderAuthChange, onStartOAuth, onDetectLocalModels, onSaveSkillsConfig, skillsSaving, onSetupIntegration, onAddAgent, onRemoveAgent,
   identityMd, soulMd, toolsMd, agentsMd, heartbeatMd, memoryMd,
   onIdentitySave, identitySaving,
   targetEnvironment, remoteSummary, gatewayPort, gatewayBind, gatewayAuthMode,
@@ -1515,8 +1526,10 @@ function ChatShell({
       : [];
     const currentMessages = messagesRef.current.length > 0 ? messagesRef.current : threadMessages;
     const reconcileTail = buildReconcileTail(currentMessages, runId);
+    const hasError = !!runId && currentMessages.some((m) => m.runId === runId && m.error);
     const requiresVisibleAssistantSync =
       params.terminalState === "final" &&
+      !hasError &&
       reconcileTail.some((entry) => entry.role === "assistant" && entry.requireVisibleText) &&
       !runHasVisibleAssistantMessage(currentMessages, runId);
     if (requiresVisibleAssistantSync && sessionKey && threadId && clientRef.current) {
@@ -1588,8 +1601,8 @@ function ChatShell({
       clearStreamIdleFinalize();
       queueScrollToBottom("auto");
       updateMessageState((current) => [
-        ...current,
-        { id: `error-${Date.now()}`, role: "system", text: event.errorMessage || "Gateway error.", error: true },
+        ...current.filter((m) => !(m.role === "assistant" && m.runId === event.runId && m.pending && !m.text.trim())),
+        { id: `error-${Date.now()}`, runId: event.runId || undefined, role: "system", text: event.errorMessage || "Gateway error.", error: true },
       ]);
       setReplyRecoveryPending(false);
       activeRunIdRef.current = "";
@@ -2058,9 +2071,12 @@ function ChatShell({
             activeAgentEmoji={activeDisplayAgent && "emoji" in activeDisplayAgent ? String(activeDisplayAgent.emoji || "") || undefined : undefined}
             modelRef={resolvedModelRef}
             fallbackModels={resolvedFallbackModels}
+            localBaseUrl={localBaseUrl}
+            lmstudioBaseUrl={lmstudioBaseUrl}
             skills={resolvedSkills}
             onModelChange={onModelChange}
             onFallbacksChange={onFallbacksChange}
+            onLocalBaseUrlChange={onLocalBaseUrlChange}
             providerAuths={providerAuths}
             onProviderAuthChange={onProviderAuthChange}
             onStartOAuth={onStartOAuth}

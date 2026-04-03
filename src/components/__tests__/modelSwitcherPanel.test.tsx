@@ -352,6 +352,31 @@ describe("ModelSwitcherPanel", () => {
     });
   });
 
+  it("shows the bare Custom Local URL and persists a base URL-only change", async () => {
+    const user = userEvent.setup();
+    const onLocalBaseUrlChange = vi.fn();
+
+    render(
+      <ModelSwitcherPanel
+        currentModel="local/unsloth/gemma-4-e4b-it-gguf:Q4_K_XL"
+        fallbackModels={[]}
+        currentLocalBaseUrl="http://localhost:8080"
+        onModelChange={vi.fn()}
+        onLocalBaseUrlChange={onLocalBaseUrlChange}
+      />,
+    );
+
+    const baseUrlInput = screen.getByTestId("local-base-url");
+    expect(baseUrlInput).toHaveAttribute("placeholder", "http://localhost:8080");
+    expect(baseUrlInput).toHaveValue("http://localhost:8080");
+
+    await user.clear(baseUrlInput);
+    await user.type(baseUrlInput, "http://127.0.0.1:8081");
+    await user.click(screen.getByTestId("model-save-btn"));
+
+    expect(onLocalBaseUrlChange).toHaveBeenCalledWith("local", "http://127.0.0.1:8081");
+  });
+
   it("disables browser text assistance on local model configuration inputs", async () => {
     const user = userEvent.setup();
 

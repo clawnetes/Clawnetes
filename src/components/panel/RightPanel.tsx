@@ -29,9 +29,12 @@ interface RightPanelProps {
   activeAgentEmoji?: string;
   modelRef?: string;
   fallbackModels?: string[];
+  localBaseUrl?: string;
+  lmstudioBaseUrl?: string;
   skills?: string[];
   onModelChange?: (model: string) => void;
   onFallbacksChange?: (models: string[]) => void;
+  onLocalBaseUrlChange?: (provider: "lmstudio" | "local", baseUrl: string) => void;
   providerAuths?: Record<string, ProviderAuthConfig>;
   onProviderAuthChange?: (provider: string, auth: ProviderAuthConfig) => void;
   onStartOAuth?: (provider: string, authMethod: string, oauthProviderId: string) => Promise<ProviderAuthConfig>;
@@ -77,9 +80,12 @@ function RightPanel({
   activeAgentEmoji,
   modelRef,
   fallbackModels = [],
+  localBaseUrl = "",
+  lmstudioBaseUrl = "",
   skills = [],
   onModelChange,
   onFallbacksChange,
+  onLocalBaseUrlChange,
   providerAuths = {},
   onProviderAuthChange,
   onStartOAuth,
@@ -126,8 +132,11 @@ function RightPanel({
           <ModelSwitcherPanel
             currentModel={modelRef || ""}
             fallbackModels={fallbackModels}
+            currentLocalBaseUrl={localBaseUrl}
+            currentLmstudioBaseUrl={lmstudioBaseUrl}
             onModelChange={onModelChange}
             onFallbacksChange={onFallbacksChange}
+            onLocalBaseUrlChange={onLocalBaseUrlChange}
             providerAuths={providerAuths}
             onProviderAuthChange={onProviderAuthChange}
             onStartOAuth={onStartOAuth}

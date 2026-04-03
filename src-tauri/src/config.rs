@@ -44,6 +44,69 @@ fn is_remote_provider(provider: &str) -> bool {
     !matches!(provider, "ollama" | "lmstudio" | "local")
 }
 
+fn is_known_model_provider(provider: &str) -> bool {
+    matches!(
+        provider,
+        "anthropic"
+            | "openai"
+            | "openai-codex"
+            | "google"
+            | "google-vertex"
+            | "openrouter"
+            | "xai"
+            | "ollama"
+            | "lmstudio"
+            | "local"
+    )
+}
+
+fn normalize_openai_base_url(base_url: &str) -> String {
+    if base_url.ends_with("/v1") {
+        base_url.to_string()
+    } else {
+        format!("{}/v1", base_url.trim_end_matches('/'))
+    }
+}
+
+fn strip_openai_base_url_suffix(base_url: &str) -> String {
+    base_url
+        .trim_end_matches('/')
+        .strip_suffix("/v1")
+        .unwrap_or(base_url.trim_end_matches('/'))
+        .to_string()
+}
+
+fn persist_local_model_ref(model_ref: &str) -> String {
+    if let Some(stripped) = model_ref.strip_prefix("local/") {
+        format!("llamacpp/{}", stripped)
+    } else {
+        model_ref.to_string()
+    }
+}
+
+fn local_catalog_model_id(model_ref: &str) -> String {
+    model_ref
+        .strip_prefix("local/")
+        .or_else(|| model_ref.strip_prefix("llamacpp/"))
+        .unwrap_or(model_ref)
+        .to_string()
+}
+
+fn normalize_model_ref_for_loaded_ui(model_ref: &str, infer_local: bool) -> String {
+    let normalized = normalize_model_ref_for_ui(model_ref);
+    if !infer_local {
+        return normalized;
+    }
+
+    if let Some((provider, _)) = normalized.split_once('/') {
+        if !is_known_model_provider(provider) {
+            return format!("local/{}", normalized);
+        }
+    }
+
+    normalized
+}
+
 fn collect_referenced_remote_providers(config: &AgentConfig) -> std::collections::BTreeSet<String> {
     let mut providers = std::collections::BTreeSet::new();
 
@@ -566,12 +629,17 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
         .map(normalize_provider_for_ui)
         .unwrap_or_else(|| config.provider.clone());
     let effective_primary_model = apply_model_provider_auth(&config.model, &provider_auths);
+    let persisted_primary_model = persist_local_model_ref(&effective_primary_model);
     let effective_fallback_models = config
         .fallback_models
         .clone()
         .unwrap_or_default()
         .into_iter()
         .map(|model| apply_model_provider_auth(&model, &provider_auths))
+        .collect::<Vec<_>>();
+    let persisted_fallback_models = effective_fallback_models
+        .iter()
+        .map(|model| persist_local_model_ref(model))
         .collect::<Vec<_>>();
     let required_plugin_ids = collect_required_plugin_ids(&provider_auths, config.skills.as_ref());
 
@@ -595,14 +663,15 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
                 "workspace": format!("{}/.openclaw/agents/{}/workspace", home, agent.id),
                 "agentDir": format!("{}/.openclaw/agents/{}/agent", home, agent.id),
                 "model": {
-                    "primary": apply_model_provider_auth(&agent.model, &provider_auths)
+                    "primary": persist_local_model_ref(&apply_model_provider_auth(&agent.model, &provider_auths))
                 }
             });
 
             if let Some(fb) = &agent.fallback_models {
-                let effective_agent_fallbacks = fb
+                let persisted_agent_fallbacks = fb
                     .iter()
                     .map(|model| apply_model_provider_auth(model, &provider_auths))
+                    .map(|model| persist_local_model_ref(&model))
                     .collect::<Vec<_>>();
                 if !fb.is_empty() {
                     if let Some(model_obj) =
@@ -610,7 +679,7 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
                     {
                         model_obj.insert(
                             "fallbacks".to_string(),
-                            serde_json::to_value(effective_agent_fallbacks).unwrap(),
+                            serde_json::to_value(persisted_agent_fallbacks).unwrap(),
                         );
                     }
                 }
@@ -628,15 +697,15 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
             "workspace": format!("{}/.openclaw/workspace", home),
             "agentDir": format!("{}/.openclaw/agents/main/agent", home),
             "model": {
-                "primary": effective_primary_model
+                "primary": persisted_primary_model
             }
         });
 
-        if !effective_fallback_models.is_empty() {
+        if !persisted_fallback_models.is_empty() {
             if let Some(model_obj) = main_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
                 model_obj.insert(
                     "fallbacks".to_string(),
-                    serde_json::to_value(&effective_fallback_models).unwrap(),
+                    serde_json::to_value(&persisted_fallback_models).unwrap(),
                 );
             }
         }
@@ -689,7 +758,7 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
                 d.insert("workspace".to_string(), serde_json::json!(workspace));
                 d.insert(
                     "model".to_string(),
-                    serde_json::json!({ "primary": effective_primary_model }),
+                    serde_json::json!({ "primary": persisted_primary_model }),
                 );
             }
             a.insert("list".to_string(), serde_json::json!(agents_list));
@@ -865,8 +934,8 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
             profiles.insert(
                 auth_profile_name,
                 serde_json::json!({
-                    "provider": auth_profile_provider,
-                    "mode": auth_profile_mode
+            "provider": auth_profile_provider,
+            "mode": auth_profile_mode
                 }),
             );
         }
@@ -880,18 +949,18 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
         defaults.insert(
             "models".to_string(),
             serde_json::Value::Object(build_effective_models_catalog(
-                &effective_primary_model,
-                &effective_fallback_models,
+                &persisted_primary_model,
+                &persisted_fallback_models,
             )),
         );
 
-        if !effective_fallback_models.is_empty() {
+        if !persisted_fallback_models.is_empty() {
             if let Some(primary_model_config) =
                 defaults.get_mut("model").and_then(|m| m.as_object_mut())
             {
                 primary_model_config.insert(
                     "fallbacks".to_string(),
-                    serde_json::to_value(&effective_fallback_models).unwrap(),
+                    serde_json::to_value(&persisted_fallback_models).unwrap(),
                 );
             }
         }
@@ -985,11 +1054,7 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
             .local_base_url
             .as_deref()
             .unwrap_or("http://localhost:1234");
-        let base_url_v1 = if base_url.ends_with("/v1") {
-            base_url.to_string()
-        } else {
-            format!("{}/v1", base_url.trim_end_matches('/'))
-        };
+        let base_url_v1 = normalize_openai_base_url(base_url);
         let model_id = if config.model.starts_with("lmstudio/") {
             config.model.strip_prefix("lmstudio/").unwrap().to_string()
         } else {
@@ -1030,6 +1095,90 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
                             "apiKey": "lmstudio",
                             "api": "openai-completions",
                             "models": lmstudio_models
+                        }
+                    }
+                }),
+            );
+        }
+    }
+
+    if config.provider == "local" {
+        let base_url = config
+            .local_base_url
+            .as_deref()
+            .unwrap_or("http://localhost:8080");
+        let mut model_ids = Vec::new();
+        if matches!(
+            effective_primary_model.split('/').next(),
+            Some("local" | "llamacpp")
+        ) {
+            let catalog_model = local_catalog_model_id(&effective_primary_model);
+            if !catalog_model.is_empty() {
+                model_ids.push(catalog_model);
+            }
+        }
+        for model in &effective_fallback_models {
+            if matches!(model.split('/').next(), Some("local" | "llamacpp")) {
+                let catalog_model = local_catalog_model_id(model);
+                if !model_ids.contains(&catalog_model) {
+                    model_ids.push(catalog_model);
+                }
+            }
+        }
+        if let Some(agents) = &config.agents {
+            for agent in agents {
+                let effective_agent_model =
+                    apply_model_provider_auth(&agent.model, &provider_auths);
+                if matches!(
+                    effective_agent_model.split('/').next(),
+                    Some("local" | "llamacpp")
+                ) {
+                    let catalog_model = local_catalog_model_id(&effective_agent_model);
+                    if !model_ids.contains(&catalog_model) {
+                        model_ids.push(catalog_model);
+                    }
+                }
+                if let Some(fallbacks) = &agent.fallback_models {
+                    for fallback in fallbacks {
+                        let effective_fallback = apply_model_provider_auth(fallback, &provider_auths);
+                        if matches!(
+                            effective_fallback.split('/').next(),
+                            Some("local" | "llamacpp")
+                        ) {
+                            let catalog_model = local_catalog_model_id(&effective_fallback);
+                            if !model_ids.contains(&catalog_model) {
+                                model_ids.push(catalog_model);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let local_models: Vec<serde_json::Value> = model_ids
+            .iter()
+            .map(|id| {
+                serde_json::json!({
+                    "id": id,
+                    "name": id,
+                    "api": "openai-completions",
+                    "reasoning": false,
+                    "input": ["text"],
+                    "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+                    "contextWindow": 131072,
+                    "maxTokens": 8192
+                })
+            })
+            .collect();
+        if let Some(obj) = config_json.as_object_mut() {
+            obj.insert(
+                "models".to_string(),
+                serde_json::json!({
+                    "mode": "merge",
+                    "providers": {
+                        "llamacpp": {
+                            "baseUrl": normalize_openai_base_url(base_url),
+                            "api": "openai-completions",
+                            "models": local_models
                         }
                     }
                 }),
@@ -1374,13 +1523,24 @@ pub fn get_current_config(
         .get("agents")
         .and_then(|a| a.get("defaults"))
         .unwrap_or(&empty_json);
+    let has_local_provider = oc_config
+        .get("models")
+        .and_then(|m| m.get("providers"))
+        .and_then(|p| p.get("llamacpp"))
+        .is_some();
     let model_primary_raw = defaults
         .get("model")
         .and_then(|m| m.get("primary"))
         .and_then(|v| v.as_str())
         .unwrap_or("anthropic/claude-opus-4-6")
         .to_string();
-    let model_primary = normalize_model_ref_for_ui(&model_primary_raw);
+    let raw_primary_provider = model_primary_raw
+        .split('/')
+        .next()
+        .map(normalize_provider_for_ui)
+        .unwrap_or_else(|| "anthropic".to_string());
+    let inferred_local_primary = has_local_provider && !is_known_model_provider(&raw_primary_provider);
+    let model_primary = normalize_model_ref_for_loaded_ui(&model_primary_raw, inferred_local_primary);
     let fallback_models_raw: Vec<String> = defaults
         .get("model")
         .and_then(|m| m.get("fallbacks"))
@@ -1388,14 +1548,14 @@ pub fn get_current_config(
         .unwrap_or_default();
     let fallback_models: Vec<String> = fallback_models_raw
         .iter()
-        .map(|model| normalize_model_ref_for_ui(model))
+        .map(|model| normalize_model_ref_for_loaded_ui(model, has_local_provider))
         .collect();
 
-    let base_provider = model_primary_raw
-        .split('/')
-        .next()
-        .map(normalize_provider_for_ui)
-        .unwrap_or_else(|| "anthropic".to_string());
+    let base_provider = if inferred_local_primary {
+        "local".to_string()
+    } else {
+        raw_primary_provider.clone()
+    };
     let main_provider_auth = resolve_provider_auth_data(&base_provider, &auth_config)
         .unwrap_or_else(|| default_provider_auth(&base_provider, "", "token", None));
     let profile = main_provider_auth
@@ -1516,7 +1676,7 @@ pub fn get_current_config(
             } else {
                 "".to_string()
             };
-            let amodel = normalize_model_ref_for_ui(&amodel_raw);
+            let amodel = normalize_model_ref_for_loaded_ui(&amodel_raw, has_local_provider);
 
             let afallbacks_raw: Vec<String> = agent_val
                 .get("model")
@@ -1531,7 +1691,7 @@ pub fn get_current_config(
                 .unwrap_or_default();
             let afallbacks: Vec<String> = afallbacks_raw
                 .iter()
-                .map(|model| normalize_model_ref_for_ui(model))
+                .map(|model| normalize_model_ref_for_loaded_ui(model, has_local_provider))
                 .collect();
 
             let agent_workspace_base = format!("{}/.openclaw/agents/{}/workspace", home_dir, aid);
@@ -1774,7 +1934,15 @@ pub fn get_current_config(
         local_base_url: profile
             .get("baseUrl")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+            .or_else(|| {
+                oc_config
+                    .get("models")
+                    .and_then(|m| m.get("providers"))
+                    .and_then(|p| p.get("llamacpp"))
+                    .and_then(|p| p.get("baseUrl"))
+                    .and_then(|v| v.as_str())
+            })
+            .map(strip_openai_base_url_suffix),
         thinking_level,
         whatsapp_enabled: Some(whatsapp_enabled),
         whatsapp_dm_policy,
@@ -2296,6 +2464,221 @@ mod tests {
                 .and_then(|auth| auth.oauth_provider_id.as_deref()),
             Some("openai-codex")
         );
+    }
+
+    #[test]
+    fn test_get_current_config_loads_backup_style_custom_local_provider() {
+        let _lock = COMPAT_FIXTURE_LOCK.lock().unwrap();
+        let (home, _guard) = write_compat_fixture_tree().expect("fixture tree should be created");
+
+        let home_str = home.to_string_lossy().to_string();
+        let openclaw_root = home.join(".openclaw");
+        let local_fixture = serde_json::json!({
+            "auth": {
+                "profiles": {
+                    "local:default": {
+                        "provider": "local",
+                        "mode": "token"
+                    }
+                }
+            },
+            "models": {
+                "providers": {
+                    "llamacpp": {
+                        "baseUrl": "http://127.0.0.1:8080/v1",
+                        "api": "openai-completions",
+                        "models": [
+                            { "id": "unsloth/gemma-4-e4b-it-gguf:Q4_K_XL", "name": "Gemma" }
+                        ]
+                    }
+                }
+            },
+            "agents": {
+                "defaults": {
+                    "workspace": format!("{}/.openclaw/workspace", home_str),
+                    "model": {
+                        "primary": "unsloth/gemma-4-e4b-it-gguf:Q4_K_XL",
+                        "fallbacks": ["google/gemini-3.1-pro-preview"]
+                    },
+                    "models": {
+                        "unsloth/gemma-4-e4b-it-gguf:Q4_K_XL": {},
+                        "google/gemini-3.1-pro-preview": {}
+                    }
+                },
+                "list": [
+                    {
+                        "id": "main",
+                        "name": "Local Main",
+                        "workspace": format!("{}/.openclaw/workspace", home_str),
+                        "agentDir": format!("{}/.openclaw/agents/main/agent", home_str),
+                        "model": {
+                            "primary": "unsloth/gemma-4-e4b-it-gguf:Q4_K_XL"
+                        }
+                    }
+                ]
+            }
+        });
+
+        std::fs::write(
+            openclaw_root.join("openclaw.json"),
+            serde_json::to_string_pretty(&local_fixture).expect("fixture json"),
+        )
+        .expect("should write local fixture");
+        std::fs::write(
+            openclaw_root.join("agents/main/agent/auth-profiles.json"),
+            serde_json::json!({
+                "version": 1,
+                "profiles": {
+                    "local:default": {
+                        "provider": "local",
+                        "token": "dummy-token",
+                        "type": "token",
+                        "api": "openai",
+                        "baseUrl": "http://127.0.0.1:8080"
+                    }
+                },
+                "lastGood": {
+                    "local": "local:default"
+                }
+            })
+            .to_string(),
+        )
+        .expect("should write local auth profiles");
+
+        let current = get_current_config(None).expect("local fixture should load");
+
+        assert_eq!(current.provider, "local");
+        assert_eq!(current.model, "local/unsloth/gemma-4-e4b-it-gguf:Q4_K_XL");
+        assert_eq!(current.fallback_models, vec!["google/gemini-3.1-pro-preview".to_string()]);
+        assert_eq!(current.local_base_url.as_deref(), Some("http://127.0.0.1:8080"));
+    }
+
+    #[test]
+    fn test_configure_agent_writes_custom_local_provider_in_backup_style_shape() {
+        let _lock = COMPAT_FIXTURE_LOCK.lock().unwrap();
+        let (home, _guard) = write_compat_fixture_tree().expect("fixture tree should be created");
+
+        let local_config = crate::types::AgentConfig {
+            provider: "local".to_string(),
+            api_key: "".to_string(),
+            auth_method: Some("token".to_string()),
+            model: "local/unsloth/gemma-4-e4b-it-gguf:Q4_K_XL".to_string(),
+            user_name: "Local User".to_string(),
+            agent_name: "Local Main".to_string(),
+            agent_vibe: Some("Local first".to_string()),
+            telegram_token: None,
+            gateway_port: Some(18789),
+            gateway_bind: Some("loopback".to_string()),
+            gateway_auth_mode: Some("token".to_string()),
+            tailscale_mode: Some("off".to_string()),
+            node_manager: None,
+            skills: Some(vec![]),
+            service_keys: None,
+            provider_auths: Some(std::collections::HashMap::from([(
+                "local".to_string(),
+                crate::types::ProviderAuthData {
+                    auth_method: "token".to_string(),
+                    token: "dummy-token".to_string(),
+                    profile_key: Some("local:default".to_string()),
+                    profile: Some(serde_json::json!({
+                        "provider": "local",
+                        "token": "dummy-token",
+                        "type": "token",
+                        "api": "openai",
+                        "baseUrl": "http://localhost:8080"
+                    })),
+                    oauth_provider_id: None,
+                },
+            )])),
+            sandbox_mode: Some("off".to_string()),
+            tools_mode: Some("all".to_string()),
+            tools_profile: Some("full".to_string()),
+            allowed_tools: Some(vec![]),
+            denied_tools: Some(vec![]),
+            fallback_models: Some(vec!["google/gemini-3.1-pro-preview".to_string()]),
+            heartbeat_mode: Some("1h".to_string()),
+            idle_timeout_ms: None,
+            identity_md: Some("# IDENTITY.md - Who Am I?\n- **Name:** Local Main\n- **Emoji:** 🦞\n---\nManaged by Clawnetes.".to_string()),
+            user_md: Some("# USER.md - About Your Human\n- **Name:** Local User\n---".to_string()),
+            soul_md: Some("# SOUL.md\n## Mission\nServe Local User.".to_string()),
+            agents: None,
+            preserve_state: Some(true),
+            agent_type: Some("custom".to_string()),
+            tools_md: None,
+            agents_md: None,
+            heartbeat_md: None,
+            memory_md: None,
+            memory_enabled: Some(false),
+            cron_jobs: None,
+            local_base_url: Some("http://localhost:8080".to_string()),
+            thinking_level: None,
+            whatsapp_enabled: Some(false),
+            whatsapp_dm_policy: None,
+            whatsapp_phone_number: None,
+        };
+
+        configure_agent(local_config).expect("local config should be writable");
+
+        let written_openclaw_json = std::fs::read_to_string(home.join(".openclaw/openclaw.json"))
+            .expect("openclaw.json should exist");
+        let written_openclaw: serde_json::Value =
+            serde_json::from_str(&written_openclaw_json).expect("openclaw.json should parse");
+        let reloaded = get_current_config(None).expect("round-tripped local config should load");
+
+        assert_eq!(
+            written_openclaw
+                .get("agents")
+                .and_then(|value| value.get("defaults"))
+                .and_then(|value| value.get("model"))
+                .and_then(|value| value.get("primary"))
+                .and_then(|value| value.as_str()),
+            Some("llamacpp/unsloth/gemma-4-e4b-it-gguf:Q4_K_XL")
+        );
+        assert_eq!(
+            written_openclaw
+                .get("models")
+                .and_then(|value| value.get("providers"))
+                .and_then(|value| value.get("llamacpp"))
+                .and_then(|value| value.get("baseUrl"))
+                .and_then(|value| value.as_str()),
+            Some("http://localhost:8080/v1")
+        );
+        assert_eq!(
+            written_openclaw
+                .get("models")
+                .and_then(|value| value.get("providers"))
+                .and_then(|value| value.get("llamacpp"))
+                .and_then(|value| value.get("models"))
+                .and_then(|value| value.as_array())
+                .and_then(|value| value.first())
+                .and_then(|value| value.get("id"))
+                .and_then(|value| value.as_str()),
+            Some("unsloth/gemma-4-e4b-it-gguf:Q4_K_XL")
+        );
+
+        let written_auth_profiles = std::fs::read_to_string(
+            home.join(".openclaw/agents/main/agent/auth-profiles.json"),
+        )
+        .expect("auth-profiles.json should exist");
+        let written_auth_profiles: serde_json::Value =
+            serde_json::from_str(&written_auth_profiles).expect("auth profiles should parse");
+        assert!(
+            written_auth_profiles
+                .get("profiles")
+                .and_then(|value| value.get("llamacpp:default"))
+                .is_some()
+        );
+        assert!(
+            written_auth_profiles
+                .get("profiles")
+                .and_then(|value| value.get("google:default"))
+                .and_then(|value| value.get("baseUrl"))
+                .is_none()
+        );
+
+        assert_eq!(reloaded.provider, "local");
+        assert_eq!(reloaded.model, "local/unsloth/gemma-4-e4b-it-gguf:Q4_K_XL");
+        assert_eq!(reloaded.local_base_url.as_deref(), Some("http://localhost:8080"));
     }
 
     #[test]

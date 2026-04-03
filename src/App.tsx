@@ -1636,6 +1636,25 @@ Managed by Clawnetes.`,
     }
   }, [restartGatewayAfterPanelUpdate, setFallbackModels]);
 
+  const handlePanelLocalBaseUrlChange = useCallback(async (provider: "lmstudio" | "local", baseUrl: string) => {
+    if (provider === "lmstudio") {
+      setLmstudioBaseUrl(baseUrl);
+    } else {
+      setLocalBaseUrl(baseUrl);
+    }
+    try {
+      const payload = buildConfigPayload({
+        ...configPayloadRef.current,
+        lmstudioBaseUrl: provider === "lmstudio" ? baseUrl : configPayloadRef.current.lmstudioBaseUrl,
+        localBaseUrl: provider === "local" ? baseUrl : configPayloadRef.current.localBaseUrl,
+      });
+      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await restartGatewayAfterPanelUpdate();
+    } catch (e) {
+      console.error("Failed to update local base URL:", e);
+    }
+  }, [buildActiveRemoteConfig, restartGatewayAfterPanelUpdate, setLmstudioBaseUrl, setLocalBaseUrl, targetEnvironment]);
+
   const handlePanelProviderAuthChange = useCallback(async (provider: string, auth: ProviderAuthConfig) => {
     const nextProviderAuths = mergeProviderAuth(configPayloadRef.current.providerAuths, provider, auth);
     updateProviderAuth(provider, auth);
@@ -1679,7 +1698,7 @@ Managed by Clawnetes.`,
       return invoke<string[]>("get_ollama_models", { remote });
     }
     return invoke<string[]>("get_lmstudio_models", {
-      baseUrl: baseUrl || (provider === "lmstudio" ? "http://localhost:1234/v1" : "http://localhost:8080/v1"),
+      baseUrl: baseUrl || (provider === "lmstudio" ? "http://localhost:1234" : "http://localhost:8080"),
       remote,
     });
   }, [targetEnvironment, buildActiveRemoteConfig]);
@@ -1970,10 +1989,13 @@ Managed by Clawnetes.`,
             agentModelRef={model}
             agentFallbackCount={fallbackModels.length}
             agentFallbackModels={fallbackModels}
+            localBaseUrl={localBaseUrl}
+            lmstudioBaseUrl={lmstudioBaseUrl}
             agentSkills={selectedSkills}
             serviceKeys={serviceKeys}
             onModelChange={handlePanelModelChange}
             onFallbacksChange={handlePanelFallbacksChange}
+            onLocalBaseUrlChange={handlePanelLocalBaseUrlChange}
             providerAuths={providerAuths}
             onProviderAuthChange={handlePanelProviderAuthChange}
             onStartOAuth={handlePanelStartOAuth}

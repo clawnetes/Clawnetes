@@ -333,9 +333,9 @@ function AddAgentModal({
 
     const baseUrl =
       provider === "lmstudio"
-        ? "http://localhost:1234/v1"
+        ? "http://localhost:1234"
         : provider === "local"
-          ? "http://localhost:8080/v1"
+          ? "http://localhost:8080"
           : undefined;
 
     setDetectingProviders((prev) => ({ ...prev, [provider]: true }));

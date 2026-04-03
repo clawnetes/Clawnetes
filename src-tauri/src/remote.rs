@@ -39,6 +39,30 @@ fn write_markdown_file(
     executor.write_file(path, &value)
 }
 
+fn normalize_openai_base_url(base_url: &str) -> String {
+    if base_url.ends_with("/v1") {
+        base_url.to_string()
+    } else {
+        format!("{}/v1", base_url.trim_end_matches('/'))
+    }
+}
+
+fn persist_local_model_ref(model_ref: &str) -> String {
+    if let Some(stripped) = model_ref.strip_prefix("local/") {
+        format!("llamacpp/{}", stripped)
+    } else {
+        model_ref.to_string()
+    }
+}
+
+fn local_catalog_model_id(model_ref: &str) -> String {
+    model_ref
+        .strip_prefix("local/")
+        .or_else(|| model_ref.strip_prefix("llamacpp/"))
+        .unwrap_or(model_ref)
+        .to_string()
+}
+
 pub async fn setup_remote_openclaw(
     remote: &crate::types::RemoteInfo,
     config: AgentConfig,
@@ -100,9 +124,9 @@ pub async fn setup_remote_openclaw(
 
     if executor.run(&check_claw_cmd).is_err() {
         let install_claw_cmd = if os_type == "Linux" {
-            format!("{}npm install -g openclaw", sudo_prefix)
+            format!("{}npm install -g openclaw@2026.3.24", sudo_prefix)
         } else {
-            "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; npm install -g openclaw".to_string()
+            "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; npm install -g openclaw@2026.3.24".to_string()
         };
         executor
             .run(&install_claw_cmd)
@@ -177,12 +201,17 @@ pub async fn setup_remote_openclaw(
             )
         });
     let effective_primary_model = apply_model_provider_auth(&config.model, &provider_auths);
+    let persisted_primary_model = persist_local_model_ref(&effective_primary_model);
     let effective_fallback_models = config
         .fallback_models
         .clone()
         .unwrap_or_default()
         .into_iter()
         .map(|model| apply_model_provider_auth(&model, &provider_auths))
+        .collect::<Vec<_>>();
+    let persisted_fallback_models = effective_fallback_models
+        .iter()
+        .map(|model| persist_local_model_ref(model))
         .collect::<Vec<_>>();
     let primary_auth_provider =
         auth_provider_id_for_config(&config.provider, &primary_provider_auth, &provider_auths);
@@ -204,18 +233,18 @@ pub async fn setup_remote_openclaw(
         "subagents": { "maxConcurrent": 8 },
         "compaction": { "mode": "safeguard" },
         "workspace": workspace,
-        "model": { "primary": effective_primary_model },
-        "models": build_effective_models_catalog(&effective_primary_model, &effective_fallback_models)
+        "model": { "primary": persisted_primary_model },
+        "models": build_effective_models_catalog(&persisted_primary_model, &persisted_fallback_models)
     });
 
-    if !effective_fallback_models.is_empty() {
+    if !persisted_fallback_models.is_empty() {
         if let Some(primary) = defaults_obj
             .get_mut("model")
             .and_then(|m| m.as_object_mut())
         {
             primary.insert(
                 "fallbacks".to_string(),
-                serde_json::to_value(&effective_fallback_models)?,
+                serde_json::to_value(&persisted_fallback_models)?,
             );
         }
     }
@@ -279,7 +308,7 @@ pub async fn setup_remote_openclaw(
                 "workspace": format!("{}/.openclaw/agents/{}/workspace", remote_home, agent.id),
                 "agentDir": format!("{}/.openclaw/agents/{}/agent", remote_home, agent.id),
                 "model": {
-                    "primary": apply_model_provider_auth(&agent.model, &provider_auths)
+                    "primary": persist_local_model_ref(&apply_model_provider_auth(&agent.model, &provider_auths))
                 }
             });
 
@@ -287,6 +316,7 @@ pub async fn setup_remote_openclaw(
                 let effective_agent_fallbacks = fb
                     .iter()
                     .map(|model| apply_model_provider_auth(model, &provider_auths))
+                    .map(|model| persist_local_model_ref(&model))
                     .collect::<Vec<_>>();
                 if !fb.is_empty() {
                     if let Some(model_obj) =
@@ -313,15 +343,15 @@ pub async fn setup_remote_openclaw(
             "workspace": workspace,
             "agentDir": agents_dir,
             "model": {
-                "primary": effective_primary_model
+                "primary": persisted_primary_model
             }
         });
 
-        if !effective_fallback_models.is_empty() {
+        if !persisted_fallback_models.is_empty() {
             if let Some(model_obj) = main_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
                 model_obj.insert(
                     "fallbacks".to_string(),
-                    serde_json::to_value(&effective_fallback_models)?,
+                    serde_json::to_value(&persisted_fallback_models)?,
                 );
             }
         }
@@ -502,11 +532,7 @@ pub async fn setup_remote_openclaw(
             .local_base_url
             .as_deref()
             .unwrap_or("http://localhost:1234");
-        let base_url_v1 = if base_url.ends_with("/v1") {
-            base_url.to_string()
-        } else {
-            format!("{}/v1", base_url.trim_end_matches('/'))
-        };
+        let base_url_v1 = normalize_openai_base_url(base_url);
         let model_id = if config.model.starts_with("lmstudio/") {
             config.model.strip_prefix("lmstudio/").unwrap().to_string()
         } else {
@@ -548,6 +574,89 @@ pub async fn setup_remote_openclaw(
                             "apiKey": "lmstudio",
                             "api": "openai-completions",
                             "models": lmstudio_models
+                        }
+                    }
+                }),
+            );
+        }
+    }
+
+    if config.provider == "local" {
+        let base_url = config
+            .local_base_url
+            .as_deref()
+            .unwrap_or("http://localhost:8080");
+        let mut model_ids = Vec::new();
+        if matches!(
+            effective_primary_model.split('/').next(),
+            Some("local" | "llamacpp")
+        ) {
+            let catalog_model = local_catalog_model_id(&effective_primary_model);
+            if !catalog_model.is_empty() {
+                model_ids.push(catalog_model);
+            }
+        }
+        for model in &effective_fallback_models {
+            if matches!(model.split('/').next(), Some("local" | "llamacpp")) {
+                let catalog_model = local_catalog_model_id(model);
+                if !model_ids.contains(&catalog_model) {
+                    model_ids.push(catalog_model);
+                }
+            }
+        }
+        if let Some(agents) = &config.agents {
+            for agent in agents {
+                let effective_agent_model = apply_model_provider_auth(&agent.model, &provider_auths);
+                if matches!(
+                    effective_agent_model.split('/').next(),
+                    Some("local" | "llamacpp")
+                ) {
+                    let catalog_model = local_catalog_model_id(&effective_agent_model);
+                    if !model_ids.contains(&catalog_model) {
+                        model_ids.push(catalog_model);
+                    }
+                }
+                if let Some(fallbacks) = &agent.fallback_models {
+                    for fallback in fallbacks {
+                        let effective_fallback = apply_model_provider_auth(fallback, &provider_auths);
+                        if matches!(
+                            effective_fallback.split('/').next(),
+                            Some("local" | "llamacpp")
+                        ) {
+                            let catalog_model = local_catalog_model_id(&effective_fallback);
+                            if !model_ids.contains(&catalog_model) {
+                                model_ids.push(catalog_model);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let local_models: Vec<serde_json::Value> = model_ids
+            .iter()
+            .map(|id| {
+                serde_json::json!({
+                    "id": id,
+                    "name": id,
+                    "api": "openai-completions",
+                    "reasoning": false,
+                    "input": ["text"],
+                    "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+                    "contextWindow": 131072,
+                    "maxTokens": 8192
+                })
+            })
+            .collect();
+        if let Some(obj) = config_val.as_object_mut() {
+            obj.insert(
+                "models".to_string(),
+                serde_json::json!({
+                    "mode": "merge",
+                    "providers": {
+                        "llamacpp": {
+                            "baseUrl": normalize_openai_base_url(base_url),
+                            "api": "openai-completions",
+                            "models": local_models
                         }
                     }
                 }),
@@ -742,6 +851,22 @@ pub async fn apply_agent_config(
     let executor = SshExecutor::connect(remote)?;
     let home = executor.run("echo $HOME")?.trim().to_string();
     let openclaw_root = format!("{}/.openclaw", home);
+    let agents_dir = format!("{}/agents/main/agent", openclaw_root);
+
+    let provider_auths = get_provider_auth_map(&config);
+    let effective_primary_model = apply_model_provider_auth(&config.model, &provider_auths);
+    let persisted_primary_model = persist_local_model_ref(&effective_primary_model);
+    let effective_fallback_models = config
+        .fallback_models
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|model| apply_model_provider_auth(&model, &provider_auths))
+        .collect::<Vec<_>>();
+    let persisted_fallback_models = effective_fallback_models
+        .iter()
+        .map(|model| persist_local_model_ref(model))
+        .collect::<Vec<_>>();
 
     // Read existing openclaw.json
     let mut config_json = read_remote_json(&executor, &openclaw_root);
@@ -760,18 +885,23 @@ pub async fn apply_agent_config(
                             "workspace": format!("{}/.openclaw/agents/{}/workspace", home, agent.id),
                             "agentDir": format!("{}/.openclaw/agents/{}/agent", home, agent.id),
                             "model": {
-                                "primary": agent.model
+                                "primary": persist_local_model_ref(&apply_model_provider_auth(&agent.model, &provider_auths))
                             }
                         });
 
                         if let Some(fb) = &agent.fallback_models {
                             if !fb.is_empty() {
+                                let persisted_fallbacks = fb
+                                    .iter()
+                                    .map(|model| apply_model_provider_auth(model, &provider_auths))
+                                    .map(|model| persist_local_model_ref(&model))
+                                    .collect::<Vec<_>>();
                                 if let Some(model_obj) =
                                     agent_obj.get_mut("model").and_then(|m| m.as_object_mut())
                                 {
                                     model_obj.insert(
                                         "fallbacks".to_string(),
-                                        serde_json::to_value(fb).unwrap(),
+                                        serde_json::to_value(persisted_fallbacks).unwrap(),
                                     );
                                 }
                             }
@@ -788,14 +918,174 @@ pub async fn apply_agent_config(
         }
     }
 
+    if let Some(defaults) = config_json
+        .get_mut("agents")
+        .and_then(|a| a.get_mut("defaults"))
+        .and_then(|d| d.as_object_mut())
+    {
+        defaults.insert(
+            "model".to_string(),
+            serde_json::json!({ "primary": persisted_primary_model }),
+        );
+        defaults.insert(
+            "models".to_string(),
+            serde_json::Value::Object(build_effective_models_catalog(
+                &persisted_primary_model,
+                &persisted_fallback_models,
+            )),
+        );
+        if let Some(primary_model) = defaults.get_mut("model").and_then(|m| m.as_object_mut()) {
+            if persisted_fallback_models.is_empty() {
+                primary_model.remove("fallbacks");
+            } else {
+                primary_model.insert(
+                    "fallbacks".to_string(),
+                    serde_json::to_value(&persisted_fallback_models).unwrap(),
+                );
+            }
+        }
+    }
+
+    if config.provider == "lmstudio" {
+        let base_url = config
+            .local_base_url
+            .as_deref()
+            .unwrap_or("http://localhost:1234");
+        let model_id = if config.model.starts_with("lmstudio/") {
+            config.model.strip_prefix("lmstudio/").unwrap().to_string()
+        } else {
+            config.model.clone()
+        };
+        let mut model_ids = vec![model_id];
+        for fb_model in &config.fallback_models.clone().unwrap_or_default() {
+            if let Some(stripped) = fb_model.strip_prefix("lmstudio/") {
+                let stripped_model = stripped.to_string();
+                if !model_ids.contains(&stripped_model) {
+                    model_ids.push(stripped_model);
+                }
+            }
+        }
+        if let Some(obj) = config_json.as_object_mut() {
+            obj.insert(
+                "models".to_string(),
+                serde_json::json!({
+                    "mode": "merge",
+                    "providers": {
+                        "lmstudio": {
+                            "baseUrl": normalize_openai_base_url(base_url),
+                            "apiKey": "lmstudio",
+                            "api": "openai-completions",
+                            "models": model_ids.iter().map(|id| serde_json::json!({
+                                "id": id,
+                                "name": id,
+                                "reasoning": false,
+                                "input": ["text"],
+                                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+                                "contextWindow": 131072,
+                                "maxTokens": 8192
+                            })).collect::<Vec<_>>()
+                        }
+                    }
+                }),
+            );
+        }
+    }
+
+    if config.provider == "local" {
+        let base_url = config
+            .local_base_url
+            .as_deref()
+            .unwrap_or("http://localhost:8080");
+        let mut model_ids = Vec::new();
+        if matches!(
+            effective_primary_model.split('/').next(),
+            Some("local" | "llamacpp")
+        ) {
+            let catalog_model = local_catalog_model_id(&effective_primary_model);
+            if !catalog_model.is_empty() {
+                model_ids.push(catalog_model);
+            }
+        }
+        for model in &effective_fallback_models {
+            if matches!(model.split('/').next(), Some("local" | "llamacpp")) {
+                let catalog_model = local_catalog_model_id(model);
+                if !model_ids.contains(&catalog_model) {
+                    model_ids.push(catalog_model);
+                }
+            }
+        }
+        if let Some(agents) = &config.agents {
+            for agent in agents {
+                let effective_agent_model = apply_model_provider_auth(&agent.model, &provider_auths);
+                if matches!(
+                    effective_agent_model.split('/').next(),
+                    Some("local" | "llamacpp")
+                ) {
+                    let catalog_model = local_catalog_model_id(&effective_agent_model);
+                    if !model_ids.contains(&catalog_model) {
+                        model_ids.push(catalog_model);
+                    }
+                }
+                if let Some(fallbacks) = &agent.fallback_models {
+                    for fallback in fallbacks {
+                        let effective_fallback = apply_model_provider_auth(fallback, &provider_auths);
+                        if matches!(
+                            effective_fallback.split('/').next(),
+                            Some("local" | "llamacpp")
+                        ) {
+                            let catalog_model = local_catalog_model_id(&effective_fallback);
+                            if !model_ids.contains(&catalog_model) {
+                                model_ids.push(catalog_model);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(obj) = config_json.as_object_mut() {
+            obj.insert(
+                "models".to_string(),
+                serde_json::json!({
+                    "mode": "merge",
+                    "providers": {
+                        "llamacpp": {
+                            "baseUrl": normalize_openai_base_url(base_url),
+                            "api": "openai-completions",
+                            "models": model_ids.iter().map(|id| serde_json::json!({
+                                "id": id,
+                                "name": id,
+                                "api": "openai-completions",
+                                "reasoning": false,
+                                "input": ["text"],
+                                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+                                "contextWindow": 131072,
+                                "maxTokens": 8192
+                            })).collect::<Vec<_>>()
+                        }
+                    }
+                }),
+            );
+        }
+    }
+
     // Write updated openclaw.json back to remote
     let config_json_str = serde_json::to_string_pretty(&config_json)
         .map_err(|e| ClawError::System(format!("Failed to serialize config: {}", e)))?;
     executor.write_file(&format!("{}/openclaw.json", openclaw_root), &config_json_str)?;
 
+    let auth_profiles_val = build_auth_profiles_doc(
+        &provider_auths,
+        config.fallback_models.as_ref(),
+        config.local_base_url.as_ref(),
+        &config.provider,
+    );
+    executor.write_file(
+        &format!("{}/auth-profiles.json", agents_dir),
+        &serde_json::to_string_pretty(&auth_profiles_val)?,
+    )?;
+
     // Create agent workspace directories and write workspace files
     if let Some(agents) = &config.agents {
-        let main_agent_dir = format!("{}/agents/main/agent", openclaw_root);
         for agent in agents {
             if agent.id == "main" {
                 continue;
@@ -840,7 +1130,7 @@ pub async fn apply_agent_config(
             // Copy auth-profiles from main agent dir if it exists
             let _ = executor.run(&format!(
                 "cp {}/auth-profiles.json {}/auth-profiles.json 2>/dev/null || true",
-                main_agent_dir, agent_config_dir
+                agents_dir, agent_config_dir
             ));
         }
     }

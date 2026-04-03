@@ -417,6 +417,10 @@ export async function handleMaintenanceAction(
       response = remoteConfig
         ? await invoke("update_remote_openclaw", { remote: remoteConfig })
         : await invoke("install_openclaw");
+
+      controller.setMaintenanceStatus("Restarting Gateway to apply updates...");
+      await invoke("restart_openclaw_gateway", { remote: remoteConfig || null });
+
       controller.setMaintenanceStatus(
         remoteConfig ? "✅ Remote OpenClaw updated." : "✅ OpenClaw updated.",
       );
