@@ -288,7 +288,18 @@ function historyContainsRecentTail(messages: ChatMessage[], tail: ChatMessageTai
     if (entry.requireVisibleText) {
       return candidate.text.trim().length > 0;
     }
-    return candidate.text === entry.text;
+
+    const candidateText = candidate.text.trim();
+    const entryText = entry.text.trim();
+    if (candidateText === entryText) {
+      return true;
+    }
+
+    if (entry.role === "assistant" && entryText && candidateText.startsWith(entryText)) {
+      return true;
+    }
+
+    return false;
   });
 }
 

@@ -246,8 +246,11 @@ function App() {
     if (!preset) return;
 
     // Set provider and model
+    const nextAuth = providerAuths[preset.provider] || createDefaultProviderAuth(preset.provider);
     setProvider(preset.provider);
     setModel(preset.model);
+    setApiKey(nextAuth.token);
+    setAuthMethod(nextAuth.auth_method);
 
     // Set fallbacks
     setFallbackModels(preset.fallbackModels);
@@ -1600,6 +1603,10 @@ Managed by Clawnetes.`,
   const handlePanelModelChange = useCallback(async (newModel: string) => {
     let nextAgentConfigs = configPayloadRef.current.agentConfigs;
     const nextProvider = getBaseProviderFromModel(newModel) || configPayloadRef.current.provider;
+    
+    let nextApiKey = configPayloadRef.current.apiKey;
+    let nextAuthMethod = configPayloadRef.current.authMethod;
+
     if (activeAgentId && activeAgentId !== "main") {
       // Sub-agent: update that agent's model in agentConfigs
       nextAgentConfigs = nextAgentConfigs.map(a =>
@@ -1608,22 +1615,30 @@ Managed by Clawnetes.`,
       setAgentConfigs(nextAgentConfigs);
     } else {
       // Main agent: update main model state
+      const nextAuth = configPayloadRef.current.providerAuths[nextProvider] || createDefaultProviderAuth(nextProvider);
+      nextApiKey = nextAuth.token;
+      nextAuthMethod = nextAuth.auth_method;
+
       setProvider(nextProvider);
       setModel(newModel);
+      setApiKey(nextApiKey);
+      setAuthMethod(nextAuthMethod);
     }
     try {
       const payload = buildConfigPayload({
         ...configPayloadRef.current,
         agentConfigs: nextAgentConfigs,
-        provider: activeAgentId === "main" ? nextProvider : configPayloadRef.current.provider,
-        model: activeAgentId === "main" ? newModel : configPayloadRef.current.model,
+        provider: (activeAgentId === "main" || !activeAgentId) ? nextProvider : configPayloadRef.current.provider,
+        model: (activeAgentId === "main" || !activeAgentId) ? newModel : configPayloadRef.current.model,
+        apiKey: (activeAgentId === "main" || !activeAgentId) ? nextApiKey : configPayloadRef.current.apiKey,
+        authMethod: (activeAgentId === "main" || !activeAgentId) ? nextAuthMethod : configPayloadRef.current.authMethod,
       });
       await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
       await restartGatewayAfterPanelUpdate();
     } catch (e) {
       console.error("Failed to update model:", e);
     }
-  }, [activeAgentId, restartGatewayAfterPanelUpdate, setAgentConfigs, setModel, setProvider]);
+  }, [activeAgentId, restartGatewayAfterPanelUpdate, setAgentConfigs, setModel, setProvider, setApiKey, setAuthMethod, targetEnvironment, buildActiveRemoteConfig]);
 
   const handlePanelFallbacksChange = useCallback(async (newFallbacks: string[]) => {
     setFallbackModels(newFallbacks);
@@ -1655,34 +1670,52 @@ Managed by Clawnetes.`,
     }
   }, [buildActiveRemoteConfig, restartGatewayAfterPanelUpdate, setLmstudioBaseUrl, setLocalBaseUrl, targetEnvironment]);
 
-  const handlePanelProviderAuthChange = useCallback(async (provider: string, auth: ProviderAuthConfig) => {
-    const nextProviderAuths = mergeProviderAuth(configPayloadRef.current.providerAuths, provider, auth);
-    updateProviderAuth(provider, auth);
+  const handlePanelProviderAuthChange = useCallback(async (targetProvider: string, auth: ProviderAuthConfig) => {
+    const nextProviderAuths = mergeProviderAuth(configPayloadRef.current.providerAuths, targetProvider, auth);
+    updateProviderAuth(targetProvider, auth);
+    
+    const isCurrentProvider = getBaseProvider(targetProvider) === getBaseProvider(configPayloadRef.current.provider);
+    if (isCurrentProvider) {
+      setApiKey(auth.token);
+      setAuthMethod(auth.auth_method);
+    }
+
     try {
       const payload = buildConfigPayload({
         ...configPayloadRef.current,
         providerAuths: nextProviderAuths,
+        apiKey: isCurrentProvider ? auth.token : configPayloadRef.current.apiKey,
+        authMethod: isCurrentProvider ? auth.auth_method : configPayloadRef.current.authMethod,
       });
       await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
       await restartGatewayAfterPanelUpdate();
     } catch (e) {
       console.error("Failed to update provider auth:", e);
     }
-  }, [restartGatewayAfterPanelUpdate]);
+  }, [restartGatewayAfterPanelUpdate, setApiKey, setAuthMethod, targetEnvironment, buildActiveRemoteConfig]);
 
-  const handlePanelStartOAuth = useCallback(async (provider: string, authMethod: string, oauthProviderId: string): Promise<ProviderAuthConfig> => {
+  const handlePanelStartOAuth = useCallback(async (targetProvider: string, targetAuthMethod: string, oauthProviderId: string): Promise<ProviderAuthConfig> => {
     const result = await invoke<ProviderAuthConfig>("start_provider_auth", {
-      provider,
-      method: authMethod,
+      provider: targetProvider,
+      method: targetAuthMethod,
       oauthProviderId,
       remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
     });
-    const nextProviderAuths = mergeProviderAuth(configPayloadRef.current.providerAuths, provider, result);
-    updateProviderAuth(provider, result);
+    const nextProviderAuths = mergeProviderAuth(configPayloadRef.current.providerAuths, targetProvider, result);
+    updateProviderAuth(targetProvider, result);
+
+    const isCurrentProvider = getBaseProvider(targetProvider) === getBaseProvider(configPayloadRef.current.provider);
+    if (isCurrentProvider) {
+      setApiKey(result.token);
+      setAuthMethod(result.auth_method);
+    }
+
     try {
       const payload = buildConfigPayload({
         ...configPayloadRef.current,
         providerAuths: nextProviderAuths,
+        apiKey: isCurrentProvider ? result.token : configPayloadRef.current.apiKey,
+        authMethod: isCurrentProvider ? result.auth_method : configPayloadRef.current.authMethod,
       });
       await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
       await restartGatewayAfterPanelUpdate();
@@ -1690,7 +1723,7 @@ Managed by Clawnetes.`,
       console.error("OAuth succeeded but saving failed:", e);
     }
     return result;
-  }, [targetEnvironment, buildActiveRemoteConfig, restartGatewayAfterPanelUpdate]);
+  }, [targetEnvironment, buildActiveRemoteConfig, restartGatewayAfterPanelUpdate, setApiKey, setAuthMethod]);
 
   const handlePanelDetectLocalModels = useCallback(async (provider: "ollama" | "lmstudio" | "local", baseUrl?: string): Promise<string[]> => {
     const remote = targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null;

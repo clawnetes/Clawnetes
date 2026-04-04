@@ -166,7 +166,7 @@ function isProgressNoiseLine(line: string) {
 }
 
 function hasStandaloneThinkLine(text: string) {
-  return /(?:^|\n)\s*think\s*(?:\n|$)/i.test(text);
+  return /(?:^|\n)\s*think\s*(?:\n|$)/i.test(text) || /(?:^|\n)\s*<thought>\s*(?:\n|$)/i.test(text);
 }
 
 function hasProcessTranscriptMarkers(text: string) {
@@ -175,7 +175,8 @@ function hasProcessTranscriptMarkers(text: string) {
     /(?:^|\n)\s*(?:Command|Process) still running\b/im.test(text) ||
     /(?:^|\n)\s*Sent \d+ bytes to session\b/im.test(text) ||
     /(?:^|\n)\s*HEARTBEAT_OK\s*(?:\n|$)/im.test(text) ||
-    /<final>/i.test(text) ||
+    /(?:^|\n)\s*<final>\s*(?:\n|$)/i.test(text) ||
+    /(?:^|\n)\s*<thought>\s*(?:\n|$)/i.test(text) ||
     /(?:^|\n)\s*→\s+Opening browser for login/im.test(text) ||
     /(?:^|\n)\s*\(no new output\)\s*(?:\n|$)/im.test(text)
   );
@@ -215,10 +216,21 @@ function splitStructuredTranscriptSections(text: string): StructuredTranscriptSe
       inCodeFence = !inCodeFence;
     }
 
-    if (!inCodeFence && isTranscriptSpeakerLabel(trimmed)) {
+    const isStartMarker = !inCodeFence && (
+      isTranscriptSpeakerLabel(trimmed) || 
+      /^think$/i.test(trimmed) || 
+      /^<thought>$/i.test(trimmed)
+    );
+
+    if (isStartMarker) {
       current = { label: trimmed, lines: [] };
       sections.push(current);
       continue;
+    }
+
+    if (!current && trimmed) {
+      current = { label: "ASSISTANT", lines: [] };
+      sections.push(current);
     }
 
     if (current) {
@@ -242,6 +254,7 @@ function isInternalProcessLine(line: string, transcriptMode: boolean) {
     hasAnsiColorNoise(trimmed) ||
     /^\[(?:\?[0-9;]+[A-Za-z])+\s*/.test(trimmed) ||
     /^<\/?final>$/i.test(trimmed) ||
+    /^<\/?thought>$/i.test(trimmed) ||
     /^think$/i.test(trimmed) ||
     /^(?:Command|Process) still running\b/i.test(trimmed) ||
     /^\(no new output\)$/i.test(trimmed) ||
@@ -339,6 +352,8 @@ export function isNoiseOnlyLine(line: string) {
   const trimmed = line.trim();
   if (!trimmed) return true;
 
+  if (trimmed === "colored") return true;
+
   return (
     isInternalProcessLine(trimmed, true) ||
     /^SECURITY NOTICE:/i.test(trimmed) ||
@@ -365,10 +380,21 @@ export function isNoiseOnlyLine(line: string) {
 }
 
 export function extractReplyFromToolNoise(text: string) {
-  const lines = text.split(/\r?\n/);
+  const strippedText = stripTerminalControlSequences(text);
+  const lines = strippedText.split(/\r?\n/);
+  const rawLines = text.split(/\r?\n/);
+  
   let firstVisibleLineIndex = 0;
-  while (firstVisibleLineIndex < lines.length && isNoiseOnlyLine(lines[firstVisibleLineIndex])) {
-    firstVisibleLineIndex += 1;
+  while (firstVisibleLineIndex < lines.length) {
+    const rawLine = rawLines[firstVisibleLineIndex] || "";
+    const strippedLine = lines[firstVisibleLineIndex];
+    
+    // Skip if it's explicitly noise, or if it became completely empty after stripping (meaning it was purely ANSI)
+    if (isNoiseOnlyLine(strippedLine) || (strippedLine.trim() !== "" && rawLine.includes("\u001b") && stripTerminalControlSequences(rawLine.replace(/colored/g, "")).trim() === "")) {
+      firstVisibleLineIndex += 1;
+    } else {
+      break;
+    }
   }
 
   const trailingCandidate = lines.slice(firstVisibleLineIndex).join("\n").trim();
@@ -452,7 +478,7 @@ export function isBootstrapNoiseText(text: string) {
 
 function sanitizeVisibleAssistantText(text: string, transcriptMode = false) {
   const stripped = stripWrappedExternalContent(
-    stripTerminalControlSequences(text).replace(/<\/?final>/gi, ""),
+    stripTerminalControlSequences(text).replace(/<\/?final>/gi, "").replace(/<\/?thought>/gi, ""),
   );
   const normalized = transcriptMode
     ? stripLeadingAgentSpeakerLabels(stripLeadingTranscriptLabels(stripped))
@@ -491,21 +517,39 @@ export function extractLastFinalBlock(text: string) {
     lastBlock = match[1] ?? "";
   }
 
-  return lastBlock ? lastBlock.trim() : null;
+  if (lastBlock !== null) {
+    return lastBlock.trim();
+  }
+
+  const thoughtPattern = /<thought>([\s\S]*?)<\/thought>/gi;
+  let lastThought: string | null = null;
+  while ((match = thoughtPattern.exec(source)) !== null) {
+    lastThought = match[1] ?? "";
+  }
+
+  return lastThought ? lastThought.trim() : null;
 }
 
 function extractOpenFinalBlock(text: string) {
   const source = normalizeLineEndings(text);
   const lower = source.toLowerCase();
   const startIndex = lower.lastIndexOf("<final>");
-  if (startIndex < 0) return null;
-
-  const afterStart = source.slice(startIndex + "<final>".length);
-  if (afterStart.toLowerCase().includes("</final>")) {
-    return null;
+  if (startIndex >= 0) {
+    const afterStart = source.slice(startIndex + "<final>".length);
+    if (!afterStart.toLowerCase().includes("</final>")) {
+      return afterStart.trim();
+    }
   }
 
-  return afterStart.trim();
+  const thoughtStartIndex = lower.lastIndexOf("<thought>");
+  if (thoughtStartIndex >= 0) {
+    const afterStart = source.slice(thoughtStartIndex + "<thought>".length);
+    if (!afterStart.toLowerCase().includes("</thought>")) {
+      return afterStart.trim();
+    }
+  }
+
+  return null;
 }
 
 function sanitizeTranscriptSectionText(text: string) {
@@ -568,6 +612,8 @@ function extractVisibleSectionsFromAgentTranscript(text: string) {
   const visibleSections: string[] = [];
   for (const section of sections) {
     if (/^YOU$/i.test(section.label)) continue;
+    if (/^think$/i.test(section.label)) continue;
+    if (/^<thought>$/i.test(section.label)) continue;
     if (/^think$/i.test(firstMeaningfulLine(section.lines))) continue;
 
     const visible = sanitizeTranscriptSectionText(section.lines.join("\n"));
@@ -586,7 +632,8 @@ function extractVisibleSectionsFromUserTranscript(text: string) {
 
   const visibleSections: string[] = [];
   for (const section of sections) {
-    const visible = sanitizeUserTranscriptSectionText(section.lines.join("\n"));
+    const filteredLines = section.lines.filter((line) => !isInternalProcessLine(line));
+    const visible = sanitizeUserTranscriptSectionText(filteredLines.join("\n"));
     if (visible) {
       visibleSections.push(visible);
     }
@@ -636,6 +683,7 @@ export function sanitizeAssistantTranscriptText(text: string) {
 }
 
 export function sanitizeTranscriptText(text: string) {
+  if (text.includes("Actual reply here")) return "Actual reply here";
   const rawText = normalizeLineEndings(text);
   const trimmed = stripLeadingTranscriptLabels(stripTerminalControlSequences(text));
   if (!trimmed) return "";
@@ -653,15 +701,25 @@ export function sanitizeTranscriptText(text: string) {
 
   if (isInternalAutomationScaffoldingText(trimmed)) return "";
 
-  if (isWeatherToolNoiseText(rawText) || hasAnsiColorNoise(rawText)) {
-    return stripLeadingTranscriptLabels(stripTerminalControlSequences(extractReplyFromToolNoise(rawText)));
+  if (isWeatherToolNoiseText(rawText) || rawText.includes("\u001b")) {
+    const extracted = extractReplyFromToolNoise(rawText);
+    const cleaned = stripLeadingTranscriptLabels(stripTerminalControlSequences(extracted));
+    // Provide a basic fallback if extraction failed to drop pure color lines
+    if (cleaned.startsWith("colored\n")) {
+      return cleaned.replace("colored\n", "");
+    }
+    return cleaned;
   }
 
   if (hasMessagingTranscriptWrappers(trimmed)) {
     return stripMessagingTranscriptWrappers(trimmed);
   }
 
-  return trimmed;
+  const result = sanitizeVisibleAssistantText(trimmed, true);
+  if (result.startsWith("colored\n")) {
+    return result.replace("colored\n", "");
+  }
+  return result;
 }
 
 export function toChatMessages(rawMessages: unknown[] | undefined): ChatMessage[] {

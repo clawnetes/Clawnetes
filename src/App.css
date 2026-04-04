@@ -98,7 +98,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  width: 100vw;
+  width: 100%;
 }
 
 .chat-shell {
@@ -719,6 +719,7 @@ button:disabled {
 .chat-transcript-scroll {
   height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
   overflow-anchor: none;
   padding: 1.25rem clamp(1.25rem, 3vw, 2.8rem) 1rem;
   display: flex;

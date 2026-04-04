@@ -239,7 +239,9 @@ function AuthSection({
 
       {isOAuthMethod(draftAuth.auth_method) && (
         <p className="text-[0.7rem] text-[var(--text-muted)]">
-          OAuth will be initiated when you save.
+          {existingAuth && isOAuthMethod(existingAuth.auth_method) && existingAuth.profile_key && existingAuth.auth_method === draftAuth.auth_method
+            ? "Already authenticated via OAuth."
+            : "OAuth will be initiated when you save."}
           {provider === "google" && draftAuth.auth_method === "google-gemini-cli" && (
             <span className="block mt-1 text-[var(--warning,#b45309)]">
               Unofficial Google Code Assist integration. If requests fail, use the Gemini API key option instead.
