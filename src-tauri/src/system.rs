@@ -18,9 +18,27 @@ pub fn shell_command(cmd: &str) -> Result<String, String> {
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let (shell, args) = ("sh", vec!["-c"]);
 
+    #[cfg(target_os = "macos")]
+    let full_cmd = format!(
+        "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; export PATH=\"$PATH:/usr/local/bin\"; {}",
+        cmd
+    );
+
+    #[cfg(target_os = "windows")]
+    let full_cmd = format!(
+        "export PATH=\"$PATH:/usr/local/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; {}",
+        cmd
+    );
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let full_cmd = format!(
+        "export PATH=\"$PATH:/usr/local/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; {}",
+        cmd
+    );
+
     let output = Command::new(shell)
         .args(&args)
-        .arg(cmd)
+        .arg(&full_cmd)
         .output()
         .map_err(|e| format!("Failed to execute command: {}", e))?;
 
