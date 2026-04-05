@@ -632,7 +632,7 @@ function extractVisibleSectionsFromUserTranscript(text: string) {
 
   const visibleSections: string[] = [];
   for (const section of sections) {
-    const filteredLines = section.lines.filter((line) => !isInternalProcessLine(line));
+    const filteredLines = section.lines.filter((line) => !isInternalProcessLine(line, true));
     const visible = sanitizeUserTranscriptSectionText(filteredLines.join("\n"));
     if (visible) {
       visibleSections.push(visible);
