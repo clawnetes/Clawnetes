@@ -514,6 +514,8 @@ function ChatShell({
   const userPausedStreamFollowRef = useRef(false);
   const internalReturnScrollSnapshotRef = useRef<ChatTranscriptScrollSnapshot | null>(null);
   const consumedExternalReturnScrollSnapshotRef = useRef<ChatTranscriptScrollSnapshot | null>(null);
+  const threadScrollPositionsRef = useRef<Record<string, number>>({});
+  const pendingScrollRestoreRef = useRef<number | null>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
   const historyReconcileRef = useRef<{
     sessionKey: string;
@@ -580,6 +582,12 @@ function ChatShell({
       scrollTop: transcript.scrollTop,
     };
   }, [activeAgentId, activeSessionKey, activeThreadId]);
+
+  function saveScrollPosition() {
+    if (transcriptRef.current && activeThreadIdRef.current) {
+      threadScrollPositionsRef.current[activeThreadIdRef.current] = transcriptRef.current.scrollTop;
+    }
+  }
 
   const clearReturnScrollSnapshots = useCallback((consumeExternal = false) => {
     internalReturnScrollSnapshotRef.current = null;
@@ -714,6 +722,15 @@ function ChatShell({
   useLayoutEffect(() => {
     const transcript = transcriptRef.current;
     if (!transcript) {
+      pendingScrollBehaviorRef.current = null;
+      pendingScrollRestoreRef.current = null;
+      return;
+    }
+
+    if (pendingScrollRestoreRef.current !== null) {
+      transcript.scrollTop = pendingScrollRestoreRef.current;
+      shouldAutoScrollRef.current = isNearBottom(transcript);
+      pendingScrollRestoreRef.current = null;
       pendingScrollBehaviorRef.current = null;
       return;
     }
@@ -1456,6 +1473,11 @@ function ChatShell({
 
       if (shouldFollowToBottom) {
         queueScrollToBottom("auto");
+      } else {
+        const savedTop = threadScrollPositionsRef.current[threadId];
+        if (savedTop !== undefined) {
+          pendingScrollRestoreRef.current = savedTop;
+        }
       }
       replaceMessageState(nextMessages);
       if (shouldFinalizeActiveRun) {
@@ -1704,6 +1726,7 @@ function ChatShell({
 
   async function handleAgentSwitch(agentId: string) {
     if (!agentId || agentId === activeAgentId) return;
+    saveScrollPosition();
     clearHistoryReconcile();
     setActiveAgentId(agentId);
     onAgentSwitch?.(agentId);
@@ -1738,6 +1761,7 @@ function ChatShell({
   async function handleThreadSwitch(threadId: string) {
     const thread = threads.find((candidate) => candidate.id === threadId);
     if (!thread) return;
+    saveScrollPosition();
     clearHistoryReconcile();
     setActiveThreadId(threadId);
     setActiveSessionKey(thread.sessionKey);
@@ -1746,7 +1770,12 @@ function ChatShell({
 
     if (thread.status === "archived") {
       endStreamAutoFollow();
-      queueScrollToBottom("auto");
+      const savedTop = threadScrollPositionsRef.current[threadId];
+      if (savedTop !== undefined) {
+        pendingScrollRestoreRef.current = savedTop;
+      } else {
+        queueScrollToBottom("auto");
+      }
       replaceMessageState(
         thread.messages.map((message) => ({
           ...message,
