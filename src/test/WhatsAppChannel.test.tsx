@@ -6,7 +6,7 @@ vi.mock("../lib/tauri", () => ({
     if (cmd === "check_prerequisites") {
       return Promise.resolve({ node_installed: true, docker_running: false, openclaw_installed: false });
     }
-    if (cmd === "get_openclaw_version") return Promise.resolve("2026.3.2");
+    if (cmd === "get_openclaw_version") return Promise.resolve("2026.4.5");
     if (cmd === "prepare_gateway_chat_connection") {
       return Promise.resolve({
         wsUrl: "ws://127.0.0.1:18789",
@@ -14,7 +14,7 @@ vi.mock("../lib/tauri", () => ({
         targetEnvironment: "local",
         gatewayPort: 18789,
         tunnelActive: false,
-        openClawVersion: "2026.3.2",
+        openClawVersion: "2026.4.5",
       });
     }
     if (cmd === "restart_openclaw_gateway") return Promise.resolve(null);

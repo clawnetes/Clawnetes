@@ -402,7 +402,7 @@ function setupInvokeMock() {
     if (cmd === "check_prerequisites") {
       return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: true });
     }
-    if (cmd === "get_openclaw_version") return Promise.resolve("2.0.0");
+    if (cmd === "get_openclaw_version") return Promise.resolve("2026.4.5");
     if (cmd === "has_saved_license") return Promise.resolve(false);
     if (cmd === "prepare_gateway_chat_connection") {
       return Promise.resolve({
@@ -411,7 +411,7 @@ function setupInvokeMock() {
         targetEnvironment: "local",
         gatewayPort: 18789,
         tunnelActive: false,
-        openClawVersion: "2.0.0",
+        openClawVersion: "2026.4.5",
       });
     }
     if (cmd === "run_doctor_repair") return Promise.resolve("repair-ok");
@@ -1857,7 +1857,7 @@ describe("ChatShell fresh chat flow", () => {
       if (cmd === "check_prerequisites") {
         return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: true });
       }
-      if (cmd === "get_openclaw_version") return Promise.resolve("2.0.0");
+      if (cmd === "get_openclaw_version") return Promise.resolve("2026.4.5");
       if (cmd === "has_saved_license") return Promise.resolve(false);
       if (cmd === "prepare_gateway_chat_connection") {
         return Promise.resolve({
@@ -1866,7 +1866,7 @@ describe("ChatShell fresh chat flow", () => {
           targetEnvironment: "local",
           gatewayPort: 18789,
           tunnelActive: false,
-          openClawVersion: "2.0.0",
+          openClawVersion: "2026.4.5",
         });
       }
       if (cmd === "uninstall_openclaw") return Promise.reject("permission denied");

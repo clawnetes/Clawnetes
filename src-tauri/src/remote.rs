@@ -124,9 +124,9 @@ pub async fn setup_remote_openclaw(
 
     if executor.run(&check_claw_cmd).is_err() {
         let install_claw_cmd = if os_type == "Linux" {
-            format!("{}npm install -g openclaw@2026.3.24", sudo_prefix)
+            format!("{}npm install -g openclaw@2026.4.5", sudo_prefix)
         } else {
-            "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; npm install -g openclaw@2026.3.24".to_string()
+            "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; npm install -g openclaw@2026.4.5".to_string()
         };
         executor
             .run(&install_claw_cmd)
