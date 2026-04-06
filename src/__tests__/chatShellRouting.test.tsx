@@ -474,7 +474,7 @@ describe("Installed-state chat shell", () => {
         return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: true });
       }
       if (cmd === "get_openclaw_version") {
-        return Promise.resolve("OpenClaw 2026.4.5 (cff6dc9)");
+        return Promise.resolve("OpenClaw 2026.4.5 (3e72c03)");
       }
       if (cmd === "has_saved_license") {
         return Promise.resolve(false);
@@ -486,7 +486,7 @@ describe("Installed-state chat shell", () => {
           targetEnvironment: "local",
           gatewayPort: 18789,
           tunnelActive: false,
-          openClawVersion: "OpenClaw 2026.4.5 (cff6dc9)",
+          openClawVersion: "OpenClaw 2026.4.5 (3e72c03)",
         });
       }
       if (cmd === "run_doctor_repair") {
@@ -498,9 +498,9 @@ describe("Installed-state chat shell", () => {
     await openInstalledLocalChat();
 
     await waitFor(() => {
-      expect(screen.getByText("Clawnetes with OpenClaw 2026.4.5 (cff6dc9)")).toBeInTheDocument();
+      expect(screen.getByText("Clawnetes with OpenClaw 2026.4.5 (3e72c03)")).toBeInTheDocument();
     });
-    expect(screen.queryByText("Clawnetes with OpenClaw OpenClaw 2026.4.5 (cff6dc9)")).not.toBeInTheDocument();
+    expect(screen.queryByText("Clawnetes with OpenClaw OpenClaw 2026.4.5 (3e72c03)")).not.toBeInTheDocument();
   });
 
   it("removes a saved previous remote from the environment dropdown and clears matching legacy storage", async () => {
