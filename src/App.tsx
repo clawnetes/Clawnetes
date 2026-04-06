@@ -78,9 +78,6 @@ function App() {
   const [chatBootstrapError, setChatBootstrapError] = useState("");
   const [pendingChatReturnScrollSnapshot, setPendingChatReturnScrollSnapshot] = useState<ChatTranscriptScrollSnapshot | null>(null);
   const [storedEnvironments, setStoredEnvironments] = useState<StoredEnvironment[]>([]);
-  const [pendingEnvSwitch, setPendingEnvSwitch] = useState<StoredEnvironment | null>(null);
-  const [envSwitchPassword, setEnvSwitchPassword] = useState("");
-  const [envSwitchKeyPath, setEnvSwitchKeyPath] = useState("");
   const [addingEnvFromChat, setAddingEnvFromChat] = useState(false);
   const [activeAgentId, setActiveAgentId] = useState<string>("main");
 
@@ -352,6 +349,8 @@ function App() {
         type: targetEnvironment as "local" | "cloud",
         remoteIp: targetEnvironment === "cloud" ? remoteIp : undefined,
         remoteUser: targetEnvironment === "cloud" ? remoteUser : undefined,
+        remotePassword: targetEnvironment === "cloud" ? remotePassword : undefined,
+        remotePrivateKeyPath: targetEnvironment === "cloud" ? remotePrivateKeyPath : undefined,
       });
       setActiveEnvironmentId(saved.id);
       setStoredEnvironments(loadEnvironments());
@@ -376,9 +375,12 @@ function App() {
     if (!env) return;
 
     if (env.type === "cloud") {
-      setPendingEnvSwitch(env);
-      setEnvSwitchPassword("");
-      setEnvSwitchKeyPath("");
+      setTargetEnvironment("cloud");
+      setRemoteIp(env.remoteIp || "");
+      setRemoteUser(env.remoteUser || "");
+      setRemotePassword(env.remotePassword || "");
+      setRemotePrivateKeyPath(env.remotePrivateKeyPath || "");
+      setChatBootstrap(null);
       return;
     }
 
@@ -390,17 +392,6 @@ function App() {
     setRemotePrivateKeyPath("");
     setChatBootstrap(null);
   }, [setTargetEnvironment, setRemoteIp, setRemoteUser, setRemotePassword, setRemotePrivateKeyPath]);
-
-  const confirmEnvSwitch = useCallback(() => {
-    if (!pendingEnvSwitch) return;
-    setTargetEnvironment("cloud");
-    setRemoteIp(pendingEnvSwitch.remoteIp || "");
-    setRemoteUser(pendingEnvSwitch.remoteUser || "");
-    setRemotePassword(envSwitchPassword);
-    setRemotePrivateKeyPath(envSwitchKeyPath);
-    setPendingEnvSwitch(null);
-    setChatBootstrap(null);
-  }, [pendingEnvSwitch, envSwitchPassword, envSwitchKeyPath, setTargetEnvironment, setRemoteIp, setRemoteUser, setRemotePassword, setRemotePrivateKeyPath]);
 
   const handleRemoveEnvironment = useCallback((envId: string) => {
     const env = loadEnvironments().find((entry) => entry.id === envId);
@@ -2067,69 +2058,6 @@ Managed by Clawnetes.`,
             onReconfigure={() => void handleReconfigureFromDrawer()}
             onUninstall={() => void handleDrawerMaintenanceAction("uninstall")}
           />
-          {pendingEnvSwitch && (
-            <div style={{
-              position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
-              background: "rgba(0,0,0,0.5)", zIndex: 1000,
-            }}>
-              <div style={{
-                background: "var(--surface-0)", border: "1px solid var(--border)", borderRadius: "16px",
-                padding: "2rem", width: "min(400px, 90vw)",
-              }}>
-                <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Connect to {pendingEnvSwitch.name}</h3>
-                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1.5rem" }}>
-                  Enter credentials to reconnect to this environment.
-                </p>
-                <div className="form-group">
-                  <label>SSH Password (if not using key)</label>
-                  <input
-                    {...TEXT_ENTRY_PROPS}
-                    type="password"
-                    placeholder="Password"
-                    value={envSwitchPassword}
-                    onChange={(e) => setEnvSwitchPassword(e.target.value)}
-                  />
-                </div>
-                <div className="form-group" style={{ marginTop: "1rem" }}>
-                  <label>SSH Private Key (Optional)</label>
-                  <div style={{ display: "flex", gap: "0.5rem" }}>
-                    <input
-                      {...TEXT_ENTRY_PROPS}
-                      placeholder="/Users/you/.ssh/id_rsa"
-                      value={envSwitchKeyPath}
-                      onChange={(e) => setEnvSwitchKeyPath(e.target.value)}
-                      style={{ flex: 1 }}
-                    />
-                    <button
-                      className="secondary"
-                      onClick={async () => {
-                        const path = await openDialog({
-                          title: "Select SSH Private Key",
-                          directory: false,
-                          multiple: false,
-                          defaultPath: "~/.ssh",
-                        });
-                        if (path && typeof path === "string") {
-                          setEnvSwitchKeyPath(path);
-                        }
-                      }}
-                    >
-                      Browse
-                    </button>
-                  </div>
-                  <p className="input-hint">Leave empty to use default keys or SSH agent</p>
-                </div>
-                <div style={{ display: "flex", gap: "0.75rem", marginTop: "1.5rem" }}>
-                  <button className="primary" onClick={confirmEnvSwitch} style={{ flex: 1 }}>
-                    Connect
-                  </button>
-                  <button className="secondary" onClick={() => setPendingEnvSwitch(null)} style={{ flex: 1 }}>
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
         </>
       ) : appScreen === "command-center" ? (
         <ConfigureDrawer

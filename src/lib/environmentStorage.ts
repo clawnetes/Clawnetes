@@ -7,6 +7,8 @@ export interface StoredEnvironment {
   type: "local" | "cloud";
   remoteIp?: string;
   remoteUser?: string;
+  remotePassword?: string;
+  remotePrivateKeyPath?: string;
   addedAt: number;
   lastUsedAt: number;
 }
@@ -83,6 +85,8 @@ export function upsertEnvironment(env: {
   type: "local" | "cloud";
   remoteIp?: string;
   remoteUser?: string;
+  remotePassword?: string;
+  remotePrivateKeyPath?: string;
 }): StoredEnvironment {
   const envs = loadEnvironments();
   const now = Date.now();
@@ -96,6 +100,8 @@ export function upsertEnvironment(env: {
   if (existing) {
     existing.lastUsedAt = now;
     existing.name = buildName(env.type, env.remoteUser, env.remoteIp);
+    if (env.remotePassword !== undefined) existing.remotePassword = env.remotePassword;
+    if (env.remotePrivateKeyPath !== undefined) existing.remotePrivateKeyPath = env.remotePrivateKeyPath;
     saveEnvironments(envs);
     return existing;
   }
@@ -106,6 +112,8 @@ export function upsertEnvironment(env: {
     type: env.type,
     remoteIp: env.remoteIp,
     remoteUser: env.remoteUser,
+    remotePassword: env.remotePassword,
+    remotePrivateKeyPath: env.remotePrivateKeyPath,
     addedAt: now,
     lastUsedAt: now,
   };

@@ -68,7 +68,7 @@ pub fn uninstall_remote_openclaw(remote: &RemoteInfo) -> Result<String, String> 
 
 pub fn update_remote_openclaw(remote: &RemoteInfo) -> Result<String, String> {
     let sess = connect_ssh(remote)?;
-    execute_ssh(&sess, "sudo npm install -g openclaw@2026.3.24")?;
+    execute_ssh(&sess, "sudo npm install -g openclaw@2026.4.5")?;
     execute_ssh(&sess, "openclaw gateway restart")?;
     Ok("OpenClaw has been updated on the remote server.".to_string())
 }

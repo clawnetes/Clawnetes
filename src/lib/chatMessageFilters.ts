@@ -468,7 +468,7 @@ export function isBootstrapNoiseText(text: string) {
     /A new session was started via \/new or \/reset\./i.test(normalized) ||
     /Run your Session Startup sequence/i.test(normalized) ||
     /^Current time:/i.test(normalized) ||
-    /^#\s*(SOUL|USER|MEMORY)\.md\b/i.test(text.trim()) ||
+    /^#\s*(SOUL\.md|USER\.md|MEMORY\.md|Memory for\b)/i.test(text.trim()) ||
     (/\"status\"\s*:\s*\"error\"/i.test(text) &&
       /\"tool\"\s*:\s*\"read\"/i.test(text) &&
       /ENOENT: no such file or directory/i.test(text)) ||
