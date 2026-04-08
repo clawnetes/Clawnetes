@@ -308,114 +308,221 @@ fn map_loaded_sandbox_mode(mode: Option<&str>) -> &'static str {
     }
 }
 
-pub fn read_workspace_files() -> Result<serde_json::Value, String> {
-    #[cfg(target_os = "windows")]
-    {
-        use crate::system::{wsl_home_dir, wsl_read_file};
-        let workspace = wsl_home_dir()?.trim().to_string() + "/.openclaw/workspace";
-        let identity = wsl_read_file(&format!("{}/IDENTITY.md", workspace)).unwrap_or_default();
-        let user = wsl_read_file(&format!("{}/USER.md", workspace)).unwrap_or_default();
-        let soul = wsl_read_file(&format!("{}/SOUL.md", workspace)).unwrap_or_default();
+pub fn read_workspace_files(
+    remote: Option<&crate::types::RemoteInfo>,
+) -> Result<serde_json::Value, String> {
+    let session = if let Some(r) = remote {
+        Some(crate::ssh::connect_ssh(r)?)
+    } else {
+        None
+    };
 
-        Ok(serde_json::json!({
-            "identity": identity,
-            "user": user,
-            "soul": soul
-        }))
-    }
+    let home_dir = if let Some(sess) = &session {
+        crate::ssh::execute_ssh(sess, "echo $HOME")
+            .map_err(|e| format!("Failed to get remote home: {}", e))?
+            .trim()
+            .to_string()
+    } else {
+        #[cfg(target_os = "windows")]
+        {
+            crate::system::wsl_home_dir()?
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            dirs::home_dir()
+                .ok_or("Could not find local home directory")?
+                .to_string_lossy()
+                .to_string()
+        }
+    };
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        let home = dirs::home_dir().ok_or("Could not find home directory")?;
-        let workspace = home.join(".openclaw").join("workspace");
+    let read_file_content = |path: &str| -> String {
+        if let Some(sess) = &session {
+            crate::ssh::execute_ssh(sess, &format!("cat \"{}\"", path)).unwrap_or_default()
+        } else {
+            #[cfg(target_os = "windows")]
+            {
+                crate::system::wsl_read_file(path).unwrap_or_default()
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                fs::read_to_string(path).unwrap_or_default()
+            }
+        }
+    };
 
-        let identity = fs::read_to_string(workspace.join("IDENTITY.md")).unwrap_or_default();
-        let user = fs::read_to_string(workspace.join("USER.md")).unwrap_or_default();
-        let soul = fs::read_to_string(workspace.join("SOUL.md")).unwrap_or_default();
+    let workspace = format!("{}/.openclaw/workspace", home_dir);
+    let identity = read_file_content(&format!("{}/IDENTITY.md", workspace));
+    let user = read_file_content(&format!("{}/USER.md", workspace));
+    let soul = read_file_content(&format!("{}/SOUL.md", workspace));
 
-        Ok(serde_json::json!({
-            "identity": identity,
-            "user": user,
-            "soul": soul
-        }))
-    }
+    Ok(serde_json::json!({
+        "identity": identity,
+        "user": user,
+        "soul": soul
+    }))
 }
 
 pub fn save_workspace_files(
+    remote: Option<&crate::types::RemoteInfo>,
     agent_id: Option<&str>,
     identity: &str,
     user: &str,
     soul: &str,
 ) -> Result<String, String> {
-    #[cfg(target_os = "windows")]
-    {
-        use crate::system::{wsl_home_dir, wsl_mkdir_p, wsl_write_file};
-        let home = wsl_home_dir()?.trim().to_string();
-        let workspace = if let Some(id) = agent_id {
-            format!("{}/.openclaw/agents/{}/workspace", home, id)
+    let session = if let Some(r) = remote {
+        Some(crate::ssh::connect_ssh(r)?)
+    } else {
+        None
+    };
+
+    let home_dir = if let Some(sess) = &session {
+        crate::ssh::execute_ssh(sess, "echo $HOME")
+            .map_err(|e| format!("Failed to get remote home: {}", e))?
+            .trim()
+            .to_string()
+    } else {
+        #[cfg(target_os = "windows")]
+        {
+            crate::system::wsl_home_dir()?
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            dirs::home_dir()
+                .ok_or("Could not find local home directory")?
+                .to_string_lossy()
+                .to_string()
+        }
+    };
+
+    let mkdir_p_fn = |path: &str| -> Result<(), String> {
+        if let Some(sess) = &session {
+            crate::ssh::execute_ssh(sess, &format!("mkdir -p \"{}\"", path))?;
+            Ok(())
         } else {
-            format!("{}/.openclaw/workspace", home)
-        };
+            #[cfg(target_os = "windows")]
+            {
+                crate::system::wsl_mkdir_p(path)
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                fs::create_dir_all(path).map_err(|e| e.to_string())
+            }
+        }
+    };
 
-        wsl_mkdir_p(&workspace)?;
-
-        wsl_write_file(&format!("{}/IDENTITY.md", workspace), identity)?;
-        wsl_write_file(&format!("{}/USER.md", workspace), user)?;
-        wsl_write_file(&format!("{}/SOUL.md", workspace), soul)?;
-
-        Ok("Workspace files saved successfully".to_string())
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let home = dirs::home_dir().ok_or("Could not find home directory")?;
-
-        let workspace = if let Some(id) = agent_id {
-            home.join(".openclaw")
-                .join("agents")
-                .join(id)
-                .join("workspace")
+    let write_file_fn = |path: &str, content: &str| -> Result<(), String> {
+        if let Some(sess) = &session {
+            crate::ssh::execute_ssh(
+                sess,
+                &format!(
+                    "cat << 'EOF_WRITE' > \"{}\"\n{}\nEOF_WRITE",
+                    path, content
+                ),
+            )?;
+            Ok(())
         } else {
-            home.join(".openclaw").join("workspace")
-        };
+            #[cfg(target_os = "windows")]
+            {
+                crate::system::wsl_write_file(path, content)
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                fs::write(path, content).map_err(|e| e.to_string())
+            }
+        }
+    };
 
-        fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
+    let workspace = if let Some(id) = agent_id {
+        format!("{}/.openclaw/agents/{}/workspace", home_dir, id)
+    } else {
+        format!("{}/.openclaw/workspace", home_dir)
+    };
 
-        fs::write(workspace.join("IDENTITY.md"), identity).map_err(|e| e.to_string())?;
-        fs::write(workspace.join("USER.md"), user).map_err(|e| e.to_string())?;
-        fs::write(workspace.join("SOUL.md"), soul).map_err(|e| e.to_string())?;
+    mkdir_p_fn(&workspace)?;
 
-        Ok("Workspace files saved successfully".to_string())
-    }
+    write_file_fn(&format!("{}/IDENTITY.md", workspace), identity)?;
+    write_file_fn(&format!("{}/USER.md", workspace), user)?;
+    write_file_fn(&format!("{}/SOUL.md", workspace), soul)?;
+
+    Ok("Workspace files saved successfully".to_string())
 }
 
-pub fn create_custom_skill(name: &str, content: &str) -> Result<String, String> {
-    #[cfg(target_os = "windows")]
-    {
-        use crate::system::{wsl_home_dir, wsl_mkdir_p, wsl_write_file};
-        let home = wsl_home_dir()?.trim().to_string();
-        let skill_dir = format!("{}/.openclaw/workspace/skills/{}", home, name);
+pub fn create_custom_skill(
+    remote: Option<&crate::types::RemoteInfo>,
+    name: &str,
+    content: &str,
+) -> Result<String, String> {
+    let session = if let Some(r) = remote {
+        Some(crate::ssh::connect_ssh(r)?)
+    } else {
+        None
+    };
 
-        wsl_mkdir_p(&skill_dir)?;
-        wsl_write_file(&format!("{}/SKILL.md", skill_dir), content)?;
+    let home_dir = if let Some(sess) = &session {
+        crate::ssh::execute_ssh(sess, "echo $HOME")
+            .map_err(|e| format!("Failed to get remote home: {}", e))?
+            .trim()
+            .to_string()
+    } else {
+        #[cfg(target_os = "windows")]
+        {
+            crate::system::wsl_home_dir()?
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            dirs::home_dir()
+                .ok_or("Could not find local home directory")?
+                .to_string_lossy()
+                .to_string()
+        }
+    };
 
-        Ok(format!("Custom skill '{}' created successfully", name))
-    }
+    let mkdir_p_fn = |path: &str| -> Result<(), String> {
+        if let Some(sess) = &session {
+            crate::ssh::execute_ssh(sess, &format!("mkdir -p \"{}\"", path))?;
+            Ok(())
+        } else {
+            #[cfg(target_os = "windows")]
+            {
+                crate::system::wsl_mkdir_p(path)
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                fs::create_dir_all(path).map_err(|e| e.to_string())
+            }
+        }
+    };
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        let home = dirs::home_dir().ok_or("Could not find home directory")?;
-        let skill_dir = home
-            .join(".openclaw")
-            .join("workspace")
-            .join("skills")
-            .join(name);
+    let write_file_fn = |path: &str, content: &str| -> Result<(), String> {
+        if let Some(sess) = &session {
+            crate::ssh::execute_ssh(
+                sess,
+                &format!(
+                    "cat << 'EOF_WRITE' > \"{}\"\n{}\nEOF_WRITE",
+                    path, content
+                ),
+            )?;
+            Ok(())
+        } else {
+            #[cfg(target_os = "windows")]
+            {
+                crate::system::wsl_write_file(path, content)
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                fs::write(path, content).map_err(|e| e.to_string())
+            }
+        }
+    };
 
-        fs::create_dir_all(&skill_dir).map_err(|e| e.to_string())?;
-        fs::write(skill_dir.join("SKILL.md"), content).map_err(|e| e.to_string())?;
+    let skill_dir = format!("{}/.openclaw/workspace/skills/{}", home_dir, name);
+    mkdir_p_fn(&skill_dir)?;
 
-        Ok(format!("Custom skill '{}' created successfully", name))
-    }
+    let skill_path = format!("{}/SKILL.md", skill_dir);
+    write_file_fn(&skill_path, content)?;
+
+    Ok(format!("Custom skill '{}' created successfully", name))
 }
 
 pub fn validate_openclaw_config(
@@ -1644,19 +1751,17 @@ pub fn get_current_config(
         .and_then(|a| a.get("list"))
         .and_then(|v| v.as_array())
         .unwrap_or(&empty_vec);
-    let enable_multi_agent = agent_list.len() > 1;
     let mut agent_configs = Vec::new();
 
-    if enable_multi_agent {
-        for agent_val in agent_list {
-            let aid = agent_val
-                .get("id")
-                .and_then(|s| s.as_str())
-                .unwrap_or("")
-                .to_string();
-            if aid.is_empty() || aid == "main" {
-                continue;
-            }
+    for agent_val in agent_list {
+        let aid = agent_val
+            .get("id")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
+        if aid.is_empty() || aid == "main" {
+            continue;
+        }
 
             let mut name = agent_val
                 .get("name")
@@ -1802,7 +1907,8 @@ pub fn get_current_config(
                 }
             }
         }
-    }
+
+    let enable_multi_agent = !agent_configs.is_empty();
 
     let mut provider_auths = std::collections::HashMap::new();
     for referenced_provider in &referenced_providers {

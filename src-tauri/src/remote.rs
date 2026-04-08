@@ -872,49 +872,78 @@ pub async fn apply_agent_config(
     let mut config_json = read_remote_json(&executor, &openclaw_root);
 
     // If config has agents, update agents list in openclaw.json
+    let mut agents_list = Vec::new();
+    let mut has_main = false;
+
     if let Some(agents) = &config.agents {
-        if let Some(obj) = config_json.as_object_mut() {
-            if let Some(agents_entry) = obj.get_mut("agents") {
-                if let Some(agents_obj) = agents_entry.as_object_mut() {
-                    let mut agents_list = Vec::new();
+        for agent in agents {
+            if agent.id == "main" {
+                has_main = true;
+            }
 
-                    for agent in agents {
-                        let mut agent_obj = serde_json::json!({
-                            "id": agent.id,
-                            "name": agent.name,
-                            "workspace": format!("{}/.openclaw/agents/{}/workspace", home, agent.id),
-                            "agentDir": format!("{}/.openclaw/agents/{}/agent", home, agent.id),
-                            "model": {
-                                "primary": persist_local_model_ref(&apply_model_provider_auth(&agent.model, &provider_auths))
-                            }
-                        });
+            let mut agent_obj = serde_json::json!({
+                "id": agent.id,
+                "name": agent.name,
+                "workspace": format!("{}/.openclaw/agents/{}/workspace", home, agent.id),
+                "agentDir": format!("{}/.openclaw/agents/{}/agent", home, agent.id),
+                "model": {
+                    "primary": persist_local_model_ref(&apply_model_provider_auth(&agent.model, &provider_auths))
+                }
+            });
 
-                        if let Some(fb) = &agent.fallback_models {
-                            if !fb.is_empty() {
-                                let persisted_fallbacks = fb
-                                    .iter()
-                                    .map(|model| apply_model_provider_auth(model, &provider_auths))
-                                    .map(|model| persist_local_model_ref(&model))
-                                    .collect::<Vec<_>>();
-                                if let Some(model_obj) =
-                                    agent_obj.get_mut("model").and_then(|m| m.as_object_mut())
-                                {
-                                    model_obj.insert(
-                                        "fallbacks".to_string(),
-                                        serde_json::to_value(persisted_fallbacks).unwrap(),
-                                    );
-                                }
-                            }
-                        }
-
-                        // Apply per-agent overrides (tools, heartbeat, subagents)
-                        apply_agent_overrides(&mut agent_obj, agent);
-                        agents_list.push(agent_obj);
+            if let Some(fb) = &agent.fallback_models {
+                if !fb.is_empty() {
+                    let persisted_fallbacks = fb
+                        .iter()
+                        .map(|model| apply_model_provider_auth(model, &provider_auths))
+                        .map(|model| persist_local_model_ref(&model))
+                        .collect::<Vec<_>>();
+                    if let Some(model_obj) =
+                        agent_obj.get_mut("model").and_then(|m| m.as_object_mut())
+                    {
+                        model_obj.insert(
+                            "fallbacks".to_string(),
+                            serde_json::to_value(persisted_fallbacks).unwrap(),
+                        );
                     }
-
-                    agents_obj.insert("list".to_string(), serde_json::json!(agents_list));
                 }
             }
+
+            // Apply per-agent overrides (tools, heartbeat, subagents)
+            apply_agent_overrides(&mut agent_obj, agent);
+            agents_list.push(agent_obj);
+        }
+    }
+
+    if !has_main {
+        let mut main_obj = serde_json::json!({
+            "id": "main",
+            "name": config.agent_name,
+            "workspace": format!("{}/.openclaw/workspace", home),
+            "agentDir": format!("{}/.openclaw/agents/main/agent", home),
+            "model": {
+                "primary": persisted_primary_model
+            }
+        });
+
+        if !persisted_fallback_models.is_empty() {
+            if let Some(model_obj) = main_obj.get_mut("model").and_then(|m| m.as_object_mut()) {
+                model_obj.insert(
+                    "fallbacks".to_string(),
+                    serde_json::to_value(&persisted_fallback_models).unwrap(),
+                );
+            }
+        }
+
+        agents_list.insert(0, main_obj);
+    }
+
+    if let Some(obj) = config_json.as_object_mut() {
+        let agents_entry = obj.entry("agents".to_string()).or_insert(serde_json::json!({
+            "defaults": { "models": {} }
+        }));
+        if let Some(agents_obj) = agents_entry.as_object_mut() {
+            agents_obj.insert("list".to_string(), serde_json::json!(agents_list));
         }
     }
 
@@ -1082,6 +1111,53 @@ pub async fn apply_agent_config(
     executor.write_file(
         &format!("{}/auth-profiles.json", agents_dir),
         &serde_json::to_string_pretty(&auth_profiles_val)?,
+    )?;
+
+    let main_workspace = format!("{}/workspace", openclaw_root);
+    executor.mkdir_p(&main_workspace)?;
+
+    write_markdown_file(
+        &executor,
+        &format!("{}/IDENTITY.md", main_workspace),
+        config.identity_md.as_ref(),
+        || {
+            format!(
+                "# IDENTITY.md - Who Am I?\n- **Name:** {}\n- **Emoji:** 🦞\n---\nManaged by Clawnetes.",
+                config.agent_name
+            )
+        },
+    )?;
+
+    if let Some(tools_md) = &config.tools_md {
+        executor.write_file(&format!("{}/TOOLS.md", main_workspace), tools_md)?;
+    }
+    if let Some(agents_md) = &config.agents_md {
+        executor.write_file(&format!("{}/AGENTS.md", main_workspace), agents_md)?;
+    }
+    if let Some(heartbeat_md) = &config.heartbeat_md {
+        executor.write_file(&format!("{}/HEARTBEAT.md", main_workspace), heartbeat_md)?;
+    }
+    if let Some(memory_md) = &config.memory_md {
+        executor.write_file(&format!("{}/MEMORY.md", main_workspace), memory_md)?;
+    }
+
+    write_markdown_file(
+        &executor,
+        &format!("{}/USER.md", main_workspace),
+        config.user_md.as_ref(),
+        || {
+            format!(
+                "# USER.md - About Your Human\n- **Name:** {}\n---",
+                config.user_name
+            )
+        },
+    )?;
+
+    write_markdown_file(
+        &executor,
+        &format!("{}/SOUL.md", main_workspace),
+        config.soul_md.as_ref(),
+        || format!("# SOUL.md\n## Mission\nServe {}.", config.user_name),
     )?;
 
     // Create agent workspace directories and write workspace files

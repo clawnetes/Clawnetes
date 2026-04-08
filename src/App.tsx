@@ -1809,6 +1809,7 @@ Managed by Clawnetes.`,
         const newIdentity = tab === "identity" ? content : currentConfig.identityMd;
         const newSoul = tab === "soul" ? content : currentConfig.soulMd;
         await invoke("save_workspace_files", {
+          remote: null,
           agentId: null,
           identity: newIdentity,
           user: currentConfig.userMd,
