@@ -111,6 +111,17 @@ export function saveStoredSelection(scopeKey: string, agentId: string, threadId:
   writeJson(SELECTION_KEY, selections);
 }
 
+export function loadStoredAgentId(scopeKey: string): string {
+  const selections = readJson<Record<string, string>>(SELECTION_KEY) || {};
+  return selections[`${scopeKey}|activeAgent`] || "";
+}
+
+export function saveStoredAgentId(scopeKey: string, agentId: string) {
+  const selections = readJson<Record<string, string>>(SELECTION_KEY) || {};
+  selections[`${scopeKey}|activeAgent`] = agentId;
+  writeJson(SELECTION_KEY, selections);
+}
+
 export function removeStoredSelection(scopeKey: string, agentId: string, expectedThreadId?: string) {
   const selections = readJson<Record<string, string>>(SELECTION_KEY) || {};
   const selectionKey = `${scopeKey}|${agentId}`;

@@ -15,11 +15,13 @@ import {
   inferDocumentTheme,
   loadHiddenLiveSessions,
   loadSavedThemePreference,
+  loadStoredAgentId,
   loadStoredSelection,
   loadStoredThreads,
   removeStoredSelection,
   resolveThemePreference,
   saveHiddenLiveSessions,
+  saveStoredAgentId,
   saveStoredSelection,
   saveStoredThreads,
   saveThemePreference,
@@ -964,8 +966,11 @@ function ChatShell({
   }, [scopeKey, threads]);
 
   useEffect(() => {
-    if (!scopeKey || !activeAgentId || !activeThreadId) return;
-    saveStoredSelection(scopeKey, activeAgentId, activeThreadId);
+    if (!scopeKey || !activeAgentId) return;
+    saveStoredAgentId(scopeKey, activeAgentId);
+    if (activeThreadId) {
+      saveStoredSelection(scopeKey, activeAgentId, activeThreadId);
+    }
   }, [activeAgentId, activeThreadId, scopeKey]);
 
   // Re-fetch agent list from the gateway after a config update completes
@@ -1291,8 +1296,11 @@ function ChatShell({
       const preferredAgentId =
         chatActiveAgentId && nextAgents.some((agent) => agent.id === chatActiveAgentId)
           ? chatActiveAgentId
-          : "";
-      const nextAgentId = preferredAgentId || agentPayload.defaultId || nextAgents[0]?.id || "";
+          : loadStoredAgentId(scopeKey);
+      const nextAgentId =
+        preferredAgentId && nextAgents.some((agent) => agent.id === preferredAgentId)
+          ? preferredAgentId
+          : agentPayload.defaultId || nextAgents[0]?.id || "";
       setActiveAgentId(nextAgentId);
       if (nextAgentId && nextAgentId !== chatActiveAgentId) {
         onAgentSwitch?.(nextAgentId);
