@@ -36,7 +36,7 @@ import {
   setActiveEnvironmentId,
   type StoredEnvironment,
 } from "./lib/environmentStorage";
-import { clearLastRemoteConnectionIfMatches, saveLastRemoteConnection } from "./lib/remoteConnectionStorage";
+import { clearLastRemoteConnectionIfMatches } from "./lib/remoteConnectionStorage";
 import StepWelcome from "./components/steps/StepWelcome";
 import StepSecurity from "./components/steps/StepSecurity";
 import StepIdentity from "./components/steps/StepIdentity";
@@ -974,7 +974,6 @@ function App() {
 
       setSshStatus("success");
       setSshError("");
-      saveLastRemoteConnection(remoteIp, remoteUser);
     } catch (e) {
       setSshStatus("idle"); // Reset to idle on error so user can retry
       const friendlyError = formatSshError(String(e));
@@ -1810,6 +1809,7 @@ Managed by Clawnetes.`,
         const newIdentity = tab === "identity" ? content : currentConfig.identityMd;
         const newSoul = tab === "soul" ? content : currentConfig.soulMd;
         await invoke("save_workspace_files", {
+          remote: null,
           agentId: null,
           identity: newIdentity,
           user: currentConfig.userMd,

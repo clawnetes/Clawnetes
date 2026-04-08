@@ -1,6 +1,6 @@
 [package]
 name = "clawnetes"
-version = "0.4.0"
+version = "0.8.0"
 description = "Native setup wizard for OpenClaw"
 authors = ["AI Models Compass"]
 edition = "2021"

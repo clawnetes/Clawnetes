@@ -1,6 +1,5 @@
 import { openDialog } from "../../lib/tauri";
 import { useWizard } from "../../context/WizardContext";
-import { loadLastRemoteConnection } from "../../lib/remoteConnectionStorage";
 import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 interface StepEnvironmentProps {
@@ -33,11 +32,6 @@ export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemo
         </div>
         <div className={`mode-card ${targetEnvironment === "cloud" ? "active" : ""}`} onClick={() => {
           setField("targetEnvironment", "cloud");
-          const last = loadLastRemoteConnection();
-          if (last) {
-            if (!remoteIp) setField("remoteIp", last.ip);
-            if (!remoteUser) setField("remoteUser", last.user);
-          }
         }}>
           <h3>☁️ Cloud Server</h3>
           <p>Deploy to a cloud VM (AWS, GCP, Azure, etc.)</p>

@@ -68,17 +68,18 @@ function buildName(type: "local" | "cloud", remoteUser?: string, remoteIp?: stri
 export function loadEnvironments(): StoredEnvironment[] {
   const raw = readJson<unknown[]>(ENVIRONMENTS_KEY);
   if (!Array.isArray(raw)) {
-    return migrateFromLegacy();
+    return [];
   }
   const valid = raw.filter(isValidEnvironment);
   if (valid.length === 0) {
-    return migrateFromLegacy();
+    return [];
   }
   return valid;
 }
 
 export function saveEnvironments(envs: StoredEnvironment[]): void {
   writeJson(ENVIRONMENTS_KEY, envs);
+  removeKey(LEGACY_REMOTE_KEY);
 }
 
 export function upsertEnvironment(env: {
@@ -136,27 +137,4 @@ export function getActiveEnvironmentId(): string | null {
 
 export function setActiveEnvironmentId(id: string): void {
   writeJson(ACTIVE_ENV_KEY, id);
-}
-
-function migrateFromLegacy(): StoredEnvironment[] {
-  const legacy = readJson<{ ip?: string; user?: string }>(LEGACY_REMOTE_KEY);
-  if (
-    legacy &&
-    typeof legacy.ip === "string" &&
-    typeof legacy.user === "string"
-  ) {
-    const now = Date.now();
-    const migrated: StoredEnvironment = {
-      id: generateUUID(),
-      name: buildName("cloud", legacy.user, legacy.ip),
-      type: "cloud",
-      remoteIp: legacy.ip,
-      remoteUser: legacy.user,
-      addedAt: now,
-      lastUsedAt: now,
-    };
-    saveEnvironments([migrated]);
-    return [migrated];
-  }
-  return [];
 }

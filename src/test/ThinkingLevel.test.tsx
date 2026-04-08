@@ -6,7 +6,7 @@ vi.mock("../lib/tauri", () => ({
     if (cmd === "check_prerequisites") {
       return Promise.resolve({ node_installed: true, docker_running: false, openclaw_installed: false });
     }
-    if (cmd === "get_openclaw_version") return Promise.resolve("2026.4.5");
+    if (cmd === "get_openclaw_version") return Promise.resolve("2026.4.8");
     return Promise.resolve(null);
   }),
   openExternal: vi.fn(),

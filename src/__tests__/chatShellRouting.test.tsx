@@ -246,7 +246,7 @@ function setupRemoteInstalledInvokeMock() {
       return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: false });
     }
     if (cmd === "get_openclaw_version") {
-      return Promise.resolve("2026.4.5");
+      return Promise.resolve("2026.4.8");
     }
     if (cmd === "has_saved_license") {
       return Promise.resolve(false);
@@ -258,7 +258,7 @@ function setupRemoteInstalledInvokeMock() {
       return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: true });
     }
     if (cmd === "get_remote_openclaw_version") {
-      return Promise.resolve("2026.4.5");
+      return Promise.resolve("2026.4.8");
     }
     if (cmd === "prepare_gateway_chat_connection") {
       return Promise.resolve({
@@ -267,7 +267,7 @@ function setupRemoteInstalledInvokeMock() {
         targetEnvironment: "cloud",
         gatewayPort: 28789,
         tunnelActive: true,
-        openClawVersion: "2026.4.5",
+        openClawVersion: "2026.4.8",
       });
     }
     return Promise.resolve(null);
@@ -352,7 +352,7 @@ const DIRECT_CHAT_BOOTSTRAP = {
   targetEnvironment: "local",
   gatewayPort: 3333,
   tunnelActive: false,
-  openClawVersion: "2026.4.5",
+  openClawVersion: "2026.4.8",
 } as const;
 
 async function openRemoteInstalledChat(user: ReturnType<typeof userEvent.setup>) {
@@ -418,7 +418,7 @@ describe("Installed-state chat shell", () => {
         return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: true });
       }
       if (cmd === "get_openclaw_version") {
-        return Promise.resolve("2026.4.5");
+        return Promise.resolve("2026.4.8");
       }
       if (cmd === "has_saved_license") {
         return Promise.resolve(false);
@@ -430,7 +430,7 @@ describe("Installed-state chat shell", () => {
           targetEnvironment: "local",
           gatewayPort: 18789,
           tunnelActive: false,
-          openClawVersion: "2026.4.5",
+          openClawVersion: "2026.4.8",
         });
       }
       if (cmd === "run_doctor_repair") {
@@ -464,7 +464,7 @@ describe("Installed-state chat shell", () => {
     await openInstalledLocalChat();
 
     await waitFor(() => {
-      expect(screen.getByText("Clawnetes with OpenClaw 2026.4.5")).toBeInTheDocument();
+      expect(screen.getByText("Clawnetes with OpenClaw 2026.4.8")).toBeInTheDocument();
     });
   });
 
@@ -474,7 +474,7 @@ describe("Installed-state chat shell", () => {
         return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: true });
       }
       if (cmd === "get_openclaw_version") {
-        return Promise.resolve("OpenClaw 2026.4.5 (3e72c03)");
+        return Promise.resolve("OpenClaw 2026.4.8 (abe7b2c)");
       }
       if (cmd === "has_saved_license") {
         return Promise.resolve(false);
@@ -486,7 +486,7 @@ describe("Installed-state chat shell", () => {
           targetEnvironment: "local",
           gatewayPort: 18789,
           tunnelActive: false,
-          openClawVersion: "OpenClaw 2026.4.5 (3e72c03)",
+          openClawVersion: "OpenClaw 2026.4.8 (abe7b2c)",
         });
       }
       if (cmd === "run_doctor_repair") {
@@ -498,9 +498,9 @@ describe("Installed-state chat shell", () => {
     await openInstalledLocalChat();
 
     await waitFor(() => {
-      expect(screen.getByText("Clawnetes with OpenClaw 2026.4.5 (3e72c03)")).toBeInTheDocument();
+      expect(screen.getByText("Clawnetes with OpenClaw 2026.4.8 (abe7b2c)")).toBeInTheDocument();
     });
-    expect(screen.queryByText("Clawnetes with OpenClaw OpenClaw 2026.4.5 (3e72c03)")).not.toBeInTheDocument();
+    expect(screen.queryByText("Clawnetes with OpenClaw OpenClaw 2026.4.8 (abe7b2c)")).not.toBeInTheDocument();
   });
 
   it("removes a saved previous remote from the environment dropdown and clears matching legacy storage", async () => {
@@ -1005,7 +1005,7 @@ Tomorrow looks clear and cool.`,
         return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: true });
       }
       if (cmd === "get_openclaw_version") {
-        return Promise.resolve("2026.4.5");
+        return Promise.resolve("2026.4.8");
       }
       if (cmd === "has_saved_license") {
         return Promise.resolve(false);
@@ -1092,7 +1092,7 @@ Tomorrow looks clear and cool.`,
           targetEnvironment: "local",
           gatewayPort: 18789,
           tunnelActive: false,
-          openClawVersion: "2026.4.5",
+          openClawVersion: "2026.4.8",
         });
       }
       if (cmd === "configure_agent" || cmd === "restart_openclaw_gateway") {
@@ -1141,7 +1141,7 @@ Tomorrow looks clear and cool.`,
         return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: true });
       }
       if (cmd === "get_openclaw_version") {
-        return Promise.resolve("2026.4.5");
+        return Promise.resolve("2026.4.8");
       }
       if (cmd === "has_saved_license") {
         return Promise.resolve(false);
@@ -1228,7 +1228,7 @@ Tomorrow looks clear and cool.`,
           targetEnvironment: "local",
           gatewayPort: 18789,
           tunnelActive: false,
-          openClawVersion: "2026.4.5",
+          openClawVersion: "2026.4.8",
         });
       }
       if (cmd === "configure_agent" || cmd === "restart_openclaw_gateway") {

@@ -40,14 +40,14 @@ pub fn install_openclaw() -> Result<String, String> {
     {
         use crate::system::{ensure_wsl2_installed, wsl_root_command};
         ensure_wsl2_installed()?;
-        wsl_root_command("npm install -g openclaw@2026.4.5")?;
+        wsl_root_command("npm install -g openclaw@2026.4.8")?;
         shell_command("openclaw --version")?;
         Ok("OpenClaw installed successfully in WSL2.".to_string())
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        shell_command("npm install -g openclaw@2026.4.5")?;
+        shell_command("npm install -g openclaw@2026.4.8")?;
         shell_command("openclaw --version")?;
         Ok("OpenClaw installed successfully.".to_string())
     }

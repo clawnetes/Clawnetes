@@ -113,6 +113,26 @@ describe("Wizard Step List", () => {
       expect(input).toHaveAttribute("spellcheck", "false");
     }
   });
+
+  it("does not hydrate cloud SSH fields from stale legacy remote storage", async () => {
+    localStorage.setItem(
+      "clawnetes.remote.lastConnection.v1",
+      JSON.stringify({ ip: "10.0.0.9", user: "deploy" }),
+    );
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Start Setup")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("Start Setup"));
+    await user.click(screen.getByText("☁️ Cloud Server"));
+
+    expect(screen.getByTestId("input-remote-ip")).toHaveValue("");
+    expect(screen.getByTestId("input-remote-user")).toHaveValue("");
+  });
 });
 
 describe("Step ordering and renamed steps", () => {

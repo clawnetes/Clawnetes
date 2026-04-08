@@ -15,11 +15,13 @@ import {
   inferDocumentTheme,
   loadHiddenLiveSessions,
   loadSavedThemePreference,
+  loadStoredAgentId,
   loadStoredSelection,
   loadStoredThreads,
   removeStoredSelection,
   resolveThemePreference,
   saveHiddenLiveSessions,
+  saveStoredAgentId,
   saveStoredSelection,
   saveStoredThreads,
   saveThemePreference,
@@ -964,8 +966,11 @@ function ChatShell({
   }, [scopeKey, threads]);
 
   useEffect(() => {
-    if (!scopeKey || !activeAgentId || !activeThreadId) return;
-    saveStoredSelection(scopeKey, activeAgentId, activeThreadId);
+    if (!scopeKey || !activeAgentId) return;
+    saveStoredAgentId(scopeKey, activeAgentId);
+    if (activeThreadId) {
+      saveStoredSelection(scopeKey, activeAgentId, activeThreadId);
+    }
   }, [activeAgentId, activeThreadId, scopeKey]);
 
   // Re-fetch agent list from the gateway after a config update completes
@@ -1291,8 +1296,11 @@ function ChatShell({
       const preferredAgentId =
         chatActiveAgentId && nextAgents.some((agent) => agent.id === chatActiveAgentId)
           ? chatActiveAgentId
-          : "";
-      const nextAgentId = preferredAgentId || agentPayload.defaultId || nextAgents[0]?.id || "";
+          : loadStoredAgentId(scopeKey);
+      const nextAgentId =
+        preferredAgentId && nextAgents.some((agent) => agent.id === preferredAgentId)
+          ? preferredAgentId
+          : agentPayload.defaultId || nextAgents[0]?.id || "";
       setActiveAgentId(nextAgentId);
       if (nextAgentId && nextAgentId !== chatActiveAgentId) {
         onAgentSwitch?.(nextAgentId);
@@ -1372,6 +1380,10 @@ function ChatShell({
       sessionId: matchedSession?.sessionId || matchedSessionChange?.sessionId || desiredThread?.sessionId,
     });
 
+    const isSwitchingThreads = nextThreadId !== activeThreadIdRef.current;
+    if (isSwitchingThreads) {
+      shouldAutoScrollRef.current = true;
+    }
     setActiveThreadId(nextThreadId);
     setActiveSessionKey(resolvedSessionKey);
 
@@ -1380,12 +1392,12 @@ function ChatShell({
       createThread({ agentId, sessionKey: resolvedSessionKey, status: matchedSession ? "live" : "draft" });
 
     if (matchedSession) {
-      await loadHistory(resolvedSessionKey, nextThreadId, client, matchedSessionChange || matchedSession);
+      await loadHistory(resolvedSessionKey, nextThreadId, client, matchedSessionChange || matchedSession, isSwitchingThreads);
       return;
     }
 
     if (matchedSessionChange && isTerminalSessionSnapshot(asSessionLifecycleSnapshot(matchedSessionChange))) {
-      await loadHistory(resolvedSessionKey, nextThreadId, client, matchedSessionChange);
+      await loadHistory(resolvedSessionKey, nextThreadId, client, matchedSessionChange, isSwitchingThreads);
       return;
     }
 
@@ -1402,6 +1414,7 @@ function ChatShell({
     threadId: string,
     client = clientRef.current,
     sessionSnapshot?: GatewayChatSession | GatewaySessionsChangedPayload | null,
+    isInitialLoad = false,
   ) {
     if (!client || !sessionKey) return;
     setLoadingHistory(true);
@@ -1471,14 +1484,17 @@ function ChatShell({
           !hasPendingReturnScrollSnapshot()
         );
 
-      if (shouldFollowToBottom) {
-        queueScrollToBottom("auto");
-      } else {
+      if (isInitialLoad) {
         const savedTop = threadScrollPositionsRef.current[threadId];
         if (savedTop !== undefined) {
           pendingScrollRestoreRef.current = savedTop;
+        } else if (shouldAutoScrollRef.current && !hasPendingReturnScrollSnapshot()) {
+          queueScrollToBottom("auto");
         }
+      } else if (shouldFollowToBottom) {
+        queueScrollToBottom("auto");
       }
+      
       replaceMessageState(nextMessages);
       if (shouldFinalizeActiveRun) {
         activeRunIdRef.current = "";
@@ -1763,6 +1779,9 @@ function ChatShell({
     if (!thread) return;
     saveScrollPosition();
     clearHistoryReconcile();
+    if (threadId !== activeThreadIdRef.current) {
+      shouldAutoScrollRef.current = true;
+    }
     setActiveThreadId(threadId);
     setActiveSessionKey(thread.sessionKey);
     setShellError("");
@@ -1784,7 +1803,7 @@ function ChatShell({
       return;
     }
 
-    await loadHistory(thread.sessionKey, thread.id);
+    await loadHistory(thread.sessionKey, thread.id, undefined, undefined, true);
   }
 
   async function handleNewChat() {
@@ -2057,6 +2076,9 @@ function ChatShell({
       return;
     }
 
+    if (activeThreadIdRef.current !== nextThread.id) {
+      shouldAutoScrollRef.current = true;
+    }
     activeThreadIdRef.current = nextThread.id;
     activeSessionKeyRef.current = nextThread.sessionKey;
     setActiveThreadId(nextThread.id);
@@ -2068,7 +2090,7 @@ function ChatShell({
       return;
     }
 
-    await loadHistory(nextThread.sessionKey, nextThread.id);
+    await loadHistory(nextThread.sessionKey, nextThread.id, undefined, undefined, true);
   }
 
   const panelContextValue = {

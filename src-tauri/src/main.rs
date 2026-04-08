@@ -76,23 +76,28 @@ async fn test_ssh_connection(remote: RemoteInfo) -> Result<String, String> {
 }
 
 #[command]
-fn read_workspace_files() -> Result<serde_json::Value, String> {
-    config::read_workspace_files()
+fn read_workspace_files(remote: Option<RemoteInfo>) -> Result<serde_json::Value, String> {
+    config::read_workspace_files(remote.as_ref())
 }
 
 #[command]
 fn save_workspace_files(
+    remote: Option<RemoteInfo>,
     agent_id: Option<String>,
     identity: String,
     user: String,
     soul: String,
 ) -> Result<String, String> {
-    config::save_workspace_files(agent_id.as_deref(), &identity, &user, &soul)
+    config::save_workspace_files(remote.as_ref(), agent_id.as_deref(), &identity, &user, &soul)
 }
 
 #[command]
-fn create_custom_skill(name: String, content: String) -> Result<String, String> {
-    config::create_custom_skill(&name, &content)
+fn create_custom_skill(
+    remote: Option<RemoteInfo>,
+    name: String,
+    content: String,
+) -> Result<String, String> {
+    config::create_custom_skill(remote.as_ref(), &name, &content)
 }
 
 #[command]
@@ -212,9 +217,9 @@ fn install_openclaw() -> Result<String, String> {
 }
 
 #[command]
-async fn configure_agent(config: AgentConfig, remote_info: Option<RemoteInfo>) -> Result<String, String> {
-    if let Some(remote) = remote_info {
-        remote::apply_agent_config(&remote, config).await.map_err(|e| e.to_string())
+async fn configure_agent(config: AgentConfig, remote: Option<RemoteInfo>) -> Result<String, String> {
+    if let Some(remote_info) = remote {
+        remote::apply_agent_config(&remote_info, config).await.map_err(|e| e.to_string())
     } else {
         config::configure_agent(config)
     }

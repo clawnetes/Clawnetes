@@ -115,21 +115,14 @@ describe("environmentStorage", () => {
       JSON.stringify({ ip: "192.168.1.100", user: "deploy" }),
     );
     const envs = loadEnvironments();
-    expect(envs).toHaveLength(1);
-    expect(envs[0].type).toBe("cloud");
-    expect(envs[0].name).toBe("deploy@192.168.1.100");
-    expect(envs[0].remoteIp).toBe("192.168.1.100");
-    expect(envs[0].remoteUser).toBe("deploy");
+    expect(envs).toEqual([]);
   });
 
-  it("stays empty after removing the only migrated environment and clearing legacy storage", () => {
+  it("stays empty when only legacy remote storage exists", () => {
     localStorage.setItem(
       "clawnetes.remote.lastConnection.v1",
       JSON.stringify({ ip: "192.168.1.100", user: "deploy" }),
     );
-    const envs = loadEnvironments();
-    removeEnvironment(envs[0].id);
-    localStorage.removeItem("clawnetes.remote.lastConnection.v1");
     expect(loadEnvironments()).toEqual([]);
   });
 
@@ -144,6 +137,19 @@ describe("environmentStorage", () => {
     );
     expect(loadEnvironments()).toHaveLength(1);
     expect(loadEnvironments()[0].id).toBe("existing");
+  });
+
+  it("clears stale legacy remote data when saving the registry", () => {
+    localStorage.setItem(
+      "clawnetes.remote.lastConnection.v1",
+      JSON.stringify({ ip: "10.0.0.1", user: "deploy" }),
+    );
+
+    saveEnvironments([
+      { id: "local-1", name: "Local", type: "local" as const, addedAt: 1000, lastUsedAt: 2000 },
+    ]);
+
+    expect(localStorage.getItem("clawnetes.remote.lastConnection.v1")).toBeNull();
   });
 
   // Keep this test last since it breaks globalThis.localStorage

@@ -132,7 +132,7 @@ function StepSkills({ handleInstall }: StepSkillsProps) {
             disabled={!customSkillName || !customSkillContent}
             onClick={async () => {
               try {
-                await invoke("create_custom_skill", { name: customSkillName, content: customSkillContent });
+                await invoke("create_custom_skill", { remote: null, name: customSkillName, content: customSkillContent });
                 setField("selectedSkills", [...selectedSkills, customSkillName]);
                 setField("customSkillName", "");
                 setField("customSkillContent", "");
