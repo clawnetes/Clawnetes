@@ -351,7 +351,7 @@ function setupRemoteOpenClaw(rc: RemoteConfig, config: Record<string, unknown>):
   const openclawCheck = sshExecSafe(rc, "openclaw --version");
   if (!openclawCheck) {
     console.log("[bridge] installing OpenClaw on remote...");
-    sshExec(rc, "npm install -g openclaw@2026.4.5", 180_000);
+    sshExec(rc, "npm install -g openclaw@2026.4.8", 180_000);
   }
 
   // 4. Run gateway install --force
@@ -516,7 +516,7 @@ function handleCommand(
     }
 
     case "install_openclaw": {
-      shell("npm install -g openclaw@2026.4.5", 120_000);
+      shell("npm install -g openclaw@2026.4.8", 120_000);
       shell("openclaw --version");
       return "OpenClaw installed successfully.";
     }

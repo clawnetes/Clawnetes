@@ -89,7 +89,7 @@ describe("GatewayChatClient", () => {
       targetEnvironment: "local",
       gatewayPort: 18789,
       tunnelActive: false,
-      openClawVersion: "2026.4.5",
+      openClawVersion: "2026.4.8",
     });
 
     const connectPromise = client.connect();
@@ -124,7 +124,7 @@ describe("GatewayChatClient", () => {
       targetEnvironment: "local",
       gatewayPort: 18789,
       tunnelActive: false,
-      openClawVersion: "2026.4.5",
+      openClawVersion: "2026.4.8",
     });
 
     const connectPromise = client.connect();
@@ -162,7 +162,7 @@ describe("GatewayChatClient", () => {
       targetEnvironment: "local",
       gatewayPort: 18789,
       tunnelActive: false,
-      openClawVersion: "2026.4.5",
+      openClawVersion: "2026.4.8",
     });
 
     const connectPromise = client.connect();
@@ -188,7 +188,7 @@ describe("GatewayChatClient", () => {
       targetEnvironment: "local",
       gatewayPort: 18789,
       tunnelActive: false,
-      openClawVersion: "2026.4.5",
+      openClawVersion: "2026.4.8",
     });
 
     const connectPromise = client.connect();
