@@ -1,9 +1,11 @@
 import { getSafeLocalStorage } from "./localStorage";
 import { generateUUID } from "./gatewayUuid";
+import type { AgentPlatform } from "../platforms/types";
 
 export interface StoredEnvironment {
   id: string;
   name: string;
+  platform: AgentPlatform;
   type: "local" | "cloud";
   remoteIp?: string;
   remoteUser?: string;
@@ -50,10 +52,15 @@ function removeKey(key: string): void {
 
 function isValidEnvironment(env: unknown): env is StoredEnvironment {
   if (!env || typeof env !== "object") return false;
-  const e = env as Record<string, unknown>;
+  const legacy = env as Record<string, unknown>;
+  const e = {
+    ...legacy,
+    platform: legacy.platform === "hermes" ? "hermes" : "openclaw",
+  } as Record<string, unknown>;
   return (
     typeof e.id === "string" &&
     typeof e.name === "string" &&
+    (e.platform === "openclaw" || e.platform === "hermes") &&
     (e.type === "local" || e.type === "cloud") &&
     typeof e.addedAt === "number" &&
     typeof e.lastUsedAt === "number"
@@ -70,7 +77,12 @@ export function loadEnvironments(): StoredEnvironment[] {
   if (!Array.isArray(raw)) {
     return [];
   }
-  const valid = raw.filter(isValidEnvironment);
+  const valid = raw
+    .filter(isValidEnvironment)
+    .map((env) => ({
+      ...env,
+      platform: env.platform === "hermes" ? "hermes" : "openclaw",
+    }));
   if (valid.length === 0) {
     return [];
   }
@@ -83,6 +95,7 @@ export function saveEnvironments(envs: StoredEnvironment[]): void {
 }
 
 export function upsertEnvironment(env: {
+  platform: AgentPlatform;
   type: "local" | "cloud";
   remoteIp?: string;
   remoteUser?: string;
@@ -93,6 +106,7 @@ export function upsertEnvironment(env: {
   const now = Date.now();
 
   const existing = envs.find((e) => {
+    if (e.platform !== env.platform) return false;
     if (e.type !== env.type) return false;
     if (env.type === "local") return true;
     return e.remoteIp === env.remoteIp && e.remoteUser === env.remoteUser;
@@ -110,6 +124,7 @@ export function upsertEnvironment(env: {
   const newEnv: StoredEnvironment = {
     id: generateUUID(),
     name: buildName(env.type, env.remoteUser, env.remoteIp),
+    platform: env.platform,
     type: env.type,
     remoteIp: env.remoteIp,
     remoteUser: env.remoteUser,

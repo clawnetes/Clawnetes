@@ -20,19 +20,22 @@ pub fn shell_command(cmd: &str) -> Result<String, String> {
 
     #[cfg(target_os = "macos")]
     let full_cmd = format!(
-        "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; export PATH=\"$PATH:/usr/local/bin\"; {}",
+        "export PATH=\"/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH\"; \
+         export NVM_DIR=\"$HOME/.nvm\"; \
+         [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; \
+         {}",
         cmd
     );
 
     #[cfg(target_os = "windows")]
     let full_cmd = format!(
-        "export PATH=\"$PATH:/usr/local/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; {}",
+        "export PATH=\"$PATH:/usr/local/bin:$HOME/.local/bin:$HOME/.cargo/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; {}",
         cmd
     );
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let full_cmd = format!(
-        "export PATH=\"$PATH:/usr/local/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; {}",
+        "export PATH=\"$PATH:/usr/local/bin:$HOME/.local/bin:$HOME/.cargo/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; {}",
         cmd
     );
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { buildChatScopeKey } from "../lib/chatShellStorage";
 
 describe("Configuration Contamination Prevention", () => {
   let mockInvoke: any;
@@ -102,5 +103,23 @@ describe("Configuration Contamination Prevention", () => {
 
     // After fix: local environment still writes to local (CORRECT)
     expect(remoteInfoAfterFixLocal).toBeNull();
+  });
+
+  it("builds different chat scope keys for openclaw and hermes environments", () => {
+    const openClawScope = buildChatScopeKey({
+      platform: "openclaw",
+      targetEnvironment: "local",
+      gatewayPort: 18789,
+      wsUrl: "ws://127.0.0.1:18789/ws",
+    });
+
+    const hermesScope = buildChatScopeKey({
+      platform: "hermes",
+      targetEnvironment: "local",
+      gatewayPort: 18789,
+      wsUrl: "ws://127.0.0.1:18789/ws",
+    });
+
+    expect(openClawScope).not.toBe(hermesScope);
   });
 });

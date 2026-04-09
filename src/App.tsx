@@ -42,6 +42,11 @@ import StepSecurity from "./components/steps/StepSecurity";
 import StepIdentity from "./components/steps/StepIdentity";
 import StepAgentProfile from "./components/steps/StepAgentProfile";
 import StepAgentType from "./components/steps/StepAgentType";
+import StepPlatformSelect from "./components/steps/StepPlatformSelect";
+import StepHermesWelcome from "./components/steps/hermes/StepHermesWelcome";
+import StepHermesConfig from "./components/steps/hermes/StepHermesConfig";
+import StepHermesMessaging from "./components/steps/hermes/StepHermesMessaging";
+import StepHermesReview from "./components/steps/hermes/StepHermesReview";
 import StepSystemCheck from "./components/steps/StepSystemCheck";
 import StepGateway from "./components/steps/StepGateway";
 import StepChannels from "./components/steps/StepChannels";
@@ -83,7 +88,7 @@ function App() {
 
   // Destructure state for backwards-compatible access throughout the component
   const {
-    step, mode, skipBasicConfig, targetEnvironment,
+    step, mode, skipBasicConfig, platform, targetEnvironment,
     remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
     sshStatus, sshError, tunnelActive,
     checks, loading, error, logs, pairingCode, installingNode, nodeInstallError,
@@ -285,9 +290,24 @@ function App() {
 
   const isPresetAgent = agentType !== "custom";
 
-  const stepsList = [
+  const stepsList = platform === "hermes" ? [
     { id: 0, name: "System State", hidden: true },
     { id: 0.5, name: "Welcome", hidden: true },
+    { id: 0.75, name: "Platform" },
+    { id: 1, name: "Environment" },
+    { id: 2, name: "System Check" },
+    { id: 3, name: "Security" },
+    { id: 5, name: "Identity" },
+    { id: 6, name: "Agent" },
+    { id: 6.5, name: "Platform" },
+    { id: 18, name: "Hermes" },
+    { id: 19, name: "Config" },
+    { id: 20, name: "Messaging" },
+    { id: 21, name: "Review" },
+  ] : [
+    { id: 0, name: "System State", hidden: true },
+    { id: 0.5, name: "Welcome", hidden: true },
+    { id: 0.75, name: "Platform" },
     { id: 1, name: "Environment" },
     { id: 2, name: "System Check" },
     { id: 3, name: "Security" },
@@ -337,15 +357,22 @@ function App() {
     setChatBootstrapError("");
 
     try {
-      const bootstrap = await invoke<GatewayChatBootstrap>("prepare_gateway_chat_connection", {
-        gatewayPort,
-        remote: buildActiveRemoteConfig(),
-      });
+      const bootstrap = platform === "hermes"
+        ? await invoke<GatewayChatBootstrap>("prepare_platform_chat_bootstrap", {
+            platform: "hermes",
+            gatewayPort,
+            remote: buildActiveRemoteConfig(),
+          })
+        : await invoke<GatewayChatBootstrap>("prepare_gateway_chat_connection", {
+            gatewayPort,
+            remote: buildActiveRemoteConfig(),
+          });
       setChatBootstrap(bootstrap);
       setAppScreen("chat");
       await loadExistingConfigRef.current().catch(() => {});
       // Save this environment to the registry
       const saved = upsertEnvironment({
+        platform,
         type: targetEnvironment as "local" | "cloud",
         remoteIp: targetEnvironment === "cloud" ? remoteIp : undefined,
         remoteUser: targetEnvironment === "cloud" ? remoteUser : undefined,
@@ -360,12 +387,13 @@ function App() {
     } finally {
       setChatBootstrapping(false);
     }
-  }, [buildActiveRemoteConfig, gatewayPort, targetEnvironment, remoteIp, remoteUser]);
+  }, [buildActiveRemoteConfig, gatewayPort, targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath, platform]);
 
   useEffect(() => { void checkSystem(true, false); setStoredEnvironments(loadEnvironments()); }, []);
 
   const activeStoredEnvironmentId = chatBootstrap ? storedEnvironments.find(
-    (e) => e.type === (chatBootstrap.targetEnvironment as "local" | "cloud")
+    (e) => e.platform === (chatBootstrap.platform || "openclaw")
+      && e.type === (chatBootstrap.targetEnvironment as "local" | "cloud")
       && (chatBootstrap.targetEnvironment === "local" || (e.remoteIp === remoteIp && e.remoteUser === remoteUser)),
   )?.id || null : null;
 
@@ -373,6 +401,8 @@ function App() {
     const envs = loadEnvironments();
     const env = envs.find((e) => e.id === envId);
     if (!env) return;
+
+    dispatch({ type: "SET_FIELD", field: "platform", value: env.platform });
 
     if (env.type === "cloud") {
       setTargetEnvironment("cloud");
@@ -391,7 +421,7 @@ function App() {
     setRemotePassword("");
     setRemotePrivateKeyPath("");
     setChatBootstrap(null);
-  }, [setTargetEnvironment, setRemoteIp, setRemoteUser, setRemotePassword, setRemotePrivateKeyPath]);
+  }, [dispatch, setTargetEnvironment, setRemoteIp, setRemoteUser, setRemotePassword, setRemotePrivateKeyPath]);
 
   const handleRemoveEnvironment = useCallback((envId: string) => {
     const env = loadEnvironments().find((entry) => entry.id === envId);
@@ -582,6 +612,7 @@ function App() {
   }
 
   const configPayloadInput = {
+    platform,
     provider, apiKey, authMethod, model, userName, agentName, agentEmoji, agentType,
     telegramToken, gatewayPort, gatewayBind, gatewayAuthMode, tailscaleMode, nodeManager,
     selectedSkills, serviceKeys, providerAuths, sandboxMode, toolPolicy, enableFallbacks,
@@ -831,57 +862,94 @@ function App() {
   }
 
   async function checkSystem(skipRedirect = false, allowInstalledChat = true) {
-    // Always check local system on initial load
-    const res: any = await invoke("check_prerequisites");
-    setChecks({
-      node: res.node_installed,
-      docker: res.docker_running,
-      openclaw: res.openclaw_installed
-    });
-    const version: string = await invoke("get_openclaw_version");
-    setOpenClawVersion(version);
+    try {
+      // Always check local system on initial load
+      const res: any = platform === "hermes"
+        ? await invoke("check_platform_prerequisites", { platform: "hermes", remote: null })
+        : await invoke("check_prerequisites");
+      setChecks({
+        node: res.nodeInstalled ?? res.node_installed,
+        docker: res.dockerRunning ?? res.docker_running,
+        openclaw: platform === "hermes" ? (res.platformInstalled ?? res.platform_installed) : res.openclaw_installed
+      });
+      let version = "Not Installed";
+      try {
+        version = platform === "hermes"
+          ? await invoke("get_platform_version", { platform: "hermes", remote: null })
+          : await invoke("get_openclaw_version");
+      } catch (e) {
+        console.warn("Could not get version:", e);
+      }
+      setOpenClawVersion(version);
 
-    if (res.openclaw_installed) {
-      if (allowInstalledChat) {
-        setAppScreen("chat");
+      const platformInstalled = platform === "hermes" ? (res.platformInstalled ?? res.platform_installed) : res.openclaw_installed;
+      if (platformInstalled) {
+        if (allowInstalledChat) {
+          setAppScreen("chat");
+        } else {
+          setStep(0.75);
+          setAppScreen("setup");
+        }
+        return true;
+      } else if (!skipRedirect) {
+        setStep(0.5);
+        setAppScreen("setup");
       } else {
-        setStep(1);
         setAppScreen("setup");
       }
-      return true;
-    } else if (!skipRedirect) {
-      setStep(0.5);
-      setAppScreen("setup");
-    } else {
-      setAppScreen("setup");
+      return platformInstalled;
+    } catch (e) {
+      console.error("Failed to check local system prerequisites:", e);
+      setChecks({ node: false, docker: false, openclaw: false });
+      if (!skipRedirect) {
+        setStep(0.5);
+        setAppScreen("setup");
+      }
+      return false;
     }
-    return res.openclaw_installed;
   }
 
   async function checkRemoteSystem(skipRedirect = false) {
     // Check remote system (called from Step 1 when cloud environment is selected)
     if (sshStatus === "success") {
-      const remote = {
-        ip: remoteIp,
-        user: remoteUser,
-        password: remotePassword || null,
-        privateKeyPath: remotePrivateKeyPath || null
-      };
+      try {
+        const remote = {
+          ip: remoteIp,
+          user: remoteUser,
+          password: remotePassword || null,
+          privateKeyPath: remotePrivateKeyPath || null
+        };
 
-      const res: any = await invoke("check_remote_prerequisites", { remote });
-      setChecks({
-        node: res.node_installed,
-        docker: res.docker_running,
-        openclaw: res.openclaw_installed
-      });
-      const version: string = await invoke("get_remote_openclaw_version", { remote });
-      setOpenClawVersion(version);
+        const res: any = platform === "hermes"
+          ? await invoke("check_platform_prerequisites", { platform: "hermes", remote })
+          : await invoke("check_remote_prerequisites", { remote });
+        setChecks({
+          node: res.nodeInstalled ?? res.node_installed,
+          docker: res.dockerRunning ?? res.docker_running,
+          openclaw: platform === "hermes" ? (res.platformInstalled ?? res.platform_installed) : res.openclaw_installed
+        });
+        
+        let version = "Not Installed";
+        try {
+          version = platform === "hermes"
+            ? await invoke("get_platform_version", { platform: "hermes", remote })
+            : await invoke("get_remote_openclaw_version", { remote });
+        } catch (e) {
+          console.warn("Could not get remote version:", e);
+        }
+        setOpenClawVersion(version);
 
-      if (res.openclaw_installed) {
-        setAppScreen("chat");
-        return true;
+        const platformInstalled = platform === "hermes" ? (res.platformInstalled ?? res.platform_installed) : res.openclaw_installed;
+        if (platformInstalled) {
+          setAppScreen("chat");
+          return true;
+        }
+        return platformInstalled;
+      } catch (e) {
+        console.error("Failed to check remote system prerequisites:", e);
+        setChecks({ node: false, docker: false, openclaw: false });
+        return false;
       }
-      return res.openclaw_installed;
     }
     return false;
   }
@@ -1124,6 +1192,7 @@ function App() {
 Managed by Clawnetes.`;
 
     return {
+      platform: initial.platform || "openclaw",
       provider: normalizedProvider,
       api_key: initialProviderAuths[normalizedProvider]?.token || initial.api_key,
       auth_method: initialProviderAuths[normalizedProvider]?.auth_method || initial.auth_method,
@@ -1221,6 +1290,7 @@ Managed by Clawnetes.`,
   const handleInstall = useCallback(async () => {
     await handleInstallController({
       state: {
+        platform,
         targetEnvironment,
         remoteIp,
         remoteUser,
@@ -1288,6 +1358,7 @@ Managed by Clawnetes.`,
     whatsappDmPolicy,
     whatsappPaired,
     whatsappPhoneNumber,
+    platform,
   ]);
 
   async function handlePairing() {
@@ -1316,6 +1387,7 @@ Managed by Clawnetes.`,
   const handleMaintenanceAction = useCallback(async (action: string) => {
     return await handleMaintenanceActionController({
       state: {
+        platform,
         targetEnvironment,
         sshStatus,
         remoteIp,
@@ -1343,11 +1415,13 @@ Managed by Clawnetes.`,
     setMaintenanceStatus,
     sshStatus,
     targetEnvironment,
+    platform,
   ]);
 
   const loadExistingConfig = useCallback(async () => {
     return loadExistingConfigController({
       state: {
+        platform,
         targetEnvironment,
         remoteIp,
         remoteUser,
@@ -1465,19 +1539,27 @@ Managed by Clawnetes.`,
     setWhatsappPhoneNumber,
     setWhatsappPhoneSubmitted,
     targetEnvironment,
+    platform,
   ]);
   loadExistingConfigRef.current = loadExistingConfig;
 
   const restartGatewayAfterPanelUpdate = useCallback(async () => {
     setConfigUpdating(true);
     try {
-      await invoke("restart_openclaw_gateway", {
-        remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
-      });
+      if (platform === "hermes") {
+        await invoke("restart_platform_service", {
+          platform: "hermes",
+          remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
+        });
+      } else {
+        await invoke("restart_openclaw_gateway", {
+          remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
+        });
+      }
     } finally {
       setConfigUpdating(false);
     }
-  }, [targetEnvironment, buildActiveRemoteConfig]);
+  }, [platform, targetEnvironment, buildActiveRemoteConfig]);
 
   const handleToggleTunnel = useCallback(async () => {
     await handleToggleTunnelController({
@@ -1907,7 +1989,12 @@ Managed by Clawnetes.`,
   const hasChanges = !initialConfigRef.current || !isDeepEqual(initialPayload, currentPayload);
   const remoteSummary = targetEnvironment === "cloud"
     ? `${remoteUser || "remote-user"}@${remoteIp || "remote-host"}${tunnelActive ? " via SSH tunnel" : ""}`
-    : "Running against the local OpenClaw gateway on loopback.";
+    : platform === "hermes"
+      ? "Running against the local Hermes API server on loopback."
+      : "Running against the local OpenClaw gateway on loopback.";
+  const canManageChatAgents = chatBootstrap?.platform === "hermes"
+    ? chatBootstrap?.supportsAgentDiscovery === true
+    : true;
 
   const renderStep = () => {
     switch (step) {
@@ -1922,6 +2009,8 @@ Managed by Clawnetes.`,
         );
       case 0.5:
         return <StepWelcome />;
+      case 0.75:
+        return <StepPlatformSelect />;
       case 1:
         return <StepEnvironment handleSshCheck={handleSshCheck} checkSystem={checkSystem} checkRemoteSystem={checkRemoteSystem} />;
       case 2:
@@ -1934,6 +2023,14 @@ Managed by Clawnetes.`,
         return <StepAgentProfile />;
       case 6.5:
         return <StepAgentType applyAgentTypePreset={applyAgentTypePreset} />;
+      case 18:
+        return <StepHermesWelcome />;
+      case 19:
+        return <StepHermesConfig renderProviderAuthEditor={renderProviderAuthEditor} getProviderDefaultModel={getProviderDefaultModel} getProviderModelOptions={getProviderModelOptions} />;
+      case 20:
+        return <StepHermesMessaging />;
+      case 21:
+        return <StepHermesReview handleInstall={handleInstall} hasChanges={hasChanges} initialConfigRef={initialConfigRef} />;
       case 6.7:
         return <StepConfigReview renderProviderAuthEditor={renderProviderAuthEditor} getProviderAuth={getProviderAuth} />;
       case 7:
@@ -2035,8 +2132,8 @@ Managed by Clawnetes.`,
             memoryMd={memoryMd}
             onIdentitySave={handlePanelIdentitySave}
             identitySaving={savingWorkspace}
-            onAddAgent={handlePanelAddAgent}
-            onRemoveAgent={handlePanelRemoveAgent}
+            onAddAgent={canManageChatAgents ? handlePanelAddAgent : undefined}
+            onRemoveAgent={canManageChatAgents ? handlePanelRemoveAgent : undefined}
             isConfigUpdating={configUpdating}
             targetEnvironment={targetEnvironment}
             remoteSummary={remoteSummary}

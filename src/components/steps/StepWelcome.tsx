@@ -16,7 +16,7 @@ export default function StepWelcome() {
         <button
           className="primary"
           style={{ minWidth: "200px", padding: "1rem 2rem", fontSize: "1.1rem" }}
-          onClick={() => dispatch({ type: "SET_FIELD", field: "step", value: 1 })}
+          onClick={() => dispatch({ type: "SET_FIELD", field: "step", value: 0.75 })}
           data-testid="btn-start-setup"
         >
           Start Setup

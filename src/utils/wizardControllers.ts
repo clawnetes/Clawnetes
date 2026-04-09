@@ -20,6 +20,7 @@ import {
   normalizeSkillAndToolSelection,
 } from "./toolSelection";
 import type { AgentConfigData, ProviderAuthConfig, RemoteConfig, ToolPolicy } from "../types";
+import type { AgentPlatform } from "../platforms/types";
 import type { WizardState } from "../hooks/useWizardState";
 
 type Setter<T> = (value: T | ((prev: T) => T)) => void;
@@ -118,6 +119,7 @@ function getInitialMessagingSettings(initial: any) {
 export interface InstallController {
   state: Pick<
     WizardState,
+    | "platform"
     | "targetEnvironment"
     | "remoteIp"
     | "remoteUser"
@@ -229,10 +231,30 @@ export async function handleInstall(controller: InstallController) {
       controller.setProgress(isUpdate ? "Updating remote configuration..." : "Deploying to remote server...");
       controller.setLogs(isUpdate ? "Updating remote configuration..." : "Preparing remote environment...");
 
-      await invoke("setup_remote_openclaw", {
-        remote: remoteConfig,
-        config: configPayload,
-      });
+      if (state.platform === "hermes") {
+        if (!state.checks.openclaw) {
+          controller.setProgress("Installing Hermes Agent on the remote host...");
+          controller.setLogs("Installing Hermes Agent on the remote host...");
+          await invoke("install_platform", {
+            platform: "hermes",
+            remote: remoteConfig,
+          });
+        }
+        await invoke("configure_platform", {
+          platform: "hermes",
+          remote: remoteConfig,
+          config: configPayload,
+        });
+        await invoke("restart_platform_service", {
+          platform: "hermes",
+          remote: remoteConfig,
+        });
+      } else {
+        await invoke("setup_remote_openclaw", {
+          remote: remoteConfig,
+          config: configPayload,
+        });
+      }
 
       for (const skill of state.selectedSkills) {
         controller.setProgress(`Installing skill on remote: ${skill}...`);
@@ -303,19 +325,33 @@ export async function handleInstall(controller: InstallController) {
       controller.setStep(17);
     } else {
       if (!state.checks.openclaw) {
-        controller.setProgress("Installing OpenClaw (this may take a minute)...");
-        controller.setLogs("Installing OpenClaw (this may take a minute)...");
-        await invoke("install_openclaw");
-        const version: string = await invoke("get_openclaw_version");
+        controller.setProgress(`Installing ${state.platform === "hermes" ? "Hermes Agent" : "OpenClaw"} (this may take a minute)...`);
+        controller.setLogs(`Installing ${state.platform === "hermes" ? "Hermes Agent" : "OpenClaw"} (this may take a minute)...`);
+        if (state.platform === "hermes") {
+          await invoke("install_platform", { platform: "hermes", remote: null });
+        } else {
+          await invoke("install_openclaw");
+        }
+        const version: string = state.platform === "hermes"
+          ? await invoke("get_platform_version", { platform: "hermes", remote: null })
+          : await invoke("get_openclaw_version");
         controller.setOpenClawVersion(version);
         controller.setChecks((prev) => ({ ...prev, openclaw: true }));
       }
 
       controller.setProgress("Configuring agent...");
       controller.setLogs("Configuring...");
-      await invoke("configure_agent", {
-        config: configPayload,
-      });
+      if (state.platform === "hermes") {
+        await invoke("configure_platform", {
+          platform: "hermes",
+          config: configPayload,
+          remote: null,
+        });
+      } else {
+        await invoke("configure_agent", {
+          config: configPayload,
+        });
+      }
 
       for (const skill of state.selectedSkills) {
         controller.setProgress(`Installing skill: ${skill}...`);
@@ -328,7 +364,11 @@ export async function handleInstall(controller: InstallController) {
         }
       }
 
-      if (isUpdate || state.messagingChannel === "whatsapp") {
+      if (state.platform === "hermes") {
+        controller.setProgress("Starting Hermes services...");
+        controller.setLogs("Starting Hermes services...");
+        await invoke("restart_platform_service", { platform: "hermes", remote: null });
+      } else if (isUpdate || state.messagingChannel === "whatsapp") {
         controller.setProgress("Restarting Gateway (this may take 20-30 seconds)...");
         controller.setLogs("Restarting Gateway...");
         await invoke("restart_openclaw_gateway", { remote: null });
@@ -374,6 +414,7 @@ export async function handleInstall(controller: InstallController) {
 export interface MaintenanceController {
   state: Pick<
     WizardState,
+    | "platform"
     | "targetEnvironment"
     | "sshStatus"
     | "remoteIp"
@@ -403,7 +444,14 @@ export async function handleMaintenanceAction(
       ? buildRemoteConfig(controller.state)
       : null;
 
-    if (action === "repair") {
+    if (controller.state.platform === "hermes") {
+      response = await invoke("run_platform_maintenance", {
+        platform: "hermes",
+        action,
+        remote: remoteConfig,
+      });
+      controller.setMaintenanceStatus(`✅ ${action} completed successfully.`);
+    } else if (action === "repair") {
       response = remoteConfig
         ? await invoke("run_remote_doctor_repair", { remote: remoteConfig })
         : await invoke("run_doctor_repair");
@@ -447,6 +495,7 @@ export async function handleMaintenanceAction(
 export interface ConfigLoaderController {
   state: Pick<
     WizardState,
+    | "platform"
     | "targetEnvironment"
     | "remoteIp"
     | "remoteUser"
@@ -513,7 +562,9 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
 
   try {
     const remoteConfig = buildRemoteConfig(controller.state);
-    const config: any = await invoke("get_current_config", { remote: remoteConfig });
+    const config: any = controller.state.platform === "hermes"
+      ? await invoke("get_platform_config", { platform: "hermes", remote: remoteConfig })
+      : await invoke("get_current_config", { remote: remoteConfig });
     if (!config || typeof config !== "object") {
       controller.initialConfigRef.current = null;
       controller.setMaintenanceStatus("No existing configuration found.");

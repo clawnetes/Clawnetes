@@ -1,5 +1,6 @@
 import { useReducer } from "react";
 import type { AgentConfigData, AgentTypeId, BusinessFunctionId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "../types";
+import type { AgentPlatform } from "../platforms/types";
 import { DEFAULT_TOOL_POLICY } from "../utils/toolSelection";
 import { createDefaultProviderAuth } from "../utils/providerAuth";
 import type { MessagingChannel } from "../utils/messagingPairing";
@@ -9,6 +10,7 @@ export interface WizardState {
   step: number;
   mode: string;
   skipBasicConfig: boolean;
+  platform: AgentPlatform;
 
   // Environment
   targetEnvironment: string;
@@ -168,6 +170,7 @@ export const INITIAL_WIZARD_STATE: WizardState = {
   step: 0.5,
   mode: "basic",
   skipBasicConfig: false,
+  platform: "openclaw",
   targetEnvironment: "local",
   remoteIp: "",
   remoteUser: "",

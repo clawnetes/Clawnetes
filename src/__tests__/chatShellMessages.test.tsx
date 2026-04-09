@@ -426,6 +426,12 @@ async function openInstalledLocalChat(user: ReturnType<typeof userEvent.setup> =
   render(<App />);
 
   await waitFor(() => {
+    expect(screen.getByTestId("step-platform-select")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByTestId("btn-next"));
+
+  await waitFor(() => {
     expect(screen.getByTestId("step-environment")).toBeInTheDocument();
   });
 

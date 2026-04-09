@@ -12,8 +12,10 @@ export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemo
   const { state, dispatch } = useWizard();
   const {
     targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
-    sshStatus, sshError,
+    sshStatus, sshError, platform
   } = state;
+
+  const platformLabel = platform === "hermes" ? "Hermes Agent" : "OpenClaw";
 
   const setField = (field: string, value: unknown) =>
     dispatch({ type: "SET_FIELD", field: field as any, value });
@@ -21,20 +23,20 @@ export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemo
   return (
     <div className="step-view" data-testid="step-environment">
       <h2>Target Environment</h2>
-      <p className="step-description">Where will you be running OpenClaw?</p>
+      <p className="step-description">Where will you be running {platformLabel}?</p>
       <div className="mode-card-container">
         <div className={`mode-card ${targetEnvironment === "local" ? "active" : ""}`} onClick={() => {
           setField("targetEnvironment", "local");
           setField("sshStatus", "idle");
         }}>
           <h3>💻 Local Machine</h3>
-          <p>Run OpenClaw directly on your computer (macOS/Linux/Windows)</p>
+          <p>Run {platformLabel} directly on your computer (macOS/Linux/Windows)</p>
         </div>
         <div className={`mode-card ${targetEnvironment === "cloud" ? "active" : ""}`} onClick={() => {
           setField("targetEnvironment", "cloud");
         }}>
           <h3>☁️ Cloud Server</h3>
-          <p>Deploy to a cloud VM (AWS, GCP, Azure, etc.)</p>
+          <p>Deploy {platformLabel} to a cloud VM (AWS, GCP, Azure, etc.)</p>
         </div>
       </div>
 
@@ -130,6 +132,7 @@ export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemo
       <div className="button-group" style={{ marginTop: "2rem" }}>
         <button
           className="primary"
+          style={{ minWidth: "120px" }}
           onClick={async () => {
             if (targetEnvironment === "cloud") {
               const redirected = await checkRemoteSystem(false);
@@ -147,6 +150,9 @@ export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemo
           data-testid="btn-continue"
         >
           Continue
+        </button>
+        <button className="secondary" style={{ minWidth: "120px" }} onClick={() => setField("step", 0.75)} data-testid="btn-back">
+          Back
         </button>
       </div>
     </div>

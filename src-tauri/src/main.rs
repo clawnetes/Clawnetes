@@ -8,6 +8,7 @@ mod maintenance;
 mod models;
 mod oauth;
 mod pairing;
+mod platforms;
 mod remote;
 mod ssh;
 mod system;
@@ -24,6 +25,7 @@ extern crate lazy_static;
 
 use license::verify_license_with_gumroad;
 use ssh::connect_ssh;
+use platforms::types::{AgentPlatform, PlatformPrereqCheck};
 use system::shell_command;
 #[cfg(target_os = "windows")]
 use system::{
@@ -281,6 +283,101 @@ async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig,
 }
 
 #[command]
+fn check_platform_prerequisites(
+    platform: AgentPlatform,
+    remote: Option<RemoteInfo>,
+) -> Result<PlatformPrereqCheck, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::check_prerequisites(remote.as_ref()),
+        AgentPlatform::Hermes => platforms::hermes::check_prerequisites(remote.as_ref()),
+    }
+}
+
+#[command]
+fn install_platform(platform: AgentPlatform, remote: Option<RemoteInfo>) -> Result<String, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::install(remote.as_ref()),
+        AgentPlatform::Hermes => platforms::hermes::install(remote.as_ref()),
+    }
+}
+
+#[command]
+fn get_platform_version(platform: AgentPlatform, remote: Option<RemoteInfo>) -> Result<String, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::get_version(remote.as_ref()),
+        AgentPlatform::Hermes => platforms::hermes::get_version(remote.as_ref()),
+    }
+}
+
+#[command]
+fn get_platform_config(platform: AgentPlatform, remote: Option<RemoteInfo>) -> Result<CurrentConfig, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::get_config(remote.as_ref()),
+        AgentPlatform::Hermes => platforms::hermes::get_config(remote.as_ref()),
+    }
+}
+
+#[command]
+async fn configure_platform(
+    platform: AgentPlatform,
+    config: AgentConfig,
+    remote: Option<RemoteInfo>,
+) -> Result<String, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::configure(config, remote.as_ref()).await,
+        AgentPlatform::Hermes => platforms::hermes::configure(&config, remote.as_ref()),
+    }
+}
+
+#[command]
+async fn prepare_platform_chat_bootstrap(
+    platform: AgentPlatform,
+    gateway_port: Option<u16>,
+    remote: Option<RemoteInfo>,
+) -> Result<GatewayChatBootstrap, String> {
+    match platform {
+        AgentPlatform::Openclaw => {
+            platforms::openclaw::prepare_chat_bootstrap(gateway_port, remote.as_ref()).await
+        }
+        AgentPlatform::Hermes => platforms::hermes::prepare_chat_bootstrap(remote.as_ref()),
+    }
+}
+
+#[command]
+async fn start_platform_service(
+    platform: AgentPlatform,
+    remote: Option<RemoteInfo>,
+) -> Result<String, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::start_service(remote.as_ref()).await,
+        AgentPlatform::Hermes => platforms::hermes::start_gateway(remote.as_ref()),
+    }
+}
+
+#[command]
+async fn restart_platform_service(
+    platform: AgentPlatform,
+    remote: Option<RemoteInfo>,
+) -> Result<String, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::restart_service(remote.as_ref()).await,
+        AgentPlatform::Hermes => platforms::hermes::restart_gateway(remote.as_ref()),
+    }
+}
+
+#[command]
+fn run_platform_maintenance(
+    platform: AgentPlatform,
+    action: String,
+    remote: Option<RemoteInfo>,
+) -> Result<String, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::run_maintenance(&action, remote.as_ref()),
+        AgentPlatform::Hermes => platforms::hermes::run_maintenance(&action, remote.as_ref()),
+    }
+}
+
+#[command]
 fn has_saved_license(app: tauri::AppHandle) -> Result<bool, String> {
     Ok(read_saved_license(&app)?.is_some())
 }
@@ -419,6 +516,15 @@ fn main() {
             prepare_gateway_chat_connection,
             verify_tunnel_connectivity,
             get_current_config,
+            check_platform_prerequisites,
+            install_platform,
+            get_platform_version,
+            get_platform_config,
+            configure_platform,
+            prepare_platform_chat_bootstrap,
+            start_platform_service,
+            restart_platform_service,
+            run_platform_maintenance,
             has_saved_license,
             verify_and_store_license,
             check_pairing_status,

@@ -5,7 +5,7 @@ import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 export default function StepAgentProfile() {
   const { state, dispatch } = useWizard();
-  const { agentName, agentEmoji, identityMd, skipBasicConfig } = state;
+  const { agentName, agentEmoji, identityMd, skipBasicConfig, platform } = state;
 
   const setField = (field: string, value: unknown) =>
     dispatch({ type: "SET_FIELD", field: field as any, value });
@@ -53,7 +53,7 @@ export default function StepAgentProfile() {
         </div>
       </div>
       <div className="button-group">
-        <button className="primary" disabled={!agentName} onClick={() => setField("step", 6.5)} data-testid="btn-next">Next</button>
+        <button className="primary" disabled={!agentName} onClick={() => setField("step", platform === "hermes" ? 18 : 6.5)} data-testid="btn-next">Next</button>
         <button className="secondary" onClick={() => setField("step", skipBasicConfig ? 0 : 5)}>Back</button>
       </div>
     </div>

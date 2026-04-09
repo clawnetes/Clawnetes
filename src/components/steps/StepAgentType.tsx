@@ -22,7 +22,7 @@ export default function StepAgentType({ applyAgentTypePreset }: StepAgentTypePro
   return (
     <div className="step-view" data-testid="step-agent-type">
       <h2>Agent Type</h2>
-      <p className="step-description">Choose a pre-configured agent type or build your own from scratch.</p>
+      <p className="step-description">Pick a pre-configured OpenClaw agent type or build your own from scratch.</p>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
         {agentTypes.map(t => (
           <div

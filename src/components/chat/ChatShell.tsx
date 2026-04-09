@@ -1,7 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AgentConfigData, ChatTranscriptScrollSnapshot, GatewayChatBootstrap, ProviderAuthConfig, ToolPolicy } from "../../types";
 import {
-  GatewayChatClient,
   type GatewayAgentEventPayload,
   type GatewayChatAgent,
   type GatewayConnectState,
@@ -9,6 +8,7 @@ import {
   type GatewayChatSession,
   type GatewaySessionsChangedPayload,
 } from "../../lib/gatewayChat";
+import { createChatTransportClient, type ChatTransportClient } from "../../lib/chatTransport";
 import {
   buildChatScopeKey,
   hideLiveSession,
@@ -155,7 +155,11 @@ function isNearBottom(element: HTMLDivElement, threshold = 96) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
 
-function formatOpenClawStatusLabel(version: string) {
+function formatConnectionStatusLabel(bootstrap: GatewayChatBootstrap) {
+  if (bootstrap.platform === "hermes") {
+    return "Clawnetes with Hermes Agent";
+  }
+  const version = bootstrap.openClawVersion;
   const trimmedVersion = version.trim();
   if (!trimmedVersion) {
     return "Clawnetes with OpenClaw";
@@ -499,7 +503,7 @@ function ChatShell({
   returnScrollSnapshot = null,
   onConsumeReturnScrollSnapshot,
 }: ChatShellProps) {
-  const clientRef = useRef<GatewayChatClient | null>(null);
+  const clientRef = useRef<ChatTransportClient | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const activeAgentIdRef = useRef("");
@@ -1158,27 +1162,27 @@ function ChatShell({
   useEffect(() => {
     if (!bootstrap) return;
 
-    const client = new GatewayChatClient(bootstrap);
+    const client = createChatTransportClient(bootstrap);
     clientRef.current = client;
 
     client.onStateChange = (state) => {
       setConnectionState(state.status);
 
       if (state.status === "connected") {
-        setConnectionLabel(formatOpenClawStatusLabel(bootstrap.openClawVersion));
+        setConnectionLabel(formatConnectionStatusLabel(bootstrap));
         setShellError("");
       } else if (state.status === "reconnecting") {
-        setConnectionLabel("Reconnecting to gateway...");
+        setConnectionLabel(bootstrap.platform === "hermes" ? "Reconnecting to Hermes..." : "Reconnecting to gateway...");
       } else if (state.status === "challenged") {
         setConnectionLabel("Authorizing gateway session...");
       } else if (state.status === "authenticating") {
-        setConnectionLabel("Authenticating with OpenClaw...");
+        setConnectionLabel(bootstrap.platform === "hermes" ? "Authenticating with Hermes..." : "Authenticating with OpenClaw...");
       } else if (state.status === "failed") {
         const message = state.error || "Gateway connection failed.";
         setConnectionLabel(message);
         setShellError(message);
       } else {
-        setConnectionLabel("Connecting to gateway...");
+        setConnectionLabel(bootstrap.platform === "hermes" ? "Connecting to Hermes..." : "Connecting to gateway...");
       }
     };
 
@@ -1285,7 +1289,7 @@ function ChatShell({
     };
   }, [bootstrap, scopeKey]);
 
-  async function bootstrapShell(client: GatewayChatClient) {
+  async function bootstrapShell(client: ChatTransportClient) {
     try {
       setShellError("");
       clearHistoryReconcile();
@@ -2231,7 +2235,7 @@ function ChatShell({
           {!bootstrap && (
             <div className="chat-bootstrap-status">
               <p className="chat-bootstrap-title">Starting the gateway workspace</p>
-              <p className="chat-bootstrap-detail">{bootstrapping ? "Preparing the OpenClaw gateway connection..." : bootstrapError || "No gateway connection available."}</p>
+              <p className="chat-bootstrap-detail">{bootstrapping ? (bootstrap?.platform === "hermes" ? "Preparing the Hermes API connection..." : "Preparing the OpenClaw gateway connection...") : bootstrapError || "No gateway connection available."}</p>
               {!bootstrapping && <button onClick={onRetryConnection}>Retry</button>}
             </div>
           )}

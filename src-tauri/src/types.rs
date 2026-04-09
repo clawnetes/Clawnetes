@@ -55,6 +55,7 @@ pub struct CronJobConfig {
 
 #[derive(serde::Serialize)]
 pub struct CurrentConfig {
+    pub platform: String,
     pub provider: String,
     pub api_key: String,
     pub auth_method: String,
@@ -111,6 +112,8 @@ pub struct ProviderAuthData {
 
 #[derive(serde::Deserialize)]
 pub struct AgentConfig {
+    #[allow(dead_code)]
+    pub platform: Option<String>,
     pub provider: String,
     pub api_key: String,
     pub auth_method: Option<String>,
@@ -208,4 +211,16 @@ pub struct GatewayChatBootstrap {
     pub tunnel_active: bool,
     #[serde(rename = "openClawVersion")]
     pub openclaw_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_transport: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_runs: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_agent_discovery: Option<bool>,
 }

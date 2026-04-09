@@ -426,6 +426,12 @@ pub async fn prepare_gateway_chat_connection(
                     gateway_port: crate::ssh::REMOTE_TUNNEL_LOCAL_PORT,
                     tunnel_active: true,
                     openclaw_version: crate::maintenance::get_remote_openclaw_version(&remote)?,
+                    platform: Some("openclaw".to_string()),
+                    chat_transport: Some("openclaw-gateway".to_string()),
+                    api_base_url: None,
+                    api_key: None,
+                    supports_runs: Some(false),
+                    supports_agent_discovery: Some(true),
                 })
             },
         )
@@ -444,6 +450,12 @@ pub async fn prepare_gateway_chat_connection(
         gateway_port,
         tunnel_active: false,
         openclaw_version: crate::maintenance::get_openclaw_version(),
+        platform: Some("openclaw".to_string()),
+        chat_transport: Some("openclaw-gateway".to_string()),
+        api_base_url: None,
+        api_key: None,
+        supports_runs: Some(false),
+        supports_agent_discovery: Some(true),
     })
 }
 

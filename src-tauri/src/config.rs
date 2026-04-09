@@ -1999,6 +1999,7 @@ pub fn get_current_config(
         .map(|s| s.to_string());
 
     Ok(CurrentConfig {
+        platform: "openclaw".to_string(),
         provider,
         api_key,
         auth_method,
@@ -2188,6 +2189,7 @@ mod tests {
 
     fn compat_agent_config() -> crate::types::AgentConfig {
         crate::types::AgentConfig {
+            platform: Some("openclaw".to_string()),
             provider: "google".to_string(),
             api_key: "".to_string(),
             auth_method: Some("token".to_string()),
@@ -2665,6 +2667,7 @@ mod tests {
         let (home, _guard) = write_compat_fixture_tree().expect("fixture tree should be created");
 
         let local_config = crate::types::AgentConfig {
+            platform: Some("openclaw".to_string()),
             provider: "local".to_string(),
             api_key: "".to_string(),
             auth_method: Some("token".to_string()),

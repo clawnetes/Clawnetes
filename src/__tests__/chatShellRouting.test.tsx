@@ -278,6 +278,12 @@ async function openInstalledLocalChat(user: ReturnType<typeof userEvent.setup> =
   render(<App />);
 
   await waitFor(() => {
+    expect(screen.getByTestId("step-platform-select")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByTestId("btn-next"));
+
+  await waitFor(() => {
     expect(screen.getByTestId("step-environment")).toBeInTheDocument();
   });
 
@@ -364,6 +370,11 @@ async function openRemoteInstalledChat(user: ReturnType<typeof userEvent.setup>)
 
   await user.click(screen.getByText("Start Setup"));
   await waitFor(() => {
+    expect(screen.getByTestId("step-platform-select")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByTestId("btn-next"));
+  await waitFor(() => {
     expect(screen.getByTestId("step-environment")).toBeInTheDocument();
   });
 
@@ -440,11 +451,11 @@ describe("Installed-state chat shell", () => {
     });
   });
 
-  it("shows Target Environment on startup when local OpenClaw is already installed", async () => {
+  it("shows platform selection on startup when local OpenClaw is already installed", async () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("step-environment")).toBeInTheDocument();
+      expect(screen.getByTestId("step-platform-select")).toBeInTheDocument();
     });
 
     expect(screen.queryByTestId("chat-sidebar-brand")).not.toBeInTheDocument();

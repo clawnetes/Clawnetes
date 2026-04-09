@@ -1,10 +1,12 @@
 import type { AgentConfigData, AgentTypeId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "../types";
+import type { AgentPlatform } from "../platforms/types";
 import { applyModelProviderAuth } from "./providerAuth";
 import { getSkillIdSet, materializeToolPolicy, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./toolSelection";
 import { AVAILABLE_SKILLS } from "../presets/availableSkills";
 import { toConfigSandboxMode } from "./sandboxMode";
 
 export interface ConfigPayloadInput {
+  platform: AgentPlatform;
   provider: string;
   apiKey: string;
   authMethod: string;
@@ -86,6 +88,7 @@ Managed by Clawnetes.`;
   const normalizedTopLevelToolPolicy = normalizeToolPolicy(input.toolPolicy, availableSkillIds);
 
   return {
+    platform: input.platform,
     provider: input.provider,
     api_key: effectiveProviderAuths[input.provider]?.token || input.apiKey,
     auth_method: effectiveProviderAuths[input.provider]?.auth_method || input.authMethod,

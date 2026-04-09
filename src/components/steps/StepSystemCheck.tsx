@@ -6,7 +6,8 @@ interface StepSystemCheckProps {
 
 export default function StepSystemCheck({ installLocalNode }: StepSystemCheckProps) {
   const { state, dispatch } = useWizard();
-  const { targetEnvironment, remoteIp, checks, installingNode, nodeInstallError } = state;
+  const { targetEnvironment, remoteIp, platform, checks, installingNode, nodeInstallError } = state;
+  const platformLabel = platform === "hermes" ? "Hermes Agent" : "OpenClaw";
 
   const setStep = (v: number) => dispatch({ type: "SET_FIELD", field: "step", value: v });
 
@@ -16,7 +17,7 @@ export default function StepSystemCheck({ installLocalNode }: StepSystemCheckPro
       <p className="step-description">
         {targetEnvironment === "cloud"
           ? `Checking remote server (${remoteIp})...`
-          : "We need to make sure your system is ready for OpenClaw."}
+          : `We need to make sure your system is ready for ${platformLabel}.`}
       </p>
       <div className="check-item">
         <span className="check-status">{checks.node ? "✅" : "❌"}</span>
@@ -24,7 +25,7 @@ export default function StepSystemCheck({ installLocalNode }: StepSystemCheckPro
       </div>
       <div className="check-item">
         <span className="check-status">{checks.openclaw ? "✅" : "⏳"}</span>
-        OpenClaw {checks.openclaw ? "Installed" : "Ready to install"} {targetEnvironment === "cloud" && `(on ${remoteIp})`}
+        {platformLabel} {checks.openclaw ? "Installed" : "Ready to install"} {targetEnvironment === "cloud" && `(on ${remoteIp})`}
       </div>
       {!checks.node && (
         <div className="error" style={{ marginTop: "1rem", color: "var(--error)" }}>
