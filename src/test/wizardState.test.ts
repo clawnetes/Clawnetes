@@ -45,6 +45,36 @@ describe("wizardReducer", () => {
       });
       expect(result.selectedSkills).toEqual(skills);
     });
+
+    it("resets shared gateway fields to the OpenClaw defaults when switching back to openclaw", () => {
+      const contaminated = {
+        ...INITIAL_WIZARD_STATE,
+        platform: "hermes" as const,
+        gatewayPort: 9999,
+        gatewayBind: "0.0.0.0",
+        gatewayAuthMode: "password",
+      };
+
+      const result = wizardReducer(contaminated, {
+        type: "SET_FIELD", field: "platform", value: "openclaw",
+      });
+
+      expect(result.platform).toBe("openclaw");
+      expect(result.gatewayPort).toBe(18789);
+      expect(result.gatewayBind).toBe("loopback");
+      expect(result.gatewayAuthMode).toBe("token");
+    });
+
+    it("applies the Hermes gateway defaults when switching to hermes", () => {
+      const result = wizardReducer(INITIAL_WIZARD_STATE, {
+        type: "SET_FIELD", field: "platform", value: "hermes",
+      });
+
+      expect(result.platform).toBe("hermes");
+      expect(result.gatewayPort).toBe(8642);
+      expect(result.gatewayBind).toBe("127.0.0.1");
+      expect(result.gatewayAuthMode).toBe("token");
+    });
   });
 
   describe("BATCH_UPDATE", () => {
