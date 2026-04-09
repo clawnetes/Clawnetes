@@ -123,6 +123,8 @@ interface ChatShellProps {
   isConfigUpdating?: boolean;
   returnScrollSnapshot?: ChatTranscriptScrollSnapshot | null;
   onConsumeReturnScrollSnapshot?: () => void;
+  platform: AgentPlatform;
+  onSwitchPlatform: (platform: AgentPlatform) => void;
 }
 
 function readPrefersDark() {
@@ -502,6 +504,8 @@ function ChatShell({
   onRepair, onAudit, onUpgrade, onReconfigure, onUninstall, isConfigUpdating = false,
   returnScrollSnapshot = null,
   onConsumeReturnScrollSnapshot,
+  platform,
+  onSwitchPlatform,
 }: ChatShellProps) {
   const clientRef = useRef<ChatTransportClient | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -636,6 +640,7 @@ function ChatShell({
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId) || null;
   const activeThreadIsArchived = activeThread?.status === "archived";
+  const activeThreadTitle = activeThread?.title;
 
   const isSessionHidden = useCallback((agentId: string, sessionKey: string) => {
     if (!scopeKey || !sessionKey) {
@@ -2189,6 +2194,8 @@ function ChatShell({
     <ChatPanelContext.Provider value={panelContextValue}>
       <div className="chat-shell" data-theme={resolvedTheme}>
         <ChatSidebar
+          platform={platform}
+          onSwitchPlatform={onSwitchPlatform}
           environments={environments}
           activeEnvironmentId={activeEnvironmentId}
           onSwitchEnvironment={onSwitchEnvironment}
@@ -2254,10 +2261,12 @@ function ChatShell({
                 messages={messages}
                 activeAgentName={activeAgentName}
                 activeThreadIsArchived={activeThreadIsArchived}
-                activeThreadTitle={activeThread?.title}
+                activeThreadTitle={activeThreadTitle}
                 activeSessionKey={activeSessionKey}
                 onSetComposerValue={setComposerValue}
-              />
+                onClearError={() => setShellError("")}
+                platform={platform}
+                />
 
               <ChatComposer
                 composerValue={composerValue}

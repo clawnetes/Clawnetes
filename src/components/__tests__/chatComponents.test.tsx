@@ -19,35 +19,36 @@ import ChatHeader from "../chat/ChatHeader";
 import ChatSidebar from "../chat/ChatSidebar";
 import ChatTranscript from "../chat/ChatTranscript";
 import type { ChatMessage } from "../../lib/chatMessageFilters";
+import type { AgentPlatform } from "../../platforms/types";
 
 describe("ChatMessageBody", () => {
   it("renders plain text for user messages", () => {
-    const message: ChatMessage = { id: "1", role: "user", text: "Hello world" };
+    const message: ChatMessage = { platform: "openclaw", id: "1", role: "user", text: "Hello world" };
     render(<ChatMessageBody message={message} />);
     expect(screen.getByText("Hello world")).toBeInTheDocument();
   });
 
   it("renders markdown for assistant messages", () => {
-    const message: ChatMessage = { id: "2", role: "assistant", text: "**bold text**" };
+    const message: ChatMessage = { platform: "openclaw", id: "2", role: "assistant", text: "**bold text**" };
     render(<ChatMessageBody message={message} />);
     expect(screen.getByText("bold text")).toBeInTheDocument();
     expect(screen.getByText("bold text").tagName).toBe("STRONG");
   });
 
   it("renders Thinking... for pending messages with no text", () => {
-    const message: ChatMessage = { id: "3", role: "assistant", text: "", pending: true };
+    const message: ChatMessage = { platform: "openclaw", id: "3", role: "assistant", text: "", pending: true };
     render(<ChatMessageBody message={message} />);
     expect(screen.getByText("Thinking...")).toBeInTheDocument();
   });
 
   it("renders code blocks in assistant messages", () => {
-    const message: ChatMessage = { id: "4", role: "assistant", text: "```js\nconst x = 1;\n```" };
+    const message: ChatMessage = { platform: "openclaw", id: "4", role: "assistant", text: "```js\nconst x = 1;\n```" };
     render(<ChatMessageBody message={message} />);
     expect(screen.getByText("const x = 1;")).toBeInTheDocument();
   });
 
   it("autolinks bare urls in assistant messages", () => {
-    const message: ChatMessage = { id: "5", role: "assistant", text: "Use https://openclaw.ai/docs for details." };
+    const message: ChatMessage = { platform: "openclaw", id: "5", role: "assistant", text: "Use https://openclaw.ai/docs for details." };
     render(<ChatMessageBody message={message} />);
     expect(screen.getByRole("link", { name: "https://openclaw.ai/docs" })).toHaveAttribute("href", "https://openclaw.ai/docs");
   });
@@ -55,7 +56,7 @@ describe("ChatMessageBody", () => {
   it("opens markdown links with the external opener", async () => {
     openExternalMock.mockReset();
     const user = userEvent.setup();
-    const message: ChatMessage = { id: "6", role: "assistant", text: "[OpenClaw](https://openclaw.ai)" };
+    const message: ChatMessage = { platform: "openclaw", id: "6", role: "assistant", text: "[OpenClaw](https://openclaw.ai)" };
     render(<ChatMessageBody message={message} />);
 
     await user.click(screen.getByRole("link", { name: "OpenClaw" }));
@@ -64,7 +65,7 @@ describe("ChatMessageBody", () => {
   });
 
   it("renders headings and blockquotes in assistant messages", () => {
-    const message: ChatMessage = { id: "7", role: "assistant", text: "## Heading\n> Focus on the final answer." };
+    const message: ChatMessage = { platform: "openclaw", id: "7", role: "assistant", text: "## Heading\n> Focus on the final answer." };
     render(<ChatMessageBody message={message} />);
     expect(screen.getByRole("heading", { name: "Heading", level: 2 })).toBeInTheDocument();
     expect(screen.getByText("Focus on the final answer.").closest("blockquote")).not.toBeNull();
@@ -166,7 +167,7 @@ describe("ChatComposer", () => {
 
 describe("ChatHeader", () => {
   const baseProps = {
-    agents: [{ id: "main", name: "TestBot", emoji: "🤖" }],
+    agents: [{ platform: "openclaw", id: "main", name: "TestBot", emoji: "🤖" }],
     activeAgentId: "main",
     activeAgentName: "TestBot",
     activeSessionKey: "main",
@@ -197,8 +198,8 @@ describe("ChatHeader", () => {
 
   it("renders dropdown when multiple agents", () => {
     const agents = [
-      { id: "main", name: "Bot A" },
-      { id: "sub", name: "Bot B" },
+      { platform: "openclaw", id: "main", name: "Bot A" },
+      { platform: "openclaw", id: "sub", name: "Bot B" },
     ];
     render(<ChatHeader {...baseProps} agents={agents} />);
     const button = screen.getByTestId("chat-active-agent");
@@ -208,8 +209,8 @@ describe("ChatHeader", () => {
   it("lists all agents and + Add Agent in dropdown menu", async () => {
     const user = userEvent.setup();
     const agents = [
-      { id: "main", name: "Bot A", emoji: "🤖" },
-      { id: "sub", name: "Bot B", emoji: "💻" },
+      { platform: "openclaw", id: "main", name: "Bot A", emoji: "🤖" },
+      { platform: "openclaw", id: "sub", name: "Bot B", emoji: "💻" },
     ];
     render(<ChatHeader {...baseProps} agents={agents} onAddAgent={vi.fn()} />);
     await user.click(screen.getByTestId("chat-active-agent"));
@@ -242,7 +243,7 @@ describe("ChatHeader", () => {
             token: "anthropic-test-key",
             profile_key: null,
             profile: null,
-            oauth_provider_id: null,
+            oauth_provider_platform: "openclaw", id: null,
           },
         }}
       />,
@@ -273,8 +274,8 @@ describe("ChatHeader", () => {
       <ChatHeader
         {...baseProps}
         agents={[
-          { id: "main", name: "TestBot", emoji: "🤖" },
-          { id: "ops", name: "Ops", emoji: "🛠️" },
+          { platform: "openclaw", id: "main", name: "TestBot", emoji: "🤖" },
+          { platform: "openclaw", id: "ops", name: "Ops", emoji: "🛠️" },
         ]}
         activeAgentId="ops"
         activeAgentName="Ops"
@@ -304,8 +305,8 @@ describe("ChatHeader", () => {
       <ChatHeader
         {...baseProps}
         agents={[
-          { id: "main", name: "TestBot", emoji: "🤖" },
-          { id: "ops", name: "Ops", emoji: "🛠️" },
+          { platform: "openclaw", id: "main", name: "TestBot", emoji: "🤖" },
+          { platform: "openclaw", id: "ops", name: "Ops", emoji: "🛠️" },
         ]}
         activeAgentId="ops"
         activeAgentName="Ops"
@@ -385,8 +386,8 @@ describe("ChatTranscript", () => {
 
   it("renders message bubbles", () => {
     const messages: ChatMessage[] = [
-      { id: "1", role: "user", text: "Hello" },
-      { id: "2", role: "assistant", text: "Hi there" },
+      { platform: "openclaw", id: "1", role: "user", text: "Hello" },
+      { platform: "openclaw", id: "2", role: "assistant", text: "Hi there" },
     ];
     render(<ChatTranscript {...baseProps} messages={messages} />);
     expect(screen.getByText("Hello")).toBeInTheDocument();
@@ -396,6 +397,8 @@ describe("ChatTranscript", () => {
 
 describe("ChatSidebar", () => {
   const baseProps = {
+    platform: "openclaw" as AgentPlatform,
+    onSwitchPlatform: vi.fn(),
     canCreateChat: true,
     onNewChat: vi.fn(),
     liveThreads: [],
@@ -406,7 +409,6 @@ describe("ChatSidebar", () => {
     themePreference: "dark" as const,
     onThemeChange: vi.fn(),
     onOpenConfigure: vi.fn(),
-    onOpenPanel: vi.fn(),
     connectionLabel: "Connected",
   };
 
@@ -429,9 +431,9 @@ describe("ChatSidebar", () => {
       <ChatSidebar
         {...baseProps}
         environments={[
-          { id: "local", name: "Local", type: "local", addedAt: 1, lastUsedAt: 3 },
-          { id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
-          { id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
+          { platform: "openclaw", id: "local", name: "Local", type: "local", addedAt: 1, lastUsedAt: 3 },
+          { platform: "openclaw", id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
+          { platform: "openclaw", id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
         ]}
         activeEnvironmentId="active"
         onSwitchEnvironment={vi.fn()}
@@ -454,8 +456,8 @@ describe("ChatSidebar", () => {
       <ChatSidebar
         {...baseProps}
         environments={[
-          { id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
-          { id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
+          { platform: "openclaw", id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
+          { platform: "openclaw", id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
         ]}
         activeEnvironmentId="active"
         onSwitchEnvironment={onSwitchEnvironment}
@@ -481,8 +483,8 @@ describe("ChatSidebar", () => {
       <ChatSidebar
         {...baseProps}
         environments={[
-          { id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
-          { id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
+          { platform: "openclaw", id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
+          { platform: "openclaw", id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
         ]}
         activeEnvironmentId="active"
         onSwitchEnvironment={vi.fn()}

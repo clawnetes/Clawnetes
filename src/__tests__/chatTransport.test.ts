@@ -129,7 +129,7 @@ describe("HermesChatTransport", () => {
       { role: "assistant", text: "Hello from Hermes" },
     ]);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:8642/v1/health",
+      "http://127.0.0.1:8642/health",
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: "Bearer hermes-key",

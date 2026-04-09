@@ -2099,6 +2099,11 @@ Managed by Clawnetes.`,
             onOpenConfigure={openCommandCenter}
             returnScrollSnapshot={pendingChatReturnScrollSnapshot}
             onConsumeReturnScrollSnapshot={() => setPendingChatReturnScrollSnapshot(null)}
+            platform={platform}
+            onSwitchPlatform={(p) => {
+              dispatch({ type: "SET_FIELD", field: "platform", value: p });
+              setChatBootstrap(null);
+            }}
             environments={storedEnvironments}
             activeEnvironmentId={activeStoredEnvironmentId}
             onSwitchEnvironment={handleSwitchEnvironment}

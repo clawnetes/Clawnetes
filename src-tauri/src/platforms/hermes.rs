@@ -105,6 +105,7 @@ fn configure_with<E: CommandExecutor>(executor: &E, config: &AgentConfig) -> Res
 
     set_config_value(executor, &home, "model", &config.model)?;
     set_config_value(executor, &home, "API_SERVER_ENABLED", "true")?;
+    set_config_value(executor, &home, "API_SERVER_CORS_ORIGINS", "*")?;
     set_config_value(
         executor,
         &home,
@@ -171,9 +172,16 @@ fn get_config_with<E: CommandExecutor>(executor: &E) -> Result<CurrentConfig, Cl
         .cloned()
         .unwrap_or_default();
 
-    let gateway_port = yaml_u64(api_server_extra.and_then(|m| m.get(YamlValue::String("port".to_string()))))
-        .unwrap_or(DEFAULT_API_PORT as u64) as u16;
-    let gateway_bind = yaml_string(api_server_extra.and_then(|m| m.get(YamlValue::String("host".to_string()))))
+    let gateway_port = env
+        .get("API_SERVER_PORT")
+        .and_then(|s| s.parse::<u16>().ok())
+        .or_else(|| yaml_u64(root.get(YamlValue::String("API_SERVER_PORT".to_string()))).map(|v| v as u16))
+        .unwrap_or(DEFAULT_API_PORT as u16);
+
+    let gateway_bind = env
+        .get("API_SERVER_HOST")
+        .cloned()
+        .or_else(|| yaml_string(root.get(YamlValue::String("API_SERVER_HOST".to_string()))))
         .unwrap_or_else(|| DEFAULT_API_HOST.to_string());
 
     let whatsapp_enabled = env
@@ -230,12 +238,22 @@ fn get_config_with<E: CommandExecutor>(executor: &E) -> Result<CurrentConfig, Cl
     })
 }
 
+use std::net::TcpStream;
+
 fn prepare_chat_bootstrap_with<E: CommandExecutor>(executor: &E) -> Result<GatewayChatBootstrap, ClawError> {
     let home = hermes_home(executor)?;
     let config = get_config_with(executor)?;
     let env_str = hermes_run(executor, &home, "cat \"$HERMES_HOME/.env\" 2>/dev/null || true")?;
     let env = parse_dotenv(&env_str);
     let api_key = env.get("API_SERVER_KEY").cloned().unwrap_or_else(|| "clawnetes-hermes".to_string());
+
+    // Automatically start the Hermes API service if it's not listening on the local port.
+    // For remote environments, we assume the SSH tunnel will proxy to the same port.
+    if TcpStream::connect(("127.0.0.1", config.gateway_port)).is_err() {
+        let _ = start_gateway_with(executor);
+        // Give it a moment to boot
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
 
     Ok(GatewayChatBootstrap {
         ws_url: String::new(),
@@ -440,7 +458,7 @@ mod tests {
         let executor = FakeExecutor {
             success_commands: std::collections::HashSet::new(),
             files: HashMap::from([
-                (yaml_cmd, "model: anthropic/claude-sonnet-4\nplatforms:\n  api_server:\n    extra:\n      port: 9999\n      host: 0.0.0.0\n".to_string()),
+                (yaml_cmd, "model: anthropic/claude-sonnet-4\nAPI_SERVER_PORT: 9999\nAPI_SERVER_HOST: 0.0.0.0\n".to_string()),
                 (env_cmd, "ANTHROPIC_API_KEY=sk-ant\nTELEGRAM_BOT_TOKEN=bot\nAPI_SERVER_KEY=secret\n".to_string()),
             ]),
         };

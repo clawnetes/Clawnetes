@@ -23,13 +23,13 @@ describe("SettingsPanel", () => {
 
   it("renders environment section with correct label", () => {
     render(<SettingsPanel {...DEFAULT_PROPS} />);
-    expect(screen.getByText("Local Gateway")).toBeInTheDocument();
+    expect(screen.getByText("Local Gateway (OpenClaw)")).toBeInTheDocument();
     expect(screen.getByText("Active")).toBeInTheDocument();
   });
 
   it("shows Remote Gateway for cloud environment", () => {
     render(<SettingsPanel {...DEFAULT_PROPS} targetEnvironment="cloud" />);
-    expect(screen.getByText("Remote Gateway")).toBeInTheDocument();
+    expect(screen.getByText("Remote Gateway (OpenClaw)")).toBeInTheDocument();
   });
 
   it("renders gateway settings", () => {

@@ -61,7 +61,7 @@ export class HermesChatTransport {
 
   async connect() {
     this.emitState("connecting");
-    await this.fetchJson("/health");
+    await this.fetchJson("/health", { bypassV1Prefix: true });
     this.onHealth?.(true);
     this.emitState("connected");
     this.onReady?.({ platform: "hermes" });
@@ -280,7 +280,7 @@ export class HermesChatTransport {
   private handleRunEvent(event: HermesRunStreamEvent, sessionKey: string, userMessage: string) {
     if (event.event === "message.delta" && typeof event.delta === "string") {
       this.onAgentEvent?.({
-        runId: event.run_id,
+        runId: event.run_id || "",
         stream: "assistant",
         data: { text: event.delta },
       });
@@ -297,7 +297,7 @@ export class HermesChatTransport {
       session.updatedAt = Date.now();
       session.derivedTitle = extractSessionTitle(session.messages);
       this.onChatEvent?.({
-        runId: event.run_id,
+        runId: event.run_id || "",
         sessionKey,
         state: "final",
       });
@@ -307,7 +307,7 @@ export class HermesChatTransport {
 
     if (event.event === "run.failed") {
       this.onChatEvent?.({
-        runId: event.run_id,
+        runId: event.run_id || "",
         sessionKey,
         errorMessage: event.error || "Hermes run failed.",
       });
@@ -336,17 +336,33 @@ export class HermesChatTransport {
     return typeof last?.text === "string" ? last.text : undefined;
   }
 
-  private async fetchJson<T>(path: string, init?: RequestInit) {
-    const response = await fetch(`${this.apiBaseUrl}${path}`, {
-      ...init,
-      headers: {
-        ...this.buildHeaders(init?.headers),
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`Hermes API request failed: ${response.status}`);
+  private async fetchJson<T>(path: string, init?: RequestInit & { bypassV1Prefix?: boolean }) {
+    const doFetch = async (url: string) => {
+      const response = await fetch(url, {
+        ...init,
+        headers: {
+          ...this.buildHeaders(init?.headers),
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Hermes API request failed: ${response.status} at ${url}`);
+      }
+      return (await response.json()) as T;
+    };
+
+    let baseUrl = this.apiBaseUrl;
+    if (init?.bypassV1Prefix && baseUrl.endsWith("/v1")) {
+      baseUrl = baseUrl.slice(0, -3);
     }
-    return await response.json() as T;
+
+    try {
+      return await doFetch(`${baseUrl}${path}`);
+    } catch (e: any) {
+      if (e.message?.includes("Failed to fetch") || e.message?.includes("ECONNREFUSED")) {
+         return await doFetch(`${baseUrl}${path}/`);
+      }
+      throw e;
+    }
   }
 
   private buildHeaders(extra?: HeadersInit) {

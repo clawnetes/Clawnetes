@@ -73,6 +73,7 @@ interface RightPanelProps {
   onUpgrade?: () => void;
   onReconfigure?: () => void;
   onUninstall?: () => void;
+  platform?: AgentPlatform;
 }
 
 function RightPanel({
@@ -176,6 +177,7 @@ function RightPanel({
       case "advanced":
         return (
           <SettingsPanel
+            platform={platform}
             targetEnvironment={targetEnvironment}
             remoteSummary={remoteSummary}
             gatewayPort={gatewayPort}

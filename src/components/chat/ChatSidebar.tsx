@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChatThemePreference, StoredChatThread } from "../../lib/chatShellStorage";
 import type { StoredEnvironment } from "../../lib/environmentStorage";
+import type { AgentPlatform } from "../../platforms/types";
 import ChatIcon, { ChatActionButton } from "./ChatIcon";
 import EmptyState from "../ui/EmptyState";
 import ConfirmDialog from "../ui/ConfirmDialog";
@@ -8,6 +9,8 @@ import ConfirmDialog from "../ui/ConfirmDialog";
 export type { StoredEnvironment };
 
 interface ChatSidebarProps {
+  platform: AgentPlatform;
+  onSwitchPlatform: (platform: AgentPlatform) => void;
   environments?: StoredEnvironment[];
   activeEnvironmentId?: string | null;
   onSwitchEnvironment?: (envId: string) => void;
@@ -28,6 +31,8 @@ interface ChatSidebarProps {
 }
 
 export default function ChatSidebar({
+  platform,
+  onSwitchPlatform,
   environments,
   activeEnvironmentId,
   onSwitchEnvironment,
@@ -46,9 +51,11 @@ export default function ChatSidebar({
   onOpenPanel,
   connectionLabel,
 }: ChatSidebarProps) {
+  const [platformDropdownOpen, setPlatformDropdownOpen] = useState(false);
   const [envDropdownOpen, setEnvDropdownOpen] = useState(false);
   const [pendingRemoveEnvironment, setPendingRemoveEnvironment] = useState<StoredEnvironment | null>(null);
   const [pendingDeleteThread, setPendingDeleteThread] = useState<StoredChatThread | null>(null);
+  const platformDropdownRef = useRef<HTMLDivElement>(null);
   const envDropdownRef = useRef<HTMLDivElement>(null);
 
   const handleCancelRemoveEnvironment = () => {
@@ -76,36 +83,88 @@ export default function ChatSidebar({
   };
 
   useEffect(() => {
-    if (!envDropdownOpen) return;
     function handleMouseDown(e: MouseEvent) {
-      if (envDropdownRef.current && !envDropdownRef.current.contains(e.target as Node)) {
+      if (platformDropdownOpen && platformDropdownRef.current && !platformDropdownRef.current.contains(e.target as Node)) {
+        setPlatformDropdownOpen(false);
+      }
+      if (envDropdownOpen && envDropdownRef.current && !envDropdownRef.current.contains(e.target as Node)) {
         setEnvDropdownOpen(false);
       }
     }
     document.addEventListener("mousedown", handleMouseDown);
     return () => document.removeEventListener("mousedown", handleMouseDown);
-  }, [envDropdownOpen]);
+  }, [platformDropdownOpen, envDropdownOpen]);
+
+  const platformLabel = platform === "hermes" ? "Hermes Agent" : "OpenClaw";
+  const filteredEnvironments = environments?.filter((e) => e.platform === platform) || [];
 
   return (
     <aside className="chat-sidebar">
       <div className="chat-sidebar-top">
-        {environments && environments.length >= 1 && onSwitchEnvironment && (
+        <div className="chat-env-switcher" style={{ marginBottom: "0.5rem" }}>
+          <p className="chat-sidebar-kicker">Agent Platform</p>
+          <div className="chat-env-dropdown" ref={platformDropdownRef} data-testid="chat-platform-dropdown">
+            <button
+              type="button"
+              className="chat-env-trigger"
+              onClick={() => {
+                setPlatformDropdownOpen(!platformDropdownOpen);
+                setEnvDropdownOpen(false);
+              }}
+            >
+              <span>{platformLabel}</span>
+              <svg className={`dropdown-chevron ${platformDropdownOpen ? "rotated" : ""}`} width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            {platformDropdownOpen && (
+              <div className="chat-env-panel">
+                {(["openclaw", "hermes"] as AgentPlatform[]).map((p) => (
+                  <div key={p} className="chat-env-row">
+                    <button
+                      type="button"
+                      className={`chat-env-option ${platform === p ? "active" : ""}`}
+                      onClick={() => {
+                        if (platform !== p) {
+                          onSwitchPlatform(p);
+                        }
+                        setPlatformDropdownOpen(false);
+                      }}
+                    >
+                      <span>{p === "hermes" ? "Hermes Agent" : "OpenClaw"}</span>
+                      {platform === p && (
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                          <path d="M3 7L6 10L11 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {onSwitchEnvironment && (
           <div className="chat-env-switcher">
             <p className="chat-sidebar-kicker">Environment</p>
             <div className="chat-env-dropdown" ref={envDropdownRef} data-testid="chat-env-dropdown">
               <button
                 type="button"
                 className="chat-env-trigger"
-                onClick={() => setEnvDropdownOpen(!envDropdownOpen)}
+                onClick={() => {
+                  setEnvDropdownOpen(!envDropdownOpen);
+                  setPlatformDropdownOpen(false);
+                }}
               >
-                <span>{environments.find((e) => e.id === activeEnvironmentId)?.name || "Select..."}</span>
+                <span>{filteredEnvironments.find((e) => e.id === activeEnvironmentId)?.name || "Select..."}</span>
                 <svg className={`dropdown-chevron ${envDropdownOpen ? "rotated" : ""}`} width="12" height="12" viewBox="0 0 12 12" fill="none">
                   <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
               {envDropdownOpen && (
                 <div className="chat-env-panel">
-                  {[...environments]
+                  {[...filteredEnvironments]
                     .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
                     .map((env) => {
                       const removable = Boolean(
@@ -171,7 +230,7 @@ export default function ChatSidebar({
             </div>
           </div>
         )}
-        <div className="chat-sidebar-brand">
+        <div className="chat-sidebar-brand" style={{ marginTop: "1rem" }}>
           <h1 data-testid="chat-sidebar-brand">Clawnetes</h1>
         </div>
 

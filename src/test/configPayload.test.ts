@@ -5,6 +5,7 @@ import { DEFAULT_TOOL_POLICY } from "../utils/toolSelection";
 
 function createDefaultInput(overrides: Partial<ConfigPayloadInput> = {}): ConfigPayloadInput {
   return {
+    platform: "openclaw",
     provider: "anthropic",
     apiKey: "sk-ant-test-key",
     authMethod: "token",
