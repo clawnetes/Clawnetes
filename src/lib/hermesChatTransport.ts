@@ -72,7 +72,7 @@ export class HermesChatTransport {
 
     const storedThreads = loadStoredThreads(scopeKey);
     for (const thread of storedThreads) {
-      if (thread.sessionKey) {
+      if (thread.sessionKey && thread.status !== "archived") {
         this.sessions.set(thread.sessionKey, {
           key: thread.sessionKey,
           sessionId: thread.sessionId || thread.sessionKey,
