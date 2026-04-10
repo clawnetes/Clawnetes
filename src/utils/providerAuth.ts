@@ -219,13 +219,14 @@ export function buildReferencedProviders(input: {
   return getReferencedProviders(models.filter(Boolean));
 }
 
-export function getProviderAuthOptions(provider: string): Array<{ value: string; label: string; description: string }> {
-  const options = [...getTokenAuthOptions(provider)];
+export function getProviderAuthOptions(provider: string): Array<{ value: string; label: string; description: string; oauthProviderId?: string }> {
+  const options: Array<{ value: string; label: string; description: string; oauthProviderId?: string }> = [...getTokenAuthOptions(provider)];
 
   for (const oauthOption of OAUTH_METHODS_BY_PROVIDER[provider] || []) {
     options.push({
       value: oauthOption.value,
       label: oauthOption.label,
+      oauthProviderId: oauthOption.oauthProviderId,
       description: provider === "google"
         ? "Unofficial Google Code Assist integration. Some users have reported Google account restrictions after using third-party Gemini CLI clients; if requests fail, set GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_PROJECT_ID, or use the Gemini API key path instead."
         : "Launch the provider auth flow in your browser and import the resulting profile.",

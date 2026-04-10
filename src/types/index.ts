@@ -1,5 +1,6 @@
 // Shared TypeScript interfaces for Clawnetes
 import type { AgentPlatform, ChatTransportKind } from "../platforms/types";
+export type { AgentPlatform, ChatTransportKind };
 
 export interface PersonaTemplate {
   name: string;

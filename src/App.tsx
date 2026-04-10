@@ -72,7 +72,7 @@ import ConfigureDrawer from "./components/chat/ConfigureDrawer";
 import { TEXT_ENTRY_PROPS } from "./components/ui/textEntryProps";
 import { HERMES_SUPPORTED_MODEL_PROVIDERS } from "./platforms/hermes";
 
-const HERMES_SUPPORTED_OAUTH_PROVIDER_IDS = new Set(["openai-codex"]);
+const HERMES_SUPPORTED_OAUTH_PROVIDER_IDS = new Set(["openai-codex", "google-gemini-cli"]);
 
 function App() {
   const [state, dispatch] = useWizardState();

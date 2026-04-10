@@ -1,5 +1,5 @@
 import { memo } from "react";
-import type { ProviderAuthConfig, ToolPolicy } from "../../types";
+import type { AgentPlatform, ProviderAuthConfig, ToolPolicy } from "../../types";
 import { useChatPanel, type PanelView } from "../../context/ChatPanelContext";
 import TabBar from "../ui/TabBar";
 import ModelSwitcherPanel from "./ModelSwitcherPanel";
