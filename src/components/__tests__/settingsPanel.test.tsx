@@ -129,4 +129,55 @@ describe("SettingsPanel", () => {
     const dashes = screen.getAllByText("—");
     expect(dashes.length).toBeGreaterThanOrEqual(1);
   });
+
+  it("renders Hermes-native settings sections without OpenClaw session remnants", () => {
+    render(
+      <SettingsPanel
+        {...DEFAULT_PROPS}
+        platform="hermes"
+        hermesModelBaseUrl="https://api.openai.com/v1"
+        hermesApiServerEnabled
+        hermesApiServerKey="secret"
+        hermesApiServerCorsOrigins="http://localhost:1420"
+        hermesRawConfigYaml={"model:\n  provider: openai"}
+        hermesRawEnv={"OPENAI_API_KEY=sk-test"}
+      />,
+    );
+
+    expect(screen.getByText("Provider & Model")).toBeInTheDocument();
+    expect(screen.getByText("API Server")).toBeInTheDocument();
+    expect(screen.getByText("Raw Config Files")).toBeInTheDocument();
+    expect(screen.getByLabelText("Model Base URL")).toHaveValue("https://api.openai.com/v1");
+    expect(screen.getByLabelText("API Server Key")).toHaveValue("secret");
+    expect(screen.getByLabelText("Raw config.yaml")).toHaveValue("model:\n  provider: openai");
+    expect(screen.getByLabelText("Raw .env")).toHaveValue("OPENAI_API_KEY=sk-test");
+    expect(screen.queryByText("Session")).not.toBeInTheDocument();
+    expect(screen.queryByText("Auth Mode")).not.toBeInTheDocument();
+  });
+
+  it("resyncs Hermes draft fields when the active environment config changes", () => {
+    const { rerender } = render(
+      <SettingsPanel
+        {...DEFAULT_PROPS}
+        platform="hermes"
+        hermesModelBaseUrl="https://first.example/v1"
+        hermesApiServerKey="first-secret"
+      />,
+    );
+
+    expect(screen.getByLabelText("Model Base URL")).toHaveValue("https://first.example/v1");
+    expect(screen.getByLabelText("API Server Key")).toHaveValue("first-secret");
+
+    rerender(
+      <SettingsPanel
+        {...DEFAULT_PROPS}
+        platform="hermes"
+        hermesModelBaseUrl="https://second.example/v1"
+        hermesApiServerKey="second-secret"
+      />,
+    );
+
+    expect(screen.getByLabelText("Model Base URL")).toHaveValue("https://second.example/v1");
+    expect(screen.getByLabelText("API Server Key")).toHaveValue("second-secret");
+  });
 });

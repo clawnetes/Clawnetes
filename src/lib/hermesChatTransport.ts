@@ -24,6 +24,10 @@ type HermesSessionState = {
   messages: Array<Record<string, unknown>>;
 };
 
+type HermesModelsResponse = {
+  data?: Array<{ id?: string; owned_by?: string }>;
+};
+
 function parseJsonSafely<T>(value: string): T | null {
   try {
     return JSON.parse(value) as T;
@@ -43,7 +47,8 @@ export class HermesChatTransport {
   private readonly apiKey: string;
   private readonly sessions = new Map<string, HermesSessionState>();
   private readonly activeRuns = new Map<string, { controller: AbortController; sessionKey: string; userMessage: string }>();
-  private discoveredAgents: GatewayChatAgent[] | null = null;
+  private static readonly AGENT_ID = "hermes-agent";
+  private static readonly AGENT_NAME = "hermes-agent";
 
   onStateChange?: (state: GatewayConnectState) => void;
   onHealth?: (ok: boolean) => void;
@@ -56,7 +61,7 @@ export class HermesChatTransport {
   constructor(private readonly bootstrap: GatewayChatBootstrap) {
     this.apiBaseUrl = (bootstrap.apiBaseUrl || "").replace(/\/+$/, "");
     this.apiKey = bootstrap.apiKey || bootstrap.authToken || "";
-    this.ensureSession("main");
+    this.ensureSession(HermesChatTransport.AGENT_ID);
   }
 
   async connect() {
@@ -76,21 +81,26 @@ export class HermesChatTransport {
   }
 
   async listAgents(): Promise<{ defaultId?: string; agents: GatewayChatAgent[] }> {
-    if (!this.discoveredAgents) {
-      try {
-        const payload = await this.fetchJson<{ data?: Array<{ id?: string }> }>("/models");
-        const modelIds = Array.isArray(payload.data)
-          ? payload.data.map((entry) => entry.id).filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-          : [];
-        this.discoveredAgents = (modelIds.length > 0 ? modelIds : ["hermes-agent"]).map((id) => ({ id, name: id }));
-      } catch {
-        this.discoveredAgents = [{ id: "hermes-agent", name: "hermes-agent" }];
+    try {
+      const models = await this.fetchJson<HermesModelsResponse>("/models");
+      const agents = (models.data || [])
+        .map((model) => model.id?.trim())
+        .filter((id): id is string => Boolean(id))
+        .map((id) => ({ id, name: id }));
+
+      if (agents.length > 0) {
+        return {
+          defaultId: agents[0].id,
+          agents,
+        };
       }
+    } catch {
+      // Older Hermes builds may not expose /models yet; keep a stable fallback.
     }
 
     return {
-      defaultId: this.discoveredAgents[0]?.id,
-      agents: this.discoveredAgents,
+      defaultId: HermesChatTransport.AGENT_ID,
+      agents: [{ id: HermesChatTransport.AGENT_ID, name: HermesChatTransport.AGENT_NAME }],
     };
   }
 
@@ -306,10 +316,11 @@ export class HermesChatTransport {
     }
 
     if (event.event === "run.failed") {
+      const errorMessage = typeof event.error === "string" ? event.error : "Hermes run failed.";
       this.onChatEvent?.({
         runId: event.run_id || "",
         sessionKey,
-        errorMessage: event.error || "Hermes run failed.",
+        errorMessage,
       });
     }
   }

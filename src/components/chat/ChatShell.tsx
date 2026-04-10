@@ -79,9 +79,9 @@ interface ChatShellProps {
   lmstudioBaseUrl?: string;
   agentSkills?: string[];
   serviceKeys?: Record<string, string>;
-  onModelChange?: (model: string) => void;
-  onFallbacksChange?: (models: string[]) => void;
-  onLocalBaseUrlChange?: (provider: "lmstudio" | "local", baseUrl: string) => void;
+  onModelChange?: (model: string) => void | Promise<void>;
+  onFallbacksChange?: (models: string[]) => void | Promise<void>;
+  onLocalBaseUrlChange?: (provider: "lmstudio" | "local", baseUrl: string) => void | Promise<void>;
   providerAuths?: Record<string, ProviderAuthConfig>;
   onProviderAuthChange?: (provider: string, auth: ProviderAuthConfig) => void | Promise<void>;
   onStartOAuth?: (provider: string, authMethod: string, oauthProviderId: string) => Promise<ProviderAuthConfig>;
@@ -108,9 +108,25 @@ interface ChatShellProps {
   gatewayAuthMode?: string;
   heartbeatMode?: string;
   sandboxMode?: string;
-  toolPolicy?: ToolPolicy;
+  toolPolicy?: ToolPolicy | null;
   toolsSaving?: boolean;
   idleTimeoutMs?: number;
+
+  hermesMaxTurns?: number;
+  hermesReasoningEffort?: string;
+  hermesPersonality?: string;
+  hermesTerminalBackend?: string;
+  hermesMemoryEnabled?: boolean;
+  hermesVerbose?: boolean;
+  hermesSmartRouting?: boolean;
+  hermesModelBaseUrl?: string;
+  hermesApiServerEnabled?: boolean;
+  hermesApiServerKey?: string;
+  hermesApiServerCorsOrigins?: string;
+  hermesRawConfigYaml?: string;
+  hermesRawEnv?: string;
+  onSaveHermesSettings?: (updates: Record<string, any>) => void;
+
   onSaveToolPolicy?: (policy: ToolPolicy) => void;
   onSaveAdvancedSettings?: (heartbeatMode: string, idleTimeoutMs: number, sandboxMode: string) => void;
   settingsBusy?: boolean;
@@ -327,6 +343,14 @@ function runHasVisibleAssistantMessage(messages: ChatMessage[], runId?: string |
   ));
 }
 
+function normalizeThreadsForBootstrap(
+  bootstrap: GatewayChatBootstrap | null,
+  threads: StoredChatThread[],
+) {
+  void bootstrap;
+  return threads;
+}
+
 function finalizeRunMessages(messages: ChatMessage[], runId?: string | null) {
   if (!runId) {
     return messages;
@@ -501,6 +525,8 @@ function ChatShell({
   onIdentitySave, identitySaving,
   targetEnvironment, remoteSummary, gatewayPort, gatewayBind, gatewayAuthMode,
   heartbeatMode, sandboxMode, toolPolicy, toolsSaving, idleTimeoutMs, onSaveToolPolicy, onSaveAdvancedSettings, settingsBusy, maintenanceStatus,
+  hermesMaxTurns, hermesReasoningEffort, hermesPersonality, hermesTerminalBackend, hermesMemoryEnabled, hermesVerbose, hermesSmartRouting, onSaveHermesSettings,
+  hermesModelBaseUrl, hermesApiServerEnabled, hermesApiServerKey, hermesApiServerCorsOrigins, hermesRawConfigYaml, hermesRawEnv,
   onRepair, onAudit, onUpgrade, onReconfigure, onUninstall, isConfigUpdating = false,
   returnScrollSnapshot = null,
   onConsumeReturnScrollSnapshot,
@@ -541,6 +567,8 @@ function ChatShell({
   const deferredSessionRefreshRef = useRef<GatewaySessionsChangedPayload | null>(null);
   const pendingSessionListRefreshRef = useRef(false);
   const configUpdatingRef = useRef(isConfigUpdating);
+  const pendingThreadsScopeHydrationRef = useRef<string | null>(null);
+  const hydratedThreadsScopeRef = useRef("");
 
   const [connectionLabel, setConnectionLabel] = useState("Connecting to gateway...");
   const [connectionState, setConnectionState] = useState<GatewayConnectState["status"]>("connecting");
@@ -962,20 +990,37 @@ function ChatShell({
 
   useEffect(() => {
     if (!scopeKey) {
+      pendingThreadsScopeHydrationRef.current = null;
+      hydratedThreadsScopeRef.current = "";
       setThreads([]);
+      setLiveSessions([]);
+      setMessages([]);
+      setReplyRecoveryPending(false);
+      activeRunIdRef.current = "";
+      setActiveRunId("");
+      setActiveSessionKey("");
       setActiveThreadId("");
       return;
     }
-    setThreads(loadStoredThreads(scopeKey));
-  }, [scopeKey]);
+    pendingThreadsScopeHydrationRef.current = scopeKey;
+    setThreads(normalizeThreadsForBootstrap(bootstrap, loadStoredThreads(scopeKey)));
+  }, [bootstrap, scopeKey]);
 
   useEffect(() => {
     if (!scopeKey) return;
+    if (pendingThreadsScopeHydrationRef.current === scopeKey) {
+      hydratedThreadsScopeRef.current = scopeKey;
+      pendingThreadsScopeHydrationRef.current = null;
+      return;
+    }
+    if (hydratedThreadsScopeRef.current !== scopeKey) {
+      return;
+    }
     saveStoredThreads(scopeKey, threads);
   }, [scopeKey, threads]);
 
   useEffect(() => {
-    if (!scopeKey || !activeAgentId) return;
+    if (!scopeKey || !activeAgentId || hydratedThreadsScopeRef.current !== scopeKey) return;
     saveStoredAgentId(scopeKey, activeAgentId);
     if (activeThreadId) {
       saveStoredSelection(scopeKey, activeAgentId, activeThreadId);
@@ -2138,6 +2183,7 @@ function ChatShell({
       <ChatPanelContext.Provider value={panelContextValue}>
         <div className="chat-shell-fullpanel" data-theme={resolvedTheme}>
           <RightPanel
+            platform={platform}
             activeAgentName={activeDisplayAgent?.name || activeAgentId}
             activeAgentEmoji={activeDisplayAgent && "emoji" in activeDisplayAgent ? String(activeDisplayAgent.emoji || "") || undefined : undefined}
             modelRef={resolvedModelRef}
@@ -2175,6 +2221,20 @@ function ChatShell({
             toolPolicy={resolvedToolPolicy}
             toolsSaving={toolsSaving}
             idleTimeoutMs={resolvedIdleTimeoutMs}
+            hermesMaxTurns={hermesMaxTurns}
+            hermesReasoningEffort={hermesReasoningEffort}
+            hermesPersonality={hermesPersonality}
+            hermesTerminalBackend={hermesTerminalBackend}
+            hermesMemoryEnabled={hermesMemoryEnabled}
+            hermesVerbose={hermesVerbose}
+            hermesSmartRouting={hermesSmartRouting}
+            hermesModelBaseUrl={hermesModelBaseUrl}
+            hermesApiServerEnabled={hermesApiServerEnabled}
+            hermesApiServerKey={hermesApiServerKey}
+            hermesApiServerCorsOrigins={hermesApiServerCorsOrigins}
+            hermesRawConfigYaml={hermesRawConfigYaml}
+            hermesRawEnv={hermesRawEnv}
+            onSaveHermesSettings={onSaveHermesSettings}
             onSaveToolPolicy={onSaveToolPolicy}
             onSaveAdvancedSettings={onSaveAdvancedSettings}
             settingsBusy={settingsBusy}

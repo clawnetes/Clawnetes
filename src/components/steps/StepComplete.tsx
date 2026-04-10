@@ -27,7 +27,11 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
     whatsappQrStep, whatsappQrLoading, whatsappQrDataUrl,
     oauthCompletionResults, oauthCompletionRunning,
     gatewayPort,
+    platform,
   } = state;
+  const isHermes = platform === "hermes";
+  const platformName = isHermes ? "Hermes Agent" : "OpenClaw";
+  const locationText = targetEnvironment === "cloud" ? `on ${remoteIp}` : "locally";
 
   const setField = (field: string, value: unknown) =>
     dispatch({ type: "SET_FIELD", field: field as any, value });
@@ -77,7 +81,7 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
     <div className="step-view" data-testid="step-complete">
       <h2>Setup Complete! 🦞</h2>
       <p className="step-description">
-        OpenClaw is running {targetEnvironment === "cloud" ? `on ${remoteIp}` : "locally"} and ready for your commands.
+        {platformName} is running {locationText} and ready for your commands.
       </p>
 
       {targetEnvironment === "cloud" && (
@@ -131,9 +135,9 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
           marginBottom: "1.5rem",
           border: "1px solid var(--border)"
         }}>
-          <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Deferred OpenClaw Authentication</h3>
+          <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Deferred {platformName} Authentication</h3>
           <p className="step-description" style={{ marginBottom: "0.75rem" }}>
-            OpenClaw is installed. Clawnetes will open a terminal for each OAuth provider, replace any stale OpenClaw callback session on the known localhost port, and then sync the imported profile back into the app.
+            {platformName} is installed. Clawnetes will open a terminal for each OAuth provider and then sync the imported profile back into the app.
           </p>
           <div style={{ display: "grid", gap: "0.5rem" }}>
             {deferredOAuthQueue.map(item => {
@@ -161,13 +165,13 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
               });
             }}
           >
-            {oauthCompletionRunning ? "Running OpenClaw Authentication..." : "Retry Deferred OAuth"}
+            {oauthCompletionRunning ? `Running ${platformName} Authentication...` : "Retry Deferred OAuth"}
           </button>
         </div>
       )}
 
       <div className="pairing-result">
-        {shouldShowTelegramPairing(messagingChannel, isPaired) && (
+        {!isHermes && shouldShowTelegramPairing(messagingChannel, isPaired) && (
           <>
             <h3>Telegram Pairing</h3>
             <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginTop: "0.5rem" }}>
@@ -199,7 +203,7 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
         )}
 
         {/* WhatsApp QR Pairing */}
-        {shouldShowWhatsAppPairing(messagingChannel, whatsappPaired) && (
+        {!isHermes && shouldShowWhatsAppPairing(messagingChannel, whatsappPaired) && (
           <div style={{ marginTop: "2rem", padding: "1.5rem", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "12px" }}>
             <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>WhatsApp Pairing</h3>
             <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
@@ -283,13 +287,31 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
           </div>
         )}
 
-        {messagingChannel === "whatsapp" && whatsappPaired && (
+        {!isHermes && messagingChannel === "whatsapp" && whatsappPaired && (
           <div style={{ marginTop: "1rem", padding: "1rem", background: "rgba(34, 197, 94, 0.1)", border: "1px solid var(--success)", borderRadius: "8px", textAlign: "center" }}>
             <p style={{ color: "var(--success)", fontWeight: 600, margin: 0 }}>WhatsApp linked successfully!</p>
           </div>
         )}
 
-        {true && (
+        {isHermes ? (
+          <div className="advanced-setup-prompt" style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "rgba(59, 130, 246, 0.1)", borderRadius: "12px", border: "1px solid var(--primary)" }}>
+            <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Hermes Configuration Complete</h3>
+            <p style={{ marginBottom: "1rem", fontSize: "1rem" }}>
+              Clawnetes configured Hermes and started the Hermes API service.
+            </p>
+            <p style={{ marginBottom: "1.25rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
+              API endpoint: <code>{dashboardUrl}</code>
+            </p>
+            <div className="button-group" style={{ gap: "1rem" }}>
+              <button className="primary" onClick={onOpenWorkspace}>
+                Open Clawnetes Workspace
+              </button>
+              <button className="secondary" onClick={() => invoke("close_app")}>
+                Exit Setup
+              </button>
+            </div>
+          </div>
+        ) : (
           <div className="advanced-setup-prompt" style={{ marginTop: "2rem", padding: "1.5rem", backgroundColor: "rgba(59, 130, 246, 0.1)", borderRadius: "12px", border: "1px solid var(--primary)" }}>
             <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Configuration Complete</h3>
             {mode !== "advanced" ? (
@@ -336,16 +358,8 @@ function StepComplete({ handleToggleTunnel, handlePairing, handleAdvancedTransit
         )}
       </div>
 
-      {false && (
-        <div className="button-group" style={{ flexDirection: "column", gap: "10px" }}>
-          <button className="primary" style={{ width: "100%" }} onClick={() => openExternal(dashboardUrl)}>
-            Open Web Dashboard {targetEnvironment === "cloud" && "(via Tunnel)"}
-          </button>
-          <button className="secondary" style={{ width: "100%" }} onClick={() => invoke("close_app")}>Exit Setup</button>
-        </div>
-      )}
       <p style={{ marginTop: "2rem", fontSize: "0.85rem", color: "var(--text-muted)", textAlign: "center" }}>
-        Terminal access: <code>openclaw tui</code> {targetEnvironment === "cloud" && `(SSH to ${remoteIp})`}
+        CLI access: <code>{isHermes ? "hermes" : "openclaw tui"}</code> {targetEnvironment === "cloud" && `(SSH to ${remoteIp})`}
       </p>
     </div>
   );

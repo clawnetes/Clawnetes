@@ -15,7 +15,18 @@ export default function StepHermesConfig({
   getProviderModelOptions,
 }: StepHermesConfigProps) {
   const { state, dispatch } = useWizard();
-  const { provider, model, loading } = state;
+  const {
+    provider,
+    model,
+    loading,
+    hermesModelBaseUrl,
+    hermesTerminalBackend,
+    hermesMaxTurns,
+    hermesReasoningEffort,
+    hermesPersonality,
+    hermesApiServerKey,
+    hermesApiServerCorsOrigins,
+  } = state;
 
   const setField = (field: string, value: unknown) =>
     dispatch({ type: "SET_FIELD", field: field as never, value });
@@ -61,6 +72,90 @@ export default function StepHermesConfig({
           onChange={(nextModel) => setField("model", nextModel)}
           searchable={(MODELS_BY_PROVIDER[provider]?.length || 0) > 10}
           options={getProviderModelOptions(provider)}
+        />
+      </div>
+
+      <div className="form-group" style={{ marginTop: "1.25rem" }}>
+        <label htmlFor="hermes-model-base-url">Model Base URL</label>
+        <input
+          id="hermes-model-base-url"
+          aria-label="Model Base URL"
+          type="text"
+          placeholder="https://api.openai.com/v1"
+          value={hermesModelBaseUrl}
+          onChange={(event) => setField("hermesModelBaseUrl", event.target.value)}
+        />
+      </div>
+
+      <div className="form-group" style={{ marginTop: "1.25rem" }}>
+        <label htmlFor="hermes-terminal-backend">Terminal Backend</label>
+        <select
+          id="hermes-terminal-backend"
+          aria-label="Terminal Backend"
+          value={hermesTerminalBackend}
+          onChange={(event) => setField("hermesTerminalBackend", event.target.value)}
+        >
+          <option value="local">Local</option>
+          <option value="docker">Docker</option>
+          <option value="ssh">SSH</option>
+        </select>
+      </div>
+
+      <div className="form-group" style={{ marginTop: "1.25rem" }}>
+        <label htmlFor="hermes-max-turns">Max Turns</label>
+        <input
+          id="hermes-max-turns"
+          type="number"
+          value={hermesMaxTurns}
+          onChange={(event) => setField("hermesMaxTurns", Number.parseInt(event.target.value, 10) || 0)}
+        />
+      </div>
+
+      <div className="form-group" style={{ marginTop: "1.25rem" }}>
+        <label htmlFor="hermes-reasoning-effort">Reasoning Effort</label>
+        <select
+          id="hermes-reasoning-effort"
+          value={hermesReasoningEffort}
+          onChange={(event) => setField("hermesReasoningEffort", event.target.value)}
+        >
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+      </div>
+
+      <div className="form-group" style={{ marginTop: "1.25rem" }}>
+        <label htmlFor="hermes-personality">Personality</label>
+        <select
+          id="hermes-personality"
+          value={hermesPersonality}
+          onChange={(event) => setField("hermesPersonality", event.target.value)}
+        >
+          <option value="helpful">Helpful</option>
+          <option value="concise">Concise</option>
+          <option value="technical">Technical</option>
+          <option value="creative">Creative</option>
+        </select>
+      </div>
+
+      <div className="form-group" style={{ marginTop: "1.25rem" }}>
+        <label htmlFor="hermes-api-server-key">API Server Key</label>
+        <input
+          id="hermes-api-server-key"
+          aria-label="API Server Key"
+          type="password"
+          value={hermesApiServerKey}
+          onChange={(event) => setField("hermesApiServerKey", event.target.value)}
+        />
+      </div>
+
+      <div className="form-group" style={{ marginTop: "1.25rem" }}>
+        <label htmlFor="hermes-api-server-cors">API Server CORS Origins</label>
+        <input
+          id="hermes-api-server-cors"
+          type="text"
+          value={hermesApiServerCorsOrigins}
+          onChange={(event) => setField("hermesApiServerCorsOrigins", event.target.value)}
         />
       </div>
 

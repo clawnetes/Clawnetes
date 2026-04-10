@@ -94,6 +94,9 @@ pub fn run_maintenance(action: &str, remote: Option<&RemoteInfo>) -> Result<Stri
         ("update", None) => install::install_openclaw(),
         ("uninstall", Some(remote)) => maintenance::uninstall_remote_openclaw(remote),
         ("uninstall", None) => maintenance::uninstall_openclaw(),
-        _ => Err(format!("Unsupported OpenClaw maintenance action: {}", action)),
+        _ => Err(format!(
+            "Unsupported OpenClaw maintenance action: {}",
+            action
+        )),
     }
 }

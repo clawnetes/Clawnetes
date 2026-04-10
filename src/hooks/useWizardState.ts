@@ -305,7 +305,7 @@ export const INITIAL_WIZARD_STATE: WizardState = {
   hermesRawEnv: "",
 };
 
-const PLATFORM_DEFAULTS: Record<AgentPlatform, Pick<WizardState, "gatewayPort" | "gatewayBind" | "gatewayAuthMode">> = {
+export const PLATFORM_DEFAULTS: Record<AgentPlatform, Pick<WizardState, "gatewayPort" | "gatewayBind" | "gatewayAuthMode">> = {
   openclaw: {
     gatewayPort: 18789,
     gatewayBind: "loopback",
@@ -375,9 +375,11 @@ export function useWizardState() {
         const activeId = getActiveEnvironmentId() || (envs[0]?.id ?? null);
         const activeEnv = envs.find((e) => e.id === activeId);
         if (activeEnv) {
+          const platform = activeEnv.platform || "openclaw";
           return {
             ...initial,
-            platform: activeEnv.platform || "openclaw",
+            platform,
+            ...PLATFORM_DEFAULTS[platform],
             targetEnvironment: activeEnv.type || "local",
             remoteIp: activeEnv.remoteIp || "",
             remoteUser: activeEnv.remoteUser || "",

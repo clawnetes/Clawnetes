@@ -606,7 +606,8 @@ pub async fn setup_remote_openclaw(
         }
         if let Some(agents) = &config.agents {
             for agent in agents {
-                let effective_agent_model = apply_model_provider_auth(&agent.model, &provider_auths);
+                let effective_agent_model =
+                    apply_model_provider_auth(&agent.model, &provider_auths);
                 if matches!(
                     effective_agent_model.split('/').next(),
                     Some("local" | "llamacpp")
@@ -618,7 +619,8 @@ pub async fn setup_remote_openclaw(
                 }
                 if let Some(fallbacks) = &agent.fallback_models {
                     for fallback in fallbacks {
-                        let effective_fallback = apply_model_provider_auth(fallback, &provider_auths);
+                        let effective_fallback =
+                            apply_model_provider_auth(fallback, &provider_auths);
                         if matches!(
                             effective_fallback.split('/').next(),
                             Some("local" | "llamacpp")
@@ -939,9 +941,11 @@ pub async fn apply_agent_config(
     }
 
     if let Some(obj) = config_json.as_object_mut() {
-        let agents_entry = obj.entry("agents".to_string()).or_insert(serde_json::json!({
-            "defaults": { "models": {} }
-        }));
+        let agents_entry = obj
+            .entry("agents".to_string())
+            .or_insert(serde_json::json!({
+                "defaults": { "models": {} }
+            }));
         if let Some(agents_obj) = agents_entry.as_object_mut() {
             agents_obj.insert("list".to_string(), serde_json::json!(agents_list));
         }
@@ -1045,7 +1049,8 @@ pub async fn apply_agent_config(
         }
         if let Some(agents) = &config.agents {
             for agent in agents {
-                let effective_agent_model = apply_model_provider_auth(&agent.model, &provider_auths);
+                let effective_agent_model =
+                    apply_model_provider_auth(&agent.model, &provider_auths);
                 if matches!(
                     effective_agent_model.split('/').next(),
                     Some("local" | "llamacpp")
@@ -1057,7 +1062,8 @@ pub async fn apply_agent_config(
                 }
                 if let Some(fallbacks) = &agent.fallback_models {
                     for fallback in fallbacks {
-                        let effective_fallback = apply_model_provider_auth(fallback, &provider_auths);
+                        let effective_fallback =
+                            apply_model_provider_auth(fallback, &provider_auths);
                         if matches!(
                             effective_fallback.split('/').next(),
                             Some("local" | "llamacpp")
@@ -1100,7 +1106,10 @@ pub async fn apply_agent_config(
     // Write updated openclaw.json back to remote
     let config_json_str = serde_json::to_string_pretty(&config_json)
         .map_err(|e| ClawError::System(format!("Failed to serialize config: {}", e)))?;
-    executor.write_file(&format!("{}/openclaw.json", openclaw_root), &config_json_str)?;
+    executor.write_file(
+        &format!("{}/openclaw.json", openclaw_root),
+        &config_json_str,
+    )?;
 
     let auth_profiles_val = build_auth_profiles_doc(
         &provider_auths,
@@ -1166,10 +1175,8 @@ pub async fn apply_agent_config(
             if agent.id == "main" {
                 continue;
             }
-            let agent_workspace =
-                format!("{}/agents/{}/workspace", openclaw_root, agent.id);
-            let agent_config_dir =
-                format!("{}/agents/{}/agent", openclaw_root, agent.id);
+            let agent_workspace = format!("{}/agents/{}/workspace", openclaw_root, agent.id);
+            let agent_config_dir = format!("{}/agents/{}/agent", openclaw_root, agent.id);
 
             executor.mkdir_p(&agent_workspace)?;
             executor.mkdir_p(&agent_config_dir)?;

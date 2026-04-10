@@ -24,6 +24,22 @@
 - [x] Task 11: Wire Hermes chat, runs, and multi-agent UI behavior
 - [x] Task 12: Add coexistence and non-regression tests
 - [x] Task 13: Run full validation and fix failures
+- [x] Task 14: Split Hermes from OpenClaw config lifecycle and payload shaping
+- [x] Task 15: Replace Hermes chat settings with Hermes-native structured sections plus raw editors
+- [x] Task 16: Expand Hermes wizard/reconfigure flow to Hermes-native config sections
+- [x] Task 17: Add regression coverage for Hermes reconfigure, settings visibility, and model persistence
+- [x] Task 18: Re-run full validation after Hermes-native overhaul
+- [x] Task 19: Fix Hermes model switching config corruption and Gemini persistence
+
+## 2026-04-09 follow-on execution note
+
+This execution file originally covered initial Hermes support. The current implementation pass extends it to address the remaining branch gaps identified during review:
+
+- Hermes still reuses OpenClaw-shaped payload transforms in several save/load paths.
+- Hermes chat settings only expose a small subset of Hermes config.
+- `Reconfigure` still routes through OpenClaw-oriented setup expectations.
+- Panel-side model changes can drop Hermes-specific config on persistence.
+- Platform/environment switching still risks stale incompatible state leaking into Hermes UI.
 
 ## File map
 

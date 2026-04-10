@@ -203,11 +203,8 @@ pub fn start_ssh_tunnel(remote: &RemoteInfo, remote_gateway_port: u16) -> Result
                         };
 
                         let mut remote_channel =
-                            match sess.channel_direct_tcpip(
-                                "127.0.0.1",
-                                remote_gateway_port,
-                                None,
-                            ) {
+                            match sess.channel_direct_tcpip("127.0.0.1", remote_gateway_port, None)
+                            {
                                 Ok(c) => c,
                                 Err(e) => {
                                     eprintln!("Failed to open SSH channel for tunnel: {}", e);

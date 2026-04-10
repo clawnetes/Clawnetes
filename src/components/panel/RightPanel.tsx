@@ -7,6 +7,7 @@ import SkillsPanel from "./SkillsPanel";
 import IdentityEditorPanel, { type IdentityTab } from "./IdentityEditorPanel";
 import SettingsPanel from "./SettingsPanel";
 import ToolsPanel from "./ToolsPanel";
+import { HERMES_SUPPORTED_MODEL_PROVIDERS } from "../../platforms/hermes";
 
 const PANEL_TABS: { id: PanelView; label: string }[] = [
   { id: "model", label: "Model" },
@@ -32,11 +33,11 @@ interface RightPanelProps {
   localBaseUrl?: string;
   lmstudioBaseUrl?: string;
   skills?: string[];
-  onModelChange?: (model: string) => void;
-  onFallbacksChange?: (models: string[]) => void;
-  onLocalBaseUrlChange?: (provider: "lmstudio" | "local", baseUrl: string) => void;
+  onModelChange?: (model: string) => void | Promise<void>;
+  onFallbacksChange?: (models: string[]) => void | Promise<void>;
+  onLocalBaseUrlChange?: (provider: "lmstudio" | "local", baseUrl: string) => void | Promise<void>;
   providerAuths?: Record<string, ProviderAuthConfig>;
-  onProviderAuthChange?: (provider: string, auth: ProviderAuthConfig) => void;
+  onProviderAuthChange?: (provider: string, auth: ProviderAuthConfig) => void | Promise<void>;
   onStartOAuth?: (provider: string, authMethod: string, oauthProviderId: string) => Promise<ProviderAuthConfig>;
   onDetectLocalModels?: (provider: "ollama" | "lmstudio" | "local", baseUrl?: string) => Promise<string[]>;
   activeSkills?: string[];
@@ -65,8 +66,22 @@ interface RightPanelProps {
   toolsSaving?: boolean;
   settingsBusy?: boolean;
   idleTimeoutMs?: number;
+  hermesMaxTurns?: number;
+  hermesReasoningEffort?: string;
+  hermesPersonality?: string;
+  hermesTerminalBackend?: string;
+  hermesMemoryEnabled?: boolean;
+  hermesVerbose?: boolean;
+  hermesSmartRouting?: boolean;
+  hermesModelBaseUrl?: string;
+  hermesApiServerEnabled?: boolean;
+  hermesApiServerKey?: string;
+  hermesApiServerCorsOrigins?: string;
+  hermesRawConfigYaml?: string;
+  hermesRawEnv?: string;
   onSaveToolPolicy?: (policy: ToolPolicy) => void;
   onSaveAdvancedSettings?: (heartbeatMode: string, idleTimeoutMs: number, sandboxMode: string) => void;
+  onSaveHermesSettings?: (updates: Record<string, any>) => void;
   maintenanceStatus?: string;
   onRepair?: () => void;
   onAudit?: () => void;
@@ -115,14 +130,29 @@ function RightPanel({
   toolsSaving,
   settingsBusy,
   idleTimeoutMs,
+  hermesMaxTurns,
+  hermesReasoningEffort,
+  hermesPersonality,
+  hermesTerminalBackend,
+  hermesMemoryEnabled,
+  hermesVerbose,
+  hermesSmartRouting,
+  hermesModelBaseUrl,
+  hermesApiServerEnabled,
+  hermesApiServerKey,
+  hermesApiServerCorsOrigins,
+  hermesRawConfigYaml,
+  hermesRawEnv,
   onSaveToolPolicy,
   onSaveAdvancedSettings,
+  onSaveHermesSettings,
   maintenanceStatus,
   onRepair,
   onAudit,
   onUpgrade,
   onReconfigure,
   onUninstall,
+  platform,
 }: RightPanelProps) {
   const { panelOpen, panelView, setPanelView, closePanel } = useChatPanel();
 
@@ -133,6 +163,7 @@ function RightPanel({
           <ModelSwitcherPanel
             currentModel={modelRef || ""}
             fallbackModels={fallbackModels}
+            allowedProviders={platform === "hermes" ? [...HERMES_SUPPORTED_MODEL_PROVIDERS] : undefined}
             currentLocalBaseUrl={localBaseUrl}
             currentLmstudioBaseUrl={lmstudioBaseUrl}
             onModelChange={onModelChange}
@@ -193,7 +224,21 @@ function RightPanel({
             onReconfigure={onReconfigure}
             onUninstall={onUninstall}
             idleTimeoutMs={idleTimeoutMs}
+            hermesMaxTurns={hermesMaxTurns}
+            hermesReasoningEffort={hermesReasoningEffort}
+            hermesPersonality={hermesPersonality}
+            hermesTerminalBackend={hermesTerminalBackend}
+            hermesMemoryEnabled={hermesMemoryEnabled}
+            hermesVerbose={hermesVerbose}
+            hermesSmartRouting={hermesSmartRouting}
+            hermesModelBaseUrl={hermesModelBaseUrl}
+            hermesApiServerEnabled={hermesApiServerEnabled}
+            hermesApiServerKey={hermesApiServerKey}
+            hermesApiServerCorsOrigins={hermesApiServerCorsOrigins}
+            hermesRawConfigYaml={hermesRawConfigYaml}
+            hermesRawEnv={hermesRawEnv}
             onSaveAgentSettings={onSaveAdvancedSettings}
+            onSaveHermesSettings={onSaveHermesSettings}
           />
         );
       default:
@@ -253,7 +298,10 @@ function RightPanel({
 
       {/* Tab navigation */}
       <TabBar
-        tabs={PANEL_TABS}
+        tabs={platform === "hermes" ? [
+          { id: "model", label: "Model" },
+          { id: "advanced", label: "Settings" },
+        ] : PANEL_TABS}
         activeTab={panelView}
         onTabChange={(tabId) => setPanelView(tabId as PanelView)}
         className="px-1 mt-2"

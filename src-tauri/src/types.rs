@@ -99,6 +99,33 @@ pub struct CurrentConfig {
     pub whatsapp_enabled: Option<bool>,
     pub whatsapp_dm_policy: Option<String>,
     pub whatsapp_phone_number: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_max_turns: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_personality: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_terminal_backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_memory_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_verbose: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_smart_routing: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_model_base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_api_server_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_api_server_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_api_server_cors_origins: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_raw_config_yaml: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_raw_env: Option<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
@@ -157,6 +184,35 @@ pub struct AgentConfig {
     pub whatsapp_enabled: Option<bool>,
     pub whatsapp_dm_policy: Option<String>,
     pub whatsapp_phone_number: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_max_turns: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_personality: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_terminal_backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_memory_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_verbose: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_smart_routing: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_model_base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_api_server_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_api_server_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_api_server_cors_origins: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_raw_config_yaml: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_raw_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hermes_apply_raw_files: Option<bool>,
 }
 
 #[derive(serde::Serialize)]

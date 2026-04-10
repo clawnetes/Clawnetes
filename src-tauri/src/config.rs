@@ -162,7 +162,10 @@ fn merge_auth_profiles_doc(
         .and_then(|value| value.as_object())
         .cloned()
         .unwrap_or_default();
-    if let Some(profiles) = generated.get("profiles").and_then(|value| value.as_object()) {
+    if let Some(profiles) = generated
+        .get("profiles")
+        .and_then(|value| value.as_object())
+    {
         for (key, value) in profiles {
             merged_profiles.insert(key.clone(), value.clone());
         }
@@ -173,7 +176,10 @@ fn merge_auth_profiles_doc(
         .and_then(|value| value.as_object())
         .cloned()
         .unwrap_or_default();
-    if let Some(last_good) = generated.get("lastGood").and_then(|value| value.as_object()) {
+    if let Some(last_good) = generated
+        .get("lastGood")
+        .and_then(|value| value.as_object())
+    {
         for (key, value) in last_good {
             merged_last_good.insert(key.clone(), value.clone());
         }
@@ -415,10 +421,7 @@ pub fn save_workspace_files(
         if let Some(sess) = &session {
             crate::ssh::execute_ssh(
                 sess,
-                &format!(
-                    "cat << 'EOF_WRITE' > \"{}\"\n{}\nEOF_WRITE",
-                    path, content
-                ),
+                &format!("cat << 'EOF_WRITE' > \"{}\"\n{}\nEOF_WRITE", path, content),
             )?;
             Ok(())
         } else {
@@ -498,10 +501,7 @@ pub fn create_custom_skill(
         if let Some(sess) = &session {
             crate::ssh::execute_ssh(
                 sess,
-                &format!(
-                    "cat << 'EOF_WRITE' > \"{}\"\n{}\nEOF_WRITE",
-                    path, content
-                ),
+                &format!("cat << 'EOF_WRITE' > \"{}\"\n{}\nEOF_WRITE", path, content),
             )?;
             Ok(())
         } else {
@@ -699,7 +699,10 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
     };
 
     for agent_dir_name in all_agent_dirs {
-        let agent_auth_path = format!("{}/agents/{}/agent/auth-profiles.json", openclaw_root, agent_dir_name);
+        let agent_auth_path = format!(
+            "{}/agents/{}/agent/auth-profiles.json",
+            openclaw_root, agent_dir_name
+        );
         let contents = read_file_fn(&agent_auth_path);
         if contents.is_empty() {
             continue;
@@ -1041,9 +1044,9 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
             profiles.insert(
                 auth_profile_name,
                 serde_json::json!({
-            "provider": auth_profile_provider,
-            "mode": auth_profile_mode
-                }),
+                "provider": auth_profile_provider,
+                "mode": auth_profile_mode
+                    }),
             );
         }
     }
@@ -1247,7 +1250,8 @@ pub fn configure_agent(config: AgentConfig) -> Result<String, String> {
                 }
                 if let Some(fallbacks) = &agent.fallback_models {
                     for fallback in fallbacks {
-                        let effective_fallback = apply_model_provider_auth(fallback, &provider_auths);
+                        let effective_fallback =
+                            apply_model_provider_auth(fallback, &provider_auths);
                         if matches!(
                             effective_fallback.split('/').next(),
                             Some("local" | "llamacpp")
@@ -1400,10 +1404,8 @@ Serve {}."#,
                     Some(parse_auth_profiles_doc(&contents))
                 }
             };
-            let merged_agent_auth_profiles = merge_auth_profiles_doc(
-                &agent_auth_profiles,
-                existing_agent_auth_config.as_ref(),
-            );
+            let merged_agent_auth_profiles =
+                merge_auth_profiles_doc(&agent_auth_profiles, existing_agent_auth_config.as_ref());
 
             let agent_auth_json = serde_json::to_string_pretty(&merged_agent_auth_profiles)
                 .map_err(|e| e.to_string())?;
@@ -1646,8 +1648,10 @@ pub fn get_current_config(
         .next()
         .map(normalize_provider_for_ui)
         .unwrap_or_else(|| "anthropic".to_string());
-    let inferred_local_primary = has_local_provider && !is_known_model_provider(&raw_primary_provider);
-    let model_primary = normalize_model_ref_for_loaded_ui(&model_primary_raw, inferred_local_primary);
+    let inferred_local_primary =
+        has_local_provider && !is_known_model_provider(&raw_primary_provider);
+    let model_primary =
+        normalize_model_ref_for_loaded_ui(&model_primary_raw, inferred_local_primary);
     let fallback_models_raw: Vec<String> = defaults
         .get("model")
         .and_then(|m| m.get("fallbacks"))
@@ -1763,90 +1767,89 @@ pub fn get_current_config(
             continue;
         }
 
-            let mut name = agent_val
-                .get("name")
+        let mut name = agent_val
+            .get("name")
+            .and_then(|s| s.as_str())
+            .unwrap_or("Agent")
+            .to_string();
+
+        let amodel_raw = if let Some(m_obj) = agent_val.get("model").and_then(|m| m.as_object()) {
+            m_obj
+                .get("primary")
                 .and_then(|s| s.as_str())
-                .unwrap_or("Agent")
-                .to_string();
+                .unwrap_or("")
+                .to_string()
+        } else if let Some(m_str) = agent_val.get("model").and_then(|s| s.as_str()) {
+            m_str.to_string()
+        } else {
+            "".to_string()
+        };
+        let amodel = normalize_model_ref_for_loaded_ui(&amodel_raw, has_local_provider);
 
-            let amodel_raw = if let Some(m_obj) = agent_val.get("model").and_then(|m| m.as_object())
-            {
-                m_obj
-                    .get("primary")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("")
-                    .to_string()
-            } else if let Some(m_str) = agent_val.get("model").and_then(|s| s.as_str()) {
-                m_str.to_string()
-            } else {
-                "".to_string()
-            };
-            let amodel = normalize_model_ref_for_loaded_ui(&amodel_raw, has_local_provider);
+        let afallbacks_raw: Vec<String> = agent_val
+            .get("model")
+            .and_then(|m| {
+                if m.is_object() {
+                    m.get("fallbacks")
+                } else {
+                    None
+                }
+            })
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+        let afallbacks: Vec<String> = afallbacks_raw
+            .iter()
+            .map(|model| normalize_model_ref_for_loaded_ui(model, has_local_provider))
+            .collect();
 
-            let afallbacks_raw: Vec<String> = agent_val
-                .get("model")
-                .and_then(|m| {
-                    if m.is_object() {
-                        m.get("fallbacks")
-                    } else {
-                        None
-                    }
-                })
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or_default();
-            let afallbacks: Vec<String> = afallbacks_raw
-                .iter()
-                .map(|model| normalize_model_ref_for_loaded_ui(model, has_local_provider))
-                .collect();
+        let agent_workspace_base = format!("{}/.openclaw/agents/{}/workspace", home_dir, aid);
 
-            let agent_workspace_base = format!("{}/.openclaw/agents/{}/workspace", home_dir, aid);
+        let aid_md = read_file_content(&format!("{}/IDENTITY.md", agent_workspace_base));
+        let au_md = read_file_content(&format!("{}/USER.md", agent_workspace_base));
+        let as_md = read_file_content(&format!("{}/SOUL.md", agent_workspace_base));
 
-            let aid_md = read_file_content(&format!("{}/IDENTITY.md", agent_workspace_base));
-            let au_md = read_file_content(&format!("{}/USER.md", agent_workspace_base));
-            let as_md = read_file_content(&format!("{}/SOUL.md", agent_workspace_base));
+        let extracted_name = extract_md_value(&aid_md, "Name");
+        if !extracted_name.is_empty() {
+            name = extracted_name;
+        }
 
-            let extracted_name = extract_md_value(&aid_md, "Name");
-            if !extracted_name.is_empty() {
-                name = extracted_name;
-            }
+        let avibe = extract_md_value(&aid_md, "Vibe");
+        let aemoji = extract_md_value(&aid_md, "Emoji");
+        let askills = list_directories(&format!("{}/skills", agent_workspace_base));
+        let askills_opt = if askills.is_empty() {
+            None
+        } else {
+            Some(askills)
+        };
 
-            let avibe = extract_md_value(&aid_md, "Vibe");
-            let aemoji = extract_md_value(&aid_md, "Emoji");
-            let askills = list_directories(&format!("{}/skills", agent_workspace_base));
-            let askills_opt = if askills.is_empty() {
-                None
-            } else {
-                Some(askills)
-            };
+        let a_tools_md_s = read_file_content(&format!("{}/TOOLS.md", agent_workspace_base));
+        let a_tools_md = if a_tools_md_s.is_empty() {
+            None
+        } else {
+            Some(a_tools_md_s)
+        };
+        let a_agents_md_s = read_file_content(&format!("{}/AGENTS.md", agent_workspace_base));
+        let a_agents_md = if a_agents_md_s.is_empty() {
+            None
+        } else {
+            Some(a_agents_md_s)
+        };
+        let a_heartbeat_md_s = read_file_content(&format!("{}/HEARTBEAT.md", agent_workspace_base));
+        let a_heartbeat_md = if a_heartbeat_md_s.is_empty() {
+            None
+        } else {
+            Some(a_heartbeat_md_s)
+        };
+        let a_memory_md_s = read_file_content(&format!("{}/MEMORY.md", agent_workspace_base));
+        let a_memory_md = if a_memory_md_s.is_empty() {
+            None
+        } else {
+            Some(a_memory_md_s)
+        };
 
-            let a_tools_md_s = read_file_content(&format!("{}/TOOLS.md", agent_workspace_base));
-            let a_tools_md = if a_tools_md_s.is_empty() {
-                None
-            } else {
-                Some(a_tools_md_s)
-            };
-            let a_agents_md_s = read_file_content(&format!("{}/AGENTS.md", agent_workspace_base));
-            let a_agents_md = if a_agents_md_s.is_empty() {
-                None
-            } else {
-                Some(a_agents_md_s)
-            };
-            let a_heartbeat_md_s =
-                read_file_content(&format!("{}/HEARTBEAT.md", agent_workspace_base));
-            let a_heartbeat_md = if a_heartbeat_md_s.is_empty() {
-                None
-            } else {
-                Some(a_heartbeat_md_s)
-            };
-            let a_memory_md_s = read_file_content(&format!("{}/MEMORY.md", agent_workspace_base));
-            let a_memory_md = if a_memory_md_s.is_empty() {
-                None
-            } else {
-                Some(a_memory_md_s)
-            };
-
-            // Extract per-agent heartbeat settings
-            let (a_heartbeat_mode, a_idle_timeout_ms) = if let Some(heartbeat) = agent_val.get("heartbeat") {
+        // Extract per-agent heartbeat settings
+        let (a_heartbeat_mode, a_idle_timeout_ms) =
+            if let Some(heartbeat) = agent_val.get("heartbeat") {
                 let mode = if let Some(enabled) = heartbeat.get("enabled") {
                     if enabled.as_bool() == Some(false) {
                         Some("never".to_string())
@@ -1861,52 +1864,47 @@ pub fn get_current_config(
                     None
                 };
 
-                let timeout = heartbeat
-                    .get("timeout")
-                    .and_then(|t| t.as_u64());
+                let timeout = heartbeat.get("timeout").and_then(|t| t.as_u64());
 
                 (mode, timeout)
             } else {
                 (None, None)
             };
 
-            agent_configs.push(AgentData {
-                id: aid,
-                name,
-                model: amodel,
-                fallback_models: Some(afallbacks),
-                skills: askills_opt,
-                vibe: if avibe.is_empty() { None } else { Some(avibe) },
-                emoji: Some(aemoji),
-                identity_md: Some(aid_md),
-                user_md: Some(au_md),
-                soul_md: Some(as_md),
-                tools_md: a_tools_md,
-                agents_md: a_agents_md,
-                heartbeat_md: a_heartbeat_md,
-                memory_md: a_memory_md,
-                heartbeat_mode: a_heartbeat_mode,
-                idle_timeout_ms: a_idle_timeout_ms,
-                subagents: None,
-                tools: agent_val
-                    .get("tools")
-                    .and_then(|value| serde_json::from_value(value.clone()).ok()),
-            });
-            if let Some(agent_provider) =
-                agent_configs.last().and_then(|a| a.model.split('/').next())
-            {
-                referenced_providers.insert(normalize_provider_for_ui(agent_provider));
-            }
-            if let Some(agent_fallbacks) =
-                agent_configs.last().and_then(|a| a.fallback_models.clone())
-            {
-                for fallback in agent_fallbacks {
-                    if let Some(fallback_provider) = fallback.split('/').next() {
-                        referenced_providers.insert(normalize_provider_for_ui(fallback_provider));
-                    }
+        agent_configs.push(AgentData {
+            id: aid,
+            name,
+            model: amodel,
+            fallback_models: Some(afallbacks),
+            skills: askills_opt,
+            vibe: if avibe.is_empty() { None } else { Some(avibe) },
+            emoji: Some(aemoji),
+            identity_md: Some(aid_md),
+            user_md: Some(au_md),
+            soul_md: Some(as_md),
+            tools_md: a_tools_md,
+            agents_md: a_agents_md,
+            heartbeat_md: a_heartbeat_md,
+            memory_md: a_memory_md,
+            heartbeat_mode: a_heartbeat_mode,
+            idle_timeout_ms: a_idle_timeout_ms,
+            subagents: None,
+            tools: agent_val
+                .get("tools")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
+        });
+        if let Some(agent_provider) = agent_configs.last().and_then(|a| a.model.split('/').next()) {
+            referenced_providers.insert(normalize_provider_for_ui(agent_provider));
+        }
+        if let Some(agent_fallbacks) = agent_configs.last().and_then(|a| a.fallback_models.clone())
+        {
+            for fallback in agent_fallbacks {
+                if let Some(fallback_provider) = fallback.split('/').next() {
+                    referenced_providers.insert(normalize_provider_for_ui(fallback_provider));
                 }
             }
         }
+    }
 
     let enable_multi_agent = !agent_configs.is_empty();
 
@@ -2061,6 +2059,19 @@ pub fn get_current_config(
             .and_then(|a| a.first())
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        hermes_max_turns: None,
+        hermes_reasoning_effort: None,
+        hermes_personality: None,
+        hermes_terminal_backend: None,
+        hermes_memory_enabled: None,
+        hermes_verbose: None,
+        hermes_smart_routing: None,
+        hermes_model_base_url: None,
+        hermes_api_server_enabled: None,
+        hermes_api_server_key: None,
+        hermes_api_server_cors_origins: None,
+        hermes_raw_config_yaml: None,
+        hermes_raw_env: None,
     })
 }
 
@@ -2083,16 +2094,12 @@ mod tests {
         include_str!("../tests/fixtures/openclaw_compat/auth-profiles.subagent.json");
     const COMPAT_MAIN_IDENTITY: &str =
         include_str!("../tests/fixtures/openclaw_compat/IDENTITY.main.md");
-    const COMPAT_MAIN_USER: &str =
-        include_str!("../tests/fixtures/openclaw_compat/USER.main.md");
-    const COMPAT_MAIN_SOUL: &str =
-        include_str!("../tests/fixtures/openclaw_compat/SOUL.main.md");
+    const COMPAT_MAIN_USER: &str = include_str!("../tests/fixtures/openclaw_compat/USER.main.md");
+    const COMPAT_MAIN_SOUL: &str = include_str!("../tests/fixtures/openclaw_compat/SOUL.main.md");
     const COMPAT_SUB_IDENTITY: &str =
         include_str!("../tests/fixtures/openclaw_compat/IDENTITY.sub.md");
-    const COMPAT_SUB_USER: &str =
-        include_str!("../tests/fixtures/openclaw_compat/USER.sub.md");
-    const COMPAT_SUB_SOUL: &str =
-        include_str!("../tests/fixtures/openclaw_compat/SOUL.sub.md");
+    const COMPAT_SUB_USER: &str = include_str!("../tests/fixtures/openclaw_compat/USER.sub.md");
+    const COMPAT_SUB_SOUL: &str = include_str!("../tests/fixtures/openclaw_compat/SOUL.sub.md");
 
     struct CompatEnvGuard {
         original_home: Option<String>,
@@ -2123,7 +2130,10 @@ mod tests {
     }
 
     fn write_compat_fixture_tree() -> Result<(std::path::PathBuf, CompatEnvGuard), String> {
-        let root = std::env::temp_dir().join(format!("clawnetes-openclaw-compat-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "clawnetes-openclaw-compat-{}",
+            uuid::Uuid::new_v4()
+        ));
         let home = root.join("home");
         let openclaw_root = home.join(".openclaw");
         let workspace = openclaw_root.join("workspace");
@@ -2138,7 +2148,8 @@ mod tests {
         std::fs::create_dir_all(&sub_workspace).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(fake_bin_dir.clone()).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(workspace.join("skills/github")).map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(sub_workspace.join("skills/web-search")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(sub_workspace.join("skills/web-search"))
+            .map_err(|e| e.to_string())?;
 
         let home_str = home.to_string_lossy().to_string();
         std::fs::write(
@@ -2146,23 +2157,35 @@ mod tests {
             replace_fixture_home(COMPAT_OPENCLAW_JSON, &home_str),
         )
         .map_err(|e| e.to_string())?;
-        std::fs::write(main_agent_dir.join("auth-profiles.json"), COMPAT_MAIN_AUTH_PROFILES)
+        std::fs::write(
+            main_agent_dir.join("auth-profiles.json"),
+            COMPAT_MAIN_AUTH_PROFILES,
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(
+            sub_agent_dir.join("auth-profiles.json"),
+            COMPAT_SUB_AUTH_PROFILES,
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(workspace.join("IDENTITY.md"), COMPAT_MAIN_IDENTITY)
             .map_err(|e| e.to_string())?;
-        std::fs::write(sub_agent_dir.join("auth-profiles.json"), COMPAT_SUB_AUTH_PROFILES)
-            .map_err(|e| e.to_string())?;
-        std::fs::write(workspace.join("IDENTITY.md"), COMPAT_MAIN_IDENTITY).map_err(|e| e.to_string())?;
         std::fs::write(workspace.join("USER.md"), COMPAT_MAIN_USER).map_err(|e| e.to_string())?;
         std::fs::write(workspace.join("SOUL.md"), COMPAT_MAIN_SOUL).map_err(|e| e.to_string())?;
-        std::fs::write(sub_workspace.join("IDENTITY.md"), COMPAT_SUB_IDENTITY).map_err(|e| e.to_string())?;
-        std::fs::write(sub_workspace.join("USER.md"), COMPAT_SUB_USER).map_err(|e| e.to_string())?;
-        std::fs::write(sub_workspace.join("SOUL.md"), COMPAT_SUB_SOUL).map_err(|e| e.to_string())?;
+        std::fs::write(sub_workspace.join("IDENTITY.md"), COMPAT_SUB_IDENTITY)
+            .map_err(|e| e.to_string())?;
+        std::fs::write(sub_workspace.join("USER.md"), COMPAT_SUB_USER)
+            .map_err(|e| e.to_string())?;
+        std::fs::write(sub_workspace.join("SOUL.md"), COMPAT_SUB_SOUL)
+            .map_err(|e| e.to_string())?;
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let fake_openclaw = fake_bin_dir.join("openclaw");
             std::fs::write(&fake_openclaw, "#!/bin/sh\nexit 0\n").map_err(|e| e.to_string())?;
-            let mut perms = std::fs::metadata(&fake_openclaw).map_err(|e| e.to_string())?.permissions();
+            let mut perms = std::fs::metadata(&fake_openclaw)
+                .map_err(|e| e.to_string())?
+                .permissions();
             perms.set_mode(0o755);
             std::fs::set_permissions(&fake_openclaw, perms).map_err(|e| e.to_string())?;
         }
@@ -2279,6 +2302,20 @@ mod tests {
             whatsapp_enabled: Some(false),
             whatsapp_dm_policy: None,
             whatsapp_phone_number: None,
+            hermes_max_turns: None,
+            hermes_reasoning_effort: None,
+            hermes_personality: None,
+            hermes_terminal_backend: None,
+            hermes_memory_enabled: None,
+            hermes_verbose: None,
+            hermes_smart_routing: None,
+            hermes_model_base_url: None,
+            hermes_api_server_enabled: None,
+            hermes_api_server_key: None,
+            hermes_api_server_cors_origins: None,
+            hermes_raw_config_yaml: None,
+            hermes_raw_env: None,
+            hermes_apply_raw_files: None,
         }
     }
 
@@ -2380,7 +2417,10 @@ mod tests {
 
         let merged = merge_auth_profiles_doc(&generated, Some(&existing));
 
-        assert!(merged.get("profiles").and_then(|value| value.get("google:default")).is_some());
+        assert!(merged
+            .get("profiles")
+            .and_then(|value| value.get("google:default"))
+            .is_some());
         assert!(merged
             .get("profiles")
             .and_then(|value| value.get("openai-codex:default"))
@@ -2486,7 +2526,10 @@ mod tests {
         assert_eq!(current.agent_configs.len(), 1);
         assert_eq!(current.agent_configs[0].model, "openai/gpt-5.4");
         assert_eq!(
-            current.provider_auths.get("google").map(|auth| auth.token.as_str()),
+            current
+                .provider_auths
+                .get("google")
+                .map(|auth| auth.token.as_str()),
             Some("AIza-compat-google")
         );
         assert_eq!(
@@ -2657,8 +2700,14 @@ mod tests {
 
         assert_eq!(current.provider, "local");
         assert_eq!(current.model, "local/unsloth/gemma-4-e4b-it-gguf:Q4_K_XL");
-        assert_eq!(current.fallback_models, vec!["google/gemini-3.1-pro-preview".to_string()]);
-        assert_eq!(current.local_base_url.as_deref(), Some("http://127.0.0.1:8080"));
+        assert_eq!(
+            current.fallback_models,
+            vec!["google/gemini-3.1-pro-preview".to_string()]
+        );
+        assert_eq!(
+            current.local_base_url.as_deref(),
+            Some("http://127.0.0.1:8080")
+        );
     }
 
     #[test]
@@ -2724,6 +2773,20 @@ mod tests {
             whatsapp_enabled: Some(false),
             whatsapp_dm_policy: None,
             whatsapp_phone_number: None,
+            hermes_max_turns: None,
+            hermes_reasoning_effort: None,
+            hermes_personality: None,
+            hermes_terminal_backend: None,
+            hermes_memory_enabled: None,
+            hermes_verbose: None,
+            hermes_smart_routing: None,
+            hermes_model_base_url: None,
+            hermes_api_server_enabled: None,
+            hermes_api_server_key: None,
+            hermes_api_server_cors_origins: None,
+            hermes_raw_config_yaml: None,
+            hermes_raw_env: None,
+            hermes_apply_raw_files: None,
         };
 
         configure_agent(local_config).expect("local config should be writable");
@@ -2765,29 +2828,27 @@ mod tests {
             Some("unsloth/gemma-4-e4b-it-gguf:Q4_K_XL")
         );
 
-        let written_auth_profiles = std::fs::read_to_string(
-            home.join(".openclaw/agents/main/agent/auth-profiles.json"),
-        )
-        .expect("auth-profiles.json should exist");
+        let written_auth_profiles =
+            std::fs::read_to_string(home.join(".openclaw/agents/main/agent/auth-profiles.json"))
+                .expect("auth-profiles.json should exist");
         let written_auth_profiles: serde_json::Value =
             serde_json::from_str(&written_auth_profiles).expect("auth profiles should parse");
-        assert!(
-            written_auth_profiles
-                .get("profiles")
-                .and_then(|value| value.get("llamacpp:default"))
-                .is_some()
-        );
-        assert!(
-            written_auth_profiles
-                .get("profiles")
-                .and_then(|value| value.get("google:default"))
-                .and_then(|value| value.get("baseUrl"))
-                .is_none()
-        );
+        assert!(written_auth_profiles
+            .get("profiles")
+            .and_then(|value| value.get("llamacpp:default"))
+            .is_some());
+        assert!(written_auth_profiles
+            .get("profiles")
+            .and_then(|value| value.get("google:default"))
+            .and_then(|value| value.get("baseUrl"))
+            .is_none());
 
         assert_eq!(reloaded.provider, "local");
         assert_eq!(reloaded.model, "local/unsloth/gemma-4-e4b-it-gguf:Q4_K_XL");
-        assert_eq!(reloaded.local_base_url.as_deref(), Some("http://localhost:8080"));
+        assert_eq!(
+            reloaded.local_base_url.as_deref(),
+            Some("http://localhost:8080")
+        );
     }
 
     #[test]
@@ -2914,9 +2975,15 @@ mod tests {
 
         assert_eq!(current.provider, "openai");
         assert_eq!(current.model, "openai/gpt-5.4");
-        assert_eq!(current.agent_configs[0].model, "google/gemini-3.1-pro-preview");
         assert_eq!(
-            current.provider_auths.get("google").map(|auth| auth.token.as_str()),
+            current.agent_configs[0].model,
+            "google/gemini-3.1-pro-preview"
+        );
+        assert_eq!(
+            current
+                .provider_auths
+                .get("google")
+                .map(|auth| auth.token.as_str()),
             Some("AIza-subagent-only")
         );
     }

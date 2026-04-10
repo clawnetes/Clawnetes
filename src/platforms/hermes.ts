@@ -1,5 +1,13 @@
 import type { PlatformDefinition } from "./openclaw";
 
+export const HERMES_SUPPORTED_MODEL_PROVIDERS = [
+  "anthropic",
+  "openai",
+  "google",
+  "openrouter",
+  "xai",
+] as const;
+
 export const HERMES_PLATFORM: PlatformDefinition = {
   id: "hermes",
   label: "Hermes Agent",

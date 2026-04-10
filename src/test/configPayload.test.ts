@@ -200,6 +200,51 @@ describe("constructConfigPayload", () => {
     });
   });
 
+  describe("Hermes payloads", () => {
+    it("normalizes leaked OpenClaw gateway port to the Hermes API default", () => {
+      const payload = constructConfigPayload(createDefaultInput({
+        platform: "hermes",
+        gatewayPort: 18789,
+      }));
+
+      expect(payload.gateway_port).toBe(8642);
+    });
+
+    it("includes Hermes-specific settings needed for panel persistence", () => {
+      const payload = constructConfigPayload(createDefaultInput({
+        platform: "hermes",
+        mode: "advanced",
+        hermesMaxTurns: 42,
+        hermesReasoningEffort: "high",
+        hermesPersonality: "technical",
+        hermesTerminalBackend: "docker",
+        hermesMemoryEnabled: true,
+        hermesVerbose: true,
+        hermesSmartRouting: true,
+        hermesModelBaseUrl: "https://api.openai.com/v1",
+        hermesApiServerEnabled: true,
+        hermesApiServerKey: "secret",
+        hermesApiServerCorsOrigins: "http://localhost:1420",
+        hermesRawConfigYaml: "model:\n  provider: openai\n",
+        hermesRawEnv: "OPENAI_API_KEY=sk-test\n",
+      }));
+
+      expect(payload.hermes_max_turns).toBe(42);
+      expect(payload.hermes_reasoning_effort).toBe("high");
+      expect(payload.hermes_personality).toBe("technical");
+      expect(payload.hermes_terminal_backend).toBe("docker");
+      expect(payload.hermes_memory_enabled).toBe(true);
+      expect(payload.hermes_verbose).toBe(true);
+      expect(payload.hermes_smart_routing).toBe(true);
+      expect(payload.hermes_model_base_url).toBe("https://api.openai.com/v1");
+      expect(payload.hermes_api_server_enabled).toBe(true);
+      expect(payload.hermes_api_server_key).toBe("secret");
+      expect(payload.hermes_api_server_cors_origins).toBe("http://localhost:1420");
+      expect(payload.hermes_raw_config_yaml).toContain("provider: openai");
+      expect(payload.hermes_raw_env).toContain("OPENAI_API_KEY");
+    });
+  });
+
   describe("fallback models", () => {
     it("includes fallback models when enabled", () => {
       const payload = constructConfigPayload(createDefaultInput({

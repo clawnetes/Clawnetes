@@ -460,6 +460,9 @@ describe("Platform state", () => {
     await waitFor(() => {
       expect(screen.getByText("Hermes Configuration")).toBeInTheDocument();
     });
+    expect(screen.getByLabelText("Model Base URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("Terminal Backend")).toBeInTheDocument();
+    expect(screen.getByLabelText("API Server Key")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Next" }));
     await waitFor(() => {

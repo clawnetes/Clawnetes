@@ -299,6 +299,53 @@ describe("ModelSwitcherPanel", () => {
     expect(onModelChange).not.toHaveBeenCalled();
   });
 
+  it("waits for provider auth persistence before saving a Gemini model", async () => {
+    const user = userEvent.setup();
+    const order: string[] = [];
+    let resolveAuthSave: (() => void) | null = null;
+    const authSaved = new Promise<void>((resolve) => {
+      resolveAuthSave = resolve;
+    });
+    const onProviderAuthChange = vi.fn(async () => {
+      order.push("auth:start");
+      await authSaved;
+      order.push("auth:end");
+    });
+    const onModelChange = vi.fn(async () => {
+      order.push("model");
+    });
+
+    render(
+      <ModelSwitcherPanel
+        currentModel="anthropic/claude-opus-4-6"
+        fallbackModels={[]}
+        onModelChange={onModelChange}
+        onProviderAuthChange={onProviderAuthChange}
+        providerAuths={{}}
+      />,
+    );
+
+    await user.click(screen.getByTestId("provider-dropdown").querySelector("button")!);
+    await user.click(screen.getByTestId("dropdown-option-google"));
+    await user.type(screen.getByTestId("auth-token-input"), "gemini-secret");
+    await user.click(screen.getByTestId("model-save-btn"));
+
+    await waitFor(() => {
+      expect(onProviderAuthChange).toHaveBeenCalledWith(
+        "google",
+        expect.objectContaining({ token: "gemini-secret" }),
+      );
+    });
+    expect(onModelChange).not.toHaveBeenCalled();
+
+    resolveAuthSave?.();
+
+    await waitFor(() => {
+      expect(onModelChange).toHaveBeenCalledWith("google/gemini-3.1-pro-preview");
+    });
+    expect(order).toEqual(["auth:start", "auth:end", "model"]);
+  });
+
   it("detects Ollama models and saves the first detected model by default", async () => {
     const user = userEvent.setup();
     const onModelChange = vi.fn();
@@ -422,5 +469,41 @@ describe("ModelSwitcherPanel", () => {
     await user.click(screen.getByTestId("model-save-btn"));
 
     expect(onModelChange).toHaveBeenCalledWith("local/my-local-model");
+  });
+
+  it("can restrict provider options for Hermes-supported providers", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSwitcherPanel
+        currentModel="anthropic/claude-opus-4-6"
+        fallbackModels={[]}
+        allowedProviders={["anthropic", "google", "openai"]}
+        onModelChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByTestId("provider-dropdown").querySelector("button")!);
+
+    expect(screen.getByTestId("dropdown-option-anthropic")).toBeInTheDocument();
+    expect(screen.getByTestId("dropdown-option-google")).toBeInTheDocument();
+    expect(screen.getByTestId("dropdown-option-openai")).toBeInTheDocument();
+    expect(screen.queryByTestId("dropdown-option-local")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("dropdown-option-lmstudio")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("dropdown-option-ollama")).not.toBeInTheDocument();
+  });
+
+  it("normalizes an unsupported current provider when providers are restricted", async () => {
+    render(
+      <ModelSwitcherPanel
+        currentModel="local/custom"
+        fallbackModels={[]}
+        allowedProviders={["anthropic", "google"]}
+        onModelChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId("local-model-name")).not.toBeInTheDocument();
+    expect(screen.getByText("Claude Opus 4.6")).toBeInTheDocument();
   });
 });

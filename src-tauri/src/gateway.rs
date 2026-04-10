@@ -274,7 +274,10 @@ fn resolve_remote_gateway_port(remote: &RemoteInfo, preferred_port: u16) -> Resu
     Ok(preferred_port.max(1))
 }
 
-fn ensure_remote_gateway_tunnel(remote: &RemoteInfo, remote_gateway_port: u16) -> Result<(), String> {
+fn ensure_remote_gateway_tunnel(
+    remote: &RemoteInfo,
+    remote_gateway_port: u16,
+) -> Result<(), String> {
     let local_port_ready =
         crate::ssh::is_tunnel_listener_reachable(crate::ssh::REMOTE_TUNNEL_LOCAL_PORT);
     let tunnel_flag_running = crate::ssh::TUNNEL_RUNNING.load(std::sync::atomic::Ordering::Relaxed);
@@ -292,7 +295,9 @@ fn ensure_remote_gateway_tunnel(remote: &RemoteInfo, remote_gateway_port: u16) -
         Ok(_) => Ok(()),
         Err(err)
             if err.contains("already running")
-                && crate::ssh::is_tunnel_listener_reachable(crate::ssh::REMOTE_TUNNEL_LOCAL_PORT) =>
+                && crate::ssh::is_tunnel_listener_reachable(
+                    crate::ssh::REMOTE_TUNNEL_LOCAL_PORT,
+                ) =>
         {
             Ok(())
         }
@@ -519,7 +524,10 @@ pub fn get_dashboard_url(
         return Ok(build_remote_tunnel_dashboard_url(&token));
     }
 
-    Ok(format!("http://127.0.0.1:{}/#token={}", gateway_port, token))
+    Ok(format!(
+        "http://127.0.0.1:{}/#token={}",
+        gateway_port, token
+    ))
 }
 
 pub async fn prepare_gateway_chat_connection(
@@ -537,12 +545,14 @@ pub async fn prepare_gateway_chat_connection(
                     crate::ssh::stop_ssh_tunnel();
                     std::thread::sleep(REMOTE_TUNNEL_RESTART_SETTLE_TIME);
                     ensure_remote_gateway_tunnel(&remote, remote_gateway_port)?;
-                    verify_tunnel_connectivity(&remote, remote_gateway_port).map_err(|retry_error| {
-                        format!(
-                            "{} Remote port resolved to {}.",
-                            retry_error, remote_gateway_port
-                        )
-                    })?;
+                    verify_tunnel_connectivity(&remote, remote_gateway_port).map_err(
+                        |retry_error| {
+                            format!(
+                                "{} Remote port resolved to {}.",
+                                retry_error, remote_gateway_port
+                            )
+                        },
+                    )?;
                     let _ = first_error;
                 }
 
@@ -591,7 +601,10 @@ pub async fn prepare_gateway_chat_connection(
     })
 }
 
-pub fn verify_tunnel_connectivity(remote: &RemoteInfo, remote_gateway_port: u16) -> Result<bool, String> {
+pub fn verify_tunnel_connectivity(
+    remote: &RemoteInfo,
+    remote_gateway_port: u16,
+) -> Result<bool, String> {
     let mut last_error = String::from("No attempts made");
 
     for i in 0..30 {

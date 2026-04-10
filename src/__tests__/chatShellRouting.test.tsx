@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ChatShell from "../components/chat/ChatShell";
+import { buildChatScopeKey, saveStoredThreads } from "../lib/chatShellStorage";
 
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
@@ -361,6 +362,29 @@ const DIRECT_CHAT_BOOTSTRAP = {
   openClawVersion: "2026.4.8",
 } as const;
 
+const HERMES_STORAGE_BOOTSTRAP = {
+  wsUrl: "",
+  authToken: "token-hermes",
+  targetEnvironment: "local",
+  gatewayPort: 8642,
+  tunnelActive: false,
+  openClawVersion: "Hermes Agent",
+  platform: "hermes" as const,
+  chatTransport: "hermes-api" as const,
+  apiBaseUrl: "http://127.0.0.1:8642/v1",
+  apiKey: "hermes-key",
+};
+
+const OPENCLAW_STORAGE_BOOTSTRAP = {
+  wsUrl: "ws://localhost:18789",
+  authToken: "token-openclaw",
+  targetEnvironment: "local",
+  gatewayPort: 18789,
+  tunnelActive: false,
+  openClawVersion: "2026.4.8",
+  platform: "openclaw" as const,
+};
+
 async function openRemoteInstalledChat(user: ReturnType<typeof userEvent.setup>) {
   render(<App />);
 
@@ -423,6 +447,33 @@ describe("Installed-state chat shell", () => {
       configurable: true,
       value: window.localStorage,
     });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/health")) {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/models")) {
+        return new Response(JSON.stringify({
+          data: [{ id: "anthropic/claude-sonnet-4" }],
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/runs") && init?.method === "POST") {
+        return new Response(JSON.stringify({ run_id: "run-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch);
 
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === "check_prerequisites") {
@@ -476,6 +527,87 @@ describe("Installed-state chat shell", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Clawnetes with OpenClaw 2026.4.8")).toBeInTheDocument();
+    });
+  });
+
+  it("preserves stored Hermes chats when switching to OpenClaw and back", async () => {
+    saveStoredThreads(buildChatScopeKey(HERMES_STORAGE_BOOTSTRAP), [
+      {
+        id: "hermes-thread",
+        agentId: "anthropic/claude-sonnet-4",
+        sessionKey: "agent:main:main",
+        sessionId: "hermes-session-1",
+        title: "Hermes Saved Thread",
+        preview: "Saved Hermes preview",
+        updatedAt: 2000,
+        status: "archived",
+        messages: [
+          { id: "hermes-msg", role: "assistant", text: "Hermes saved reply" },
+        ],
+      },
+    ]);
+    saveStoredThreads(buildChatScopeKey(OPENCLAW_STORAGE_BOOTSTRAP), [
+      {
+        id: "openclaw-thread",
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        sessionId: "openclaw-session-1",
+        title: "OpenClaw Saved Thread",
+        preview: "Saved OpenClaw preview",
+        updatedAt: 1000,
+        status: "archived",
+        messages: [
+          { id: "openclaw-msg", role: "assistant", text: "OpenClaw saved reply" },
+        ],
+      },
+    ]);
+
+    const { rerender } = render(
+      <ChatShell
+        bootstrap={HERMES_STORAGE_BOOTSTRAP}
+        bootstrapping={false}
+        bootstrapError=""
+        onRetryConnection={() => {}}
+        onOpenConfigure={() => {}}
+        platform="hermes"
+        onSwitchPlatform={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Hermes Saved Thread")).toBeInTheDocument();
+    });
+
+    rerender(
+      <ChatShell
+        bootstrap={OPENCLAW_STORAGE_BOOTSTRAP}
+        bootstrapping={false}
+        bootstrapError=""
+        onRetryConnection={() => {}}
+        onOpenConfigure={() => {}}
+        platform="openclaw"
+        onSwitchPlatform={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("OpenClaw Saved Thread")).toBeInTheDocument();
+    });
+
+    rerender(
+      <ChatShell
+        bootstrap={HERMES_STORAGE_BOOTSTRAP}
+        bootstrapping={false}
+        bootstrapError=""
+        onRetryConnection={() => {}}
+        onOpenConfigure={() => {}}
+        platform="hermes"
+        onSwitchPlatform={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Hermes Saved Thread")).toBeInTheDocument();
     });
   });
 
