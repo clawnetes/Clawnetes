@@ -115,6 +115,35 @@ const HERMES_GATEWAY_BACKGROUND_COMMAND: &str = "mkdir -p \"$HERMES_HOME/logs\";
 
 const HERMES_INSTALL_COMMAND: &str = "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup --dir \"$HERMES_HOME/hermes-agent\"";
 
+const HERMES_CORS_PATCH_COMMAND: &str = r#"python3 <<'__CLAWNETES_CORS_PATCH__'
+import os
+
+home = os.environ.get("HERMES_HOME", "")
+if not home:
+    import sys
+    sys.exit(0)
+
+file_path = os.path.join(home, "hermes-agent", "gateway", "platforms", "api_server.py")
+if not os.path.exists(file_path):
+    import sys
+    sys.exit(0)
+
+try:
+    with open(file_path, "r") as f:
+        content = f.read()
+
+    target = "        response = web.StreamResponse(\n            status=200,\n            headers={\n                \"Content-Type\": \"text/event-stream\",\n                \"Cache-Control\": \"no-cache\",\n                \"X-Accel-Buffering\": \"no\",\n            },\n        )"
+    
+    replacement = "        cors = self._cors_headers_for_origin(request.headers.get(\"Origin\")) if request.headers.get(\"Origin\") else {}\n        headers = {\n            \"Content-Type\": \"text/event-stream\",\n            \"Cache-Control\": \"no-cache\",\n            \"X-Accel-Buffering\": \"no\",\n            **cors\n        }\n        response = web.StreamResponse(status=200, headers=headers)"
+
+    if target in content:
+        content = content.replace(target, replacement)
+        with open(file_path, "w") as f:
+            f.write(content)
+except Exception:
+    pass
+__CLAWNETES_CORS_PATCH__"#;
+
 const HERMES_UNINSTALL_COMMAND: &str = r#"hermes gateway stop >/dev/null 2>&1 || true; python3 <<'__CLAWNETES_HERMES_UNINSTALL__'
 import os
 import pty
@@ -722,12 +751,14 @@ fn prepare_chat_bootstrap_with<E: CommandExecutor>(
 
 fn start_gateway_with<E: CommandExecutor>(executor: &E) -> Result<String, ClawError> {
     let home = hermes_home(executor)?;
+    let _ = hermes_run(executor, &home, HERMES_CORS_PATCH_COMMAND);
     hermes_run(executor, &home, HERMES_GATEWAY_BACKGROUND_COMMAND)?;
     Ok("Hermes gateway started.".to_string())
 }
 
 fn restart_gateway_with<E: CommandExecutor>(executor: &E) -> Result<String, ClawError> {
     let home = hermes_home(executor)?;
+    let _ = hermes_run(executor, &home, HERMES_CORS_PATCH_COMMAND);
     hermes_run(executor, &home, HERMES_GATEWAY_BACKGROUND_COMMAND)?;
     Ok("Hermes gateway restarted.".to_string())
 }
