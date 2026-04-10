@@ -111,7 +111,7 @@ fn hermes_maintenance_command(action: &str) -> Result<&'static str, String> {
     }
 }
 
-const HERMES_GATEWAY_BACKGROUND_COMMAND: &str = "mkdir -p \"$HERMES_HOME/logs\"; hermes gateway stop >/dev/null 2>&1 || true; nohup hermes gateway > \"$HERMES_HOME/logs/gateway.log\" 2>&1 < /dev/null &";
+const HERMES_GATEWAY_BACKGROUND_COMMAND: &str = "(mkdir -p \"$HERMES_HOME/logs\"; hermes gateway stop >/dev/null 2>&1 || true; nohup hermes gateway > \"$HERMES_HOME/logs/gateway.log\" 2>&1 < /dev/null & disown) >/dev/null 2>&1";
 
 const HERMES_INSTALL_COMMAND: &str = "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup --dir \"$HERMES_HOME/hermes-agent\"";
 
@@ -721,9 +721,13 @@ fn prepare_chat_bootstrap_with<E: CommandExecutor>(
         .cloned()
         .unwrap_or_else(|| "clawnetes-hermes".to_string());
 
-    // Automatically start the Hermes API service if it's not listening on the local port.
-    // For remote environments, we assume the SSH tunnel will proxy to the same port.
-    if TcpStream::connect(("127.0.0.1", config.gateway_port)).is_err() {
+    // Automatically start the Hermes API service if it's not listening on the target environment.
+    let is_running = executor
+        .run(&format!("curl -s -m 2 http://127.0.0.1:{}/health", config.gateway_port))
+        .map(|out| out.contains("\"status\"") || out.contains("ok"))
+        .unwrap_or(false);
+
+    if !is_running {
         let _ = start_gateway_with(executor);
         // Give it a moment to boot
         std::thread::sleep(std::time::Duration::from_secs(2));
