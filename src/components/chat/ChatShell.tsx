@@ -1173,8 +1173,9 @@ function ChatShell({
               matchedSessionKey: params.sessionKey,
             }),
             sessionId: params.sessionId || params.session?.sessionId || thread.sessionId,
-            title: deriveThreadTitle({ session: params.session, messages: thread.messages, fallback: thread.title }),
-            preview: deriveThreadPreview({ session: params.session, messages: thread.messages, fallback: thread.preview }),
+            messages: params.messages ? toStoredMessages(params.messages) : thread.messages,
+            title: deriveThreadTitle({ session: params.session, messages: params.messages ? toStoredMessages(params.messages) : thread.messages, fallback: thread.title }),
+            preview: deriveThreadPreview({ session: params.session, messages: params.messages ? toStoredMessages(params.messages) : thread.messages, fallback: thread.preview }),
             updatedAt: params.session?.updatedAt || thread.updatedAt || Date.now(),
           }];
         }),
