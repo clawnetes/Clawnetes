@@ -36,7 +36,10 @@ export default function StepPlatformSelect() {
           >
             <div style={{ fontWeight: 700, fontSize: "1.2rem" }}>{option.label}</div>
             {option.id === "openclaw" ? (
-              <img src="/images/logo.png" alt="OpenClaw Logo" style={{ width: "64px", height: "64px", objectFit: "contain" }} />
+              <picture>
+                <source srcSet="/images/openclaw-dark.svg" media="(prefers-color-scheme: light)" />
+                <img src="/images/openclaw.svg" alt="OpenClaw Logo" style={{ width: "160px", height: "auto", objectFit: "contain" }} />
+              </picture>
             ) : (
               <div style={{ fontSize: "64px", lineHeight: 1 }}>⚕️</div>
             )}
