@@ -1,10 +1,10 @@
 # Clawnetes 🦞
 
-**The Native Installer for OpenClaw.**
+**The Native Installer for OpenClaw & Hermes Agent.**
 
-Forget the terminal. Clawnetes is a friendly wizard that installs, configures, and launches your AI agent in 2 minutes.
+Forget the terminal. Clawnetes is a friendly wizard that installs, configures, and launches your AI agents in 2 minutes.
 
-If you'd like help us achieve the dream of an AI-first Company driven by a team of AI agents powered by OpenClaw, consider donating your desired amount to support Clawnetes's development. Thank you!
+If you'd like help us achieve the dream of an AI-first Company driven by a team of AI agents powered by OpenClaw and Hermes Agent, consider donating your desired amount to support Clawnetes's development. Thank you!
 
 [Donate to help Clawnetes' development](https://buy.stripe.com/bJe3cwdjT4cyeDZdCS7wA00)
 
@@ -18,39 +18,37 @@ If you'd like help us achieve the dream of an AI-first Company driven by a team 
    xattr -dr com.apple.quarantine /Applications/Clawnetes.app
    ```
 4. Launch Clawnetes from your Applications folder.
-5. Follow the wizard to configure your agent with preset templates or custom settings.
+5. Follow the wizard to choose your target platform (OpenClaw or Hermes Agent) and configure your environment.
 6. Click **"Open Web Dashboard"** when finished.
 
 ### Windows
 1. Download the latest **`.msi`** installer from the [Releases Page](../../releases).
 2. Run the installer to setup Clawnetes on your system.
-3. Open Clawnetes and follow the wizard instructions.
+3. Open Clawnetes and follow the wizard instructions. *(Note: Hermes Agent on Windows uses a WSL2-managed workflow).*
 
 ### Linux (Remote Installation)
 *Note: We do not currently provide a native local Linux installer (e.g., AppImage or .deb).*
 
-However, you can easily install OpenClaw onto a remote Linux server! Simply run the **Clawnetes** app on your macOS or Windows machine, choose the **Remote/Cloud** environment option, and provide your Linux server's SSH details. Clawnetes will handle the complete installation and configuration remotely.
+However, you can easily install your agent onto a remote Linux server! Simply run the **Clawnetes** app on your macOS or Windows machine, choose the **Remote/Cloud** environment option, and provide your Linux server's SSH details. Clawnetes will handle the complete installation and configuration remotely.
 
 ## ✨ Features
 
 ### Core Capabilities
-- **Native Chat Interface:** Built-in chat UI with real-time streaming, markdown rendering, thread management, and multi-agent routing
-- **Agent Type Presets:** Choose from pre-configured agent templates:
+- **Native Chat Interface:** Built-in chat UI with real-time streaming, markdown rendering, thread management, and multi-agent routing.
+- **Dual Agent Platforms:** Choose between two powerful AI runtimes during setup:
+  - **OpenClaw:** The classic gateway workflow with deep native integrations and preset agent types.
+  - **Hermes Agent:** A powerful, API-server-backed agent platform.
+- **Agent Type Presets (OpenClaw):** Choose from pre-configured agent templates:
   - **Coding Assistant** 👨‍💻 - Senior software engineer for code review, debugging, and development
   - **Office Assistant** 🤵 - Executive assistant for email, calendar, tasks, and communications
   - **Travel Planner** 🌍 - Expert travel agent for trip planning and logistics
-- **Business Function Templates:** Multi-agent orchestration for complex workflows:
-  - **Personal Productivity** 📋 - Email, calendar, reminders, and notes management
-  - **Software Development** 💻 - Code review, testing, and GitHub integration
-  - **Financial Analyst** 📊 - Data analysis, reporting, and market research
-  - **Social Media Manager** 📱 - Content research, creation, and social media management
-  - **Customer Support** 🎧 - Ticket triage, response drafting, and escalation management
-- **Multi-Provider Support:** Anthropic, OpenAI, Google, OpenRouter, xAI, Ollama, LM Studio, and custom local models
-- **Advanced Security:** Sandbox modes, tool policies, and granular permission controls
-- **Messaging Integration:** Telegram and WhatsApp channel support with QR pairing
-- **Skills & Tools:** 50+ integrations including GitHub, Slack, Trello, Apple Notes, Himalaya email, and more
-- **Scheduled Tasks:** Cron job configuration for automated agent workflows
-- **Session Management:** Heartbeat modes, idle timeouts, and multi-agent coordination
+- **Business Function Templates:** Multi-agent orchestration for complex workflows.
+- **Multi-Provider Support:** Anthropic, OpenAI, Google, OpenRouter, xAI, Ollama, LM Studio, and custom local models.
+- **Advanced Security:** Sandbox modes, tool policies, and granular permission controls.
+- **Messaging Integration:** Telegram and WhatsApp channel support with QR pairing.
+- **Skills & Tools:** 50+ integrations including GitHub, Slack, Trello, Apple Notes, Himalaya email, and more.
+- **Scheduled Tasks:** Cron job configuration for automated agent workflows.
+- **Session Management:** Heartbeat modes, idle timeouts, and multi-agent coordination.
 
 ### Installation & Deployment
 - **Auto-Dependency Check:** Verifies Node.js and required dependencies are ready
