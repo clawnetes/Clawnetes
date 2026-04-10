@@ -110,7 +110,8 @@ impl SshExecutor {
 
 impl CommandExecutor for SshExecutor {
     fn run(&self, cmd: &str) -> Result<String, ClawError> {
-        execute_ssh(&self.session, cmd).map_err(ClawError::Ssh)
+        let path_prefix = "export PATH=\"$PATH:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.cargo/bin\"; ";
+        execute_ssh(&self.session, &format!("{}{}", path_prefix, cmd)).map_err(ClawError::Ssh)
     }
 
     fn read_file(&self, path: &str) -> Result<String, ClawError> {
