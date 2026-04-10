@@ -274,7 +274,7 @@ fn resolve_remote_gateway_port(remote: &RemoteInfo, preferred_port: u16) -> Resu
     Ok(preferred_port.max(1))
 }
 
-fn ensure_remote_gateway_tunnel(
+pub fn ensure_remote_gateway_tunnel(
     remote: &RemoteInfo,
     remote_gateway_port: u16,
 ) -> Result<(), String> {
@@ -541,11 +541,11 @@ pub async fn prepare_gateway_chat_connection(
             move || -> Result<GatewayChatBootstrap, String> {
                 let remote_gateway_port = resolve_remote_gateway_port(&remote, gateway_port)?;
                 ensure_remote_gateway_tunnel(&remote, remote_gateway_port)?;
-                if let Err(first_error) = verify_tunnel_connectivity(&remote, remote_gateway_port) {
+                if let Err(first_error) = verify_tunnel_connectivity(&remote, remote_gateway_port, Some(crate::platforms::types::AgentPlatform::Openclaw)) {
                     crate::ssh::stop_ssh_tunnel();
                     std::thread::sleep(REMOTE_TUNNEL_RESTART_SETTLE_TIME);
                     ensure_remote_gateway_tunnel(&remote, remote_gateway_port)?;
-                    verify_tunnel_connectivity(&remote, remote_gateway_port).map_err(
+                    verify_tunnel_connectivity(&remote, remote_gateway_port, Some(crate::platforms::types::AgentPlatform::Openclaw)).map_err(
                         |retry_error| {
                             format!(
                                 "{} Remote port resolved to {}.",
@@ -604,6 +604,7 @@ pub async fn prepare_gateway_chat_connection(
 pub fn verify_tunnel_connectivity(
     remote: &RemoteInfo,
     remote_gateway_port: u16,
+    platform: Option<crate::platforms::types::AgentPlatform>,
 ) -> Result<bool, String> {
     let mut last_error = String::from("No attempts made");
 
@@ -618,6 +619,32 @@ pub fn verify_tunnel_connectivity(
                 crate::ssh::REMOTE_TUNNEL_LOCAL_PORT,
                 remote_gateway_port
             );
+            continue;
+        }
+
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .no_proxy()
+            .build()
+            .unwrap_or_else(|_| reqwest::blocking::Client::new());
+
+        if matches!(platform, Some(crate::platforms::types::AgentPlatform::Hermes)) {
+            let url = format!(
+                "http://127.0.0.1:{}/health",
+                crate::ssh::REMOTE_TUNNEL_LOCAL_PORT
+            );
+            match client.get(&url).send() {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        return Ok(true);
+                    } else {
+                        last_error = format!("HTTP Error: Status {}", resp.status());
+                    }
+                }
+                Err(e) => {
+                    last_error = format!("HTTP Connection failed: {}", e);
+                }
+            }
             continue;
         }
 
@@ -669,12 +696,6 @@ pub fn verify_tunnel_connectivity(
                 continue;
             }
         };
-
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .no_proxy()
-            .build()
-            .unwrap_or_else(|_| reqwest::blocking::Client::new());
 
         let url = format!(
             "http://127.0.0.1:{}/?token={}",

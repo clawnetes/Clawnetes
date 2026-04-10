@@ -323,6 +323,7 @@ export async function handleInstall(controller: InstallController) {
         const tunnelWorking: boolean = await invoke("verify_tunnel_connectivity", {
           gatewayPort: state.gatewayPort,
           remote: remoteConfig,
+          platform: state.platform,
         });
         if (!tunnelWorking) {
           throw new Error("Backend update pending. Please restart the application (Ctrl+C and npm run tauri dev) to apply the latest fixes.");

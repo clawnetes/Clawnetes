@@ -292,8 +292,9 @@ fn get_dashboard_url(
 fn verify_tunnel_connectivity(
     remote: RemoteInfo,
     gateway_port: Option<u16>,
+    platform: Option<AgentPlatform>,
 ) -> Result<bool, String> {
-    gateway::verify_tunnel_connectivity(&remote, gateway_port.unwrap_or(ssh::DEFAULT_GATEWAY_PORT))
+    gateway::verify_tunnel_connectivity(&remote, gateway_port.unwrap_or(ssh::DEFAULT_GATEWAY_PORT), platform)
 }
 
 #[command]

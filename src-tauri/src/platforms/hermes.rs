@@ -833,8 +833,20 @@ pub fn prepare_chat_bootstrap(remote: Option<&RemoteInfo>) -> Result<GatewayChat
         let executor = SshExecutor::connect(remote_info).map_err(String::from)?;
         let mut bootstrap = prepare_chat_bootstrap_with(&executor).map_err(String::from)?;
         bootstrap.target_environment = "cloud".to_string();
+
+        let remote_gateway_port = bootstrap.gateway_port;
+        crate::gateway::ensure_remote_gateway_tunnel(remote_info, remote_gateway_port)?;
+
+        if let Err(err) = crate::gateway::verify_tunnel_connectivity(
+            remote_info,
+            remote_gateway_port,
+            Some(crate::platforms::types::AgentPlatform::Hermes),
+        ) {
+            eprintln!("Warning: Failed to verify Hermes tunnel connectivity: {}", err);
+        }
+
         bootstrap.tunnel_active = true;
-        bootstrap.api_base_url = Some(format!("http://127.0.0.1:{}/v1", bootstrap.gateway_port));
+        bootstrap.api_base_url = Some(format!("http://127.0.0.1:{}/v1", crate::ssh::REMOTE_TUNNEL_LOCAL_PORT));
         return Ok(bootstrap);
     }
     prepare_chat_bootstrap_with(&LocalExecutor).map_err(String::from)
