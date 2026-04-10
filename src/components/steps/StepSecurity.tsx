@@ -15,7 +15,7 @@ export default function StepSecurity() {
       </div>
       <p style={{ fontWeight: 600 }}>Do you understand the risks and wish to continue?</p>
       <div className="button-group">
-        <button className="primary" onClick={() => dispatch({ type: "SET_FIELD", field: "step", value: 5 })} data-testid="btn-i-understand">I Understand</button>
+        <button className="primary" onClick={() => dispatch({ type: "SET_FIELD", field: "step", value: state.platform === "hermes" ? 19 : 5 })} data-testid="btn-i-understand">I Understand</button>
         <button className="secondary" onClick={() => dispatch({ type: "SET_FIELD", field: "step", value: 2 })}>Back</button>
       </div>
     </div>

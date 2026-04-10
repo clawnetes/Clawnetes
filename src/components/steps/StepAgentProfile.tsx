@@ -53,7 +53,7 @@ export default function StepAgentProfile() {
         </div>
       </div>
       <div className="button-group">
-        <button className="primary" disabled={!agentName} onClick={() => setField("step", platform === "hermes" ? 18 : 6.5)} data-testid="btn-next">Next</button>
+        <button className="primary" disabled={!agentName} onClick={() => setField("step", 6.5)} data-testid="btn-next">Next</button>
         <button className="secondary" onClick={() => setField("step", skipBasicConfig ? 0 : 5)}>Back</button>
       </div>
     </div>

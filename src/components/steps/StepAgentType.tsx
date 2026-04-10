@@ -7,9 +7,8 @@ interface StepAgentTypeProps {
 
 export default function StepAgentType({ applyAgentTypePreset }: StepAgentTypeProps) {
   const { state, dispatch } = useWizard();
-  const { agentType, platform } = state;
+  const { agentType } = state;
   const isPresetAgent = agentType !== "custom";
-  const platformName = platform === "hermes" ? "Hermes" : "OpenClaw";
 
   const setStep = (v: number) => dispatch({ type: "SET_FIELD", field: "step", value: v });
 
@@ -23,7 +22,7 @@ export default function StepAgentType({ applyAgentTypePreset }: StepAgentTypePro
   return (
     <div className="step-view" data-testid="step-agent-type">
       <h2>Agent Type</h2>
-      <p className="step-description">Pick a pre-configured {platformName} agent type or build your own from scratch.</p>
+      <p className="step-description">Pick a pre-configured OpenClaw agent type or build your own from scratch.</p>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
         {agentTypes.map(t => (
           <div
@@ -47,9 +46,7 @@ export default function StepAgentType({ applyAgentTypePreset }: StepAgentTypePro
       </div>
       <div className="button-group" style={{ marginTop: "1.5rem" }}>
         <button className="primary" data-testid="btn-next" onClick={() => {
-          if (platform === "hermes") {
-            setStep(18);
-          } else if (isPresetAgent) {
+          if (isPresetAgent) {
             setStep(6.7);
           } else {
             setStep(8);

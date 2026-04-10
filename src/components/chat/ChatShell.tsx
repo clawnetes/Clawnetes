@@ -7,6 +7,7 @@ import {
   type GatewayChatEventPayload,
   type GatewayChatSession,
   type GatewaySessionsChangedPayload,
+  GatewayChatClient,
 } from "../../lib/gatewayChat";
 import { createChatTransportClient, type ChatTransportClient } from "../../lib/chatTransport";
 import {

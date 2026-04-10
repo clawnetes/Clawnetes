@@ -43,7 +43,6 @@ import StepIdentity from "./components/steps/StepIdentity";
 import StepAgentProfile from "./components/steps/StepAgentProfile";
 import StepAgentType from "./components/steps/StepAgentType";
 import StepPlatformSelect from "./components/steps/StepPlatformSelect";
-import StepHermesWelcome from "./components/steps/hermes/StepHermesWelcome";
 import StepHermesConfig from "./components/steps/hermes/StepHermesConfig";
 import StepHermesMessaging from "./components/steps/hermes/StepHermesMessaging";
 import StepHermesReview from "./components/steps/hermes/StepHermesReview";
@@ -318,10 +317,6 @@ function App() {
     { id: 1, name: "Environment" },
     { id: 2, name: "System Check" },
     { id: 3, name: "Security" },
-    { id: 5, name: "Identity" },
-    { id: 6, name: "Agent" },
-    { id: 6.5, name: "Platform" },
-    { id: 18, name: "Hermes" },
     { id: 19, name: "Config" },
     { id: 20, name: "Messaging" },
     { id: 21, name: "Review" },
@@ -1701,7 +1696,7 @@ Managed by Clawnetes.`,
     setChatBootstrapError("");
     setAppScreen("setup");
     setMode("advanced");
-    setStep(platform === "hermes" ? 18 : 6);
+    setStep(platform === "hermes" ? 19 : 6);
   }, [loadExistingConfig, platform, setMode, setStep]);
 
   useEffect(() => {
@@ -2174,8 +2169,6 @@ Managed by Clawnetes.`,
         return <StepAgentProfile />;
       case 6.5:
         return <StepAgentType applyAgentTypePreset={applyAgentTypePreset} />;
-      case 18:
-        return <StepHermesWelcome />;
       case 19:
         return <StepHermesConfig renderProviderAuthEditor={renderProviderAuthEditor} getProviderDefaultModel={getProviderDefaultModel} getProviderModelOptions={getProviderModelOptions} />;
       case 20:

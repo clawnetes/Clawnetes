@@ -163,7 +163,7 @@ export default function StepHermesConfig({
         <button className="primary" data-testid="btn-next" onClick={() => setField("step", 20)} disabled={loading}>
           Next
         </button>
-        <button className="secondary" onClick={() => setField("step", 18)} disabled={loading}>
+        <button className="secondary" onClick={() => setField("step", 3)} disabled={loading}>
           Back
         </button>
       </div>

@@ -81,7 +81,7 @@ export function loadEnvironments(): StoredEnvironment[] {
     .filter(isValidEnvironment)
     .map((env) => ({
       ...env,
-      platform: env.platform === "hermes" ? "hermes" : "openclaw",
+      platform: (env.platform === "hermes" ? "hermes" : "openclaw") as import("../platforms/types").AgentPlatform,
     }));
   if (valid.length === 0) {
     return [];

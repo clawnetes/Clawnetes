@@ -16,10 +16,7 @@ function StepHermesReview({ handleInstall, hasChanges, initialConfigRef }: StepH
 
   return (
     <div className="step-view" data-testid="step-hermes-review">
-      <h2>Hermes Review</h2>
-      <p className="step-description">
-        Review the Hermes-specific configuration before Clawnetes writes `~/.hermes`, enables the API server, and starts Hermes services.
-      </p>
+      <h2>Finalizing Hermes Installation</h2>
 
       <div className="status-card" style={{
         padding: "1.5rem",

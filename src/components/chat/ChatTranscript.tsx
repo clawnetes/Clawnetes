@@ -18,6 +18,7 @@ interface ChatTranscriptProps {
   activeThreadTitle?: string;
   activeSessionKey: string;
   onSetComposerValue: (value: string) => void;
+  onClearError?: () => void;
   platform?: AgentPlatform;
 }
 
