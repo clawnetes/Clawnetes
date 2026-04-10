@@ -21,16 +21,25 @@ export default function StepPlatformSelect() {
             className={`mode-card ${platform === option.id ? "active" : ""}`}
             onClick={() => setField("platform", option.id)}
             style={{
-              padding: "1.25rem",
+              padding: "2rem",
               borderRadius: "12px",
               border: platform === option.id ? "2px solid var(--primary)" : "1px solid var(--border)",
               backgroundColor: platform === option.id ? "rgba(255, 59, 48, 0.08)" : "var(--bg-card)",
               cursor: "pointer",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "1rem",
+              minHeight: "180px",
             }}
           >
-            <div style={{ fontWeight: 700, marginBottom: "0.35rem" }}>{option.label}</div>
-            <div style={{ fontSize: "0.9rem", marginBottom: "0.35rem", color: "var(--text-primary)" }}>{option.description}</div>
-            <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{option.helperText}</div>
+            <div style={{ fontWeight: 700, fontSize: "1.2rem" }}>{option.label}</div>
+            {option.id === "openclaw" ? (
+              <img src="/images/logo.png" alt="OpenClaw Logo" style={{ width: "64px", height: "64px", objectFit: "contain" }} />
+            ) : (
+              <div style={{ fontSize: "64px", lineHeight: 1 }}>⚕️</div>
+            )}
           </div>
         ))}
       </div>
