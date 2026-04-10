@@ -1,4 +1,4 @@
-# Clawnetes 🦞
+# <img src="public/images/logo.png" alt="Clawnetes Logo" width="48" height="48" align="center" style="margin-right: 8px;"> Clawnetes
 
 **The Native Installer for OpenClaw & Hermes Agent.**
 
