@@ -2199,3 +2199,14 @@ button:disabled {
 .accordion-chevron.rotated {
   transform: rotate(180deg);
 }
+
+/* Theme-based logos */
+.theme-light-logo {
+  display: none;
+}
+html[data-theme="light"] .theme-light-logo {
+  display: block;
+}
+html[data-theme="light"] .theme-dark-logo {
+  display: none;
+}
