@@ -976,7 +976,7 @@ function ChatShell({
   function scheduleHistoryReconcileRetry(
     sessionKey: string,
     threadId: string,
-    client: GatewayChatClient,
+    client: ChatTransportClient,
     sessionSnapshot?: GatewayChatSession | GatewaySessionsChangedPayload | null,
   ) {
     if (historyReconcileTimerRef.current !== null) {
@@ -2219,7 +2219,7 @@ function ChatShell({
             gatewayAuthMode={gatewayAuthMode}
             heartbeatMode={resolvedHeartbeatMode}
             sandboxMode={resolvedSandboxMode}
-            toolPolicy={resolvedToolPolicy}
+            toolPolicy={resolvedToolPolicy || undefined}
             toolsSaving={toolsSaving}
             idleTimeoutMs={resolvedIdleTimeoutMs}
             hermesMaxTurns={hermesMaxTurns}
@@ -2303,7 +2303,7 @@ function ChatShell({
           {!bootstrap && (
             <div className="chat-bootstrap-status">
               <p className="chat-bootstrap-title">Starting the gateway workspace</p>
-              <p className="chat-bootstrap-detail">{bootstrapping ? (bootstrap?.platform === "hermes" ? "Preparing the Hermes API connection..." : "Preparing the OpenClaw gateway connection...") : bootstrapError || "No gateway connection available."}</p>
+              <p className="chat-bootstrap-detail">{bootstrapping ? (platform === "hermes" ? "Preparing the Hermes API connection..." : "Preparing the OpenClaw gateway connection...") : bootstrapError || "No gateway connection available."}</p>
               {!bootstrapping && <button onClick={onRetryConnection}>Retry</button>}
             </div>
           )}

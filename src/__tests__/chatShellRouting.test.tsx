@@ -790,7 +790,7 @@ Tomorrow looks clear and cool.`,
     vi.stubGlobal("WebSocket", createReconnectMockWebSocket());
 
     const { unmount } = render(
-      <ChatShell
+      <ChatShell platform="openclaw" onSwitchPlatform={vi.fn()}
         bootstrap={DIRECT_CHAT_BOOTSTRAP}
         bootstrapping={false}
         bootstrapError=""
@@ -812,7 +812,7 @@ Tomorrow looks clear and cool.`,
 
     const onConsumeReturnScrollSnapshot = vi.fn();
     render(
-      <ChatShell
+      <ChatShell platform="openclaw" onSwitchPlatform={vi.fn()}
         bootstrap={DIRECT_CHAT_BOOTSTRAP}
         bootstrapping={false}
         bootstrapError=""
@@ -844,7 +844,7 @@ Tomorrow looks clear and cool.`,
     vi.stubGlobal("WebSocket", createReconnectMockWebSocket());
 
     render(
-      <ChatShell
+      <ChatShell platform="openclaw" onSwitchPlatform={vi.fn()}
         bootstrap={DIRECT_CHAT_BOOTSTRAP}
         bootstrapping={false}
         bootstrapError=""
@@ -1010,7 +1010,7 @@ Tomorrow looks clear and cool.`,
 
     const onAgentSwitch = vi.fn();
     const { unmount } = render(
-      <ChatShell
+      <ChatShell platform="openclaw" onSwitchPlatform={vi.fn()}
         bootstrap={DIRECT_CHAT_BOOTSTRAP}
         bootstrapping={false}
         bootstrapError=""
@@ -1033,7 +1033,7 @@ Tomorrow looks clear and cool.`,
     unmount();
 
     render(
-      <ChatShell
+      <ChatShell platform="openclaw" onSwitchPlatform={vi.fn()}
         bootstrap={DIRECT_CHAT_BOOTSTRAP}
         bootstrapping={false}
         bootstrapError=""
@@ -1085,7 +1085,7 @@ Tomorrow looks clear and cool.`,
     vi.stubGlobal("WebSocket", createReconnectMockWebSocket());
 
     render(
-      <ChatShell
+      <ChatShell platform="openclaw" onSwitchPlatform={vi.fn()}
         bootstrap={DIRECT_CHAT_BOOTSTRAP}
         bootstrapping={false}
         bootstrapError=""
@@ -1441,7 +1441,7 @@ Tomorrow looks clear and cool.`,
     vi.stubGlobal("WebSocket", createReconnectMockWebSocket());
 
     render(
-      <ChatShell
+      <ChatShell platform="openclaw" onSwitchPlatform={vi.fn()}
         bootstrap={DIRECT_CHAT_BOOTSTRAP}
         bootstrapping={false}
         bootstrapError=""
@@ -1490,7 +1490,7 @@ Tomorrow looks clear and cool.`,
     }));
 
     const { rerender } = render(
-      <ChatShell
+      <ChatShell platform="openclaw" onSwitchPlatform={vi.fn()}
         bootstrap={DIRECT_CHAT_BOOTSTRAP}
         bootstrapping={false}
         bootstrapError=""
@@ -1507,7 +1507,7 @@ Tomorrow looks clear and cool.`,
     phase = "after";
 
     rerender(
-      <ChatShell
+      <ChatShell platform="openclaw" onSwitchPlatform={vi.fn()}
         bootstrap={DIRECT_CHAT_BOOTSTRAP}
         bootstrapping={false}
         bootstrapError=""

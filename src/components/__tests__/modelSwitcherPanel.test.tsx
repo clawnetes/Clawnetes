@@ -338,7 +338,9 @@ describe("ModelSwitcherPanel", () => {
     });
     expect(onModelChange).not.toHaveBeenCalled();
 
-    resolveAuthSave?.();
+    if (resolveAuthSave) {
+      (resolveAuthSave as () => void)();
+    }
 
     await waitFor(() => {
       expect(onModelChange).toHaveBeenCalledWith("google/gemini-3.1-pro-preview");
