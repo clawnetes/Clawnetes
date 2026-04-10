@@ -1,4 +1,5 @@
 import type { GatewayChatBootstrap } from "../types";
+import { buildChatScopeKey, loadStoredThreads } from "./chatShellStorage";
 import type {
   GatewayAgentEventPayload,
   GatewayChatAgent,
@@ -61,6 +62,28 @@ export class HermesChatTransport {
   constructor(private readonly bootstrap: GatewayChatBootstrap) {
     this.apiBaseUrl = (bootstrap.apiBaseUrl || "").replace(/\/+$/, "");
     this.apiKey = bootstrap.apiKey || bootstrap.authToken || "";
+
+    const scopeKey = buildChatScopeKey({
+      platform: bootstrap.platform || "hermes",
+      wsUrl: bootstrap.wsUrl,
+      targetEnvironment: bootstrap.targetEnvironment,
+      gatewayPort: bootstrap.gatewayPort,
+    });
+
+    const storedThreads = loadStoredThreads(scopeKey);
+    for (const thread of storedThreads) {
+      if (thread.sessionKey) {
+        this.sessions.set(thread.sessionKey, {
+          key: thread.sessionKey,
+          sessionId: thread.sessionId || thread.sessionKey,
+          displayName: thread.agentId || HermesChatTransport.AGENT_ID,
+          derivedTitle: thread.title || "Hermes Session",
+          updatedAt: thread.updatedAt || Date.now(),
+          messages: (thread.messages || []) as unknown as Array<Record<string, unknown>>,
+        });
+      }
+    }
+
     this.ensureSession(HermesChatTransport.AGENT_ID);
   }
 
