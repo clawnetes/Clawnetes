@@ -4,7 +4,8 @@ import type { ToolPolicy } from "../../types";
 
 export default function StepToolAccess() {
   const { state, dispatch } = useWizard();
-  const { toolPolicy } = state;
+  const { platform, toolPolicy } = state;
+  const platformName = platform === "hermes" ? "Hermes" : "OpenClaw";
 
   const setField = (field: string, value: unknown) =>
     dispatch({ type: "SET_FIELD", field: field as any, value });
@@ -17,7 +18,7 @@ export default function StepToolAccess() {
       <ToolPolicyEditor
         policy={toolPolicy}
         onChange={(v: ToolPolicy) => setField("toolPolicy", v)}
-        description="Profiles set the default OpenClaw allowlist. Individual toggles override that baseline."
+        description={`Profiles set the default ${platformName} allowlist. Individual toggles override that baseline.`}
       />
 
       <div className="button-group">

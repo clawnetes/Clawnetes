@@ -1,6 +1,7 @@
 import type { ChatMessage } from "../../lib/chatMessageFilters";
 import ChatIcon, { ChatActionButton } from "./ChatIcon";
 import ChatMessageBody from "./ChatMarkdown";
+import type { AgentPlatform } from "../../platforms/types";
 
 interface ChatTranscriptProps {
   transcriptRef: React.RefObject<HTMLDivElement | null>;
@@ -17,6 +18,8 @@ interface ChatTranscriptProps {
   activeThreadTitle?: string;
   activeSessionKey: string;
   onSetComposerValue: (value: string) => void;
+  onClearError?: () => void;
+  platform?: AgentPlatform;
 }
 
 export default function ChatTranscript({
@@ -34,9 +37,11 @@ export default function ChatTranscript({
   activeThreadTitle,
   activeSessionKey,
   onSetComposerValue,
+  platform = "openclaw",
 }: ChatTranscriptProps) {
   const showBlockingHistoryState = loadingHistory && messages.length === 0;
   const showInlineErrorBanner = !!shellError && messages.length > 0;
+  const platformLabel = platform === "hermes" ? "Hermes Agent" : "OpenClaw";
 
   return (
     <div className="chat-transcript">
@@ -55,23 +60,23 @@ export default function ChatTranscript({
 
         {showConnectingState ? (
           <div className="chat-state-card" data-testid="chat-connecting-state">
-            <h3>Connecting to OpenClaw</h3>
+            <h3>Connecting to {platformLabel}</h3>
             <p>{connectionLabel}</p>
           </div>
         ) : shellError && !showInlineErrorBanner ? (
           <div className="chat-state-card error" data-testid="chat-error-state">
-            <h3>Gateway connection failed</h3>
+            <h3>{platformLabel} connection failed</h3>
             <p>{shellError}</p>
           </div>
         ) : showEmptyAgentState ? (
           <div className="chat-state-card" data-testid="chat-empty-agent-state">
             <h3>No agents available</h3>
-            <p>The OpenClaw gateway is connected, but it did not return any configured agents.</p>
+            <p>The {platformLabel} gateway is connected, but it did not return any configured agents.</p>
           </div>
         ) : showBlockingHistoryState ? (
           <div className="chat-state-card">
             <h3>Loading session</h3>
-            <p>Fetching the latest transcript from OpenClaw.</p>
+            <p>Fetching the latest transcript from {platformLabel}.</p>
           </div>
         ) : messages.length === 0 ? (
           <div className="chat-empty-stage">

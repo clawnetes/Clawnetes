@@ -12,17 +12,18 @@ function StepReview({ handleInstall, hasChanges, initialConfigRef }: StepReviewP
   const { state, dispatch } = useWizard();
   const {
     loading, error, progress, logs, mode,
-    targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
+    platform, targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
     validating, validateOutput,
   } = state;
+  const platformLabel = platform === "hermes" ? "Hermes Agent" : "OpenClaw";
 
   const setField = (field: string, value: unknown) =>
     dispatch({ type: "SET_FIELD", field: field as any, value });
 
   return (
     <div className="step-view" data-testid="step-review">
-      <h2>{initialConfigRef.current ? "Review Configuration" : "Deploy Your AI Agent"}</h2>
-      <p className="step-description">{initialConfigRef.current ? "Review your changes before applying." : "Your agent is ready to be deployed."}</p>
+      <h2>{initialConfigRef.current ? `Review ${platformLabel} Configuration` : `Deploy ${platformLabel}`}</h2>
+      <p className="step-description">{initialConfigRef.current ? "Review your changes before applying." : `${platformLabel} is ready to be deployed.`}</p>
 
       <div className="status-card" style={{
         padding: "1.5rem",
@@ -57,7 +58,7 @@ function StepReview({ handleInstall, hasChanges, initialConfigRef }: StepReviewP
         </div>
       )}
 
-      {initialConfigRef.current && (
+      {initialConfigRef.current && platform !== "hermes" && (
         <div style={{ marginBottom: "1.5rem" }}>
           <button
             className="secondary"

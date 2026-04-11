@@ -1,7 +1,9 @@
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import Badge from "../ui/Badge";
+import type { AgentPlatform } from "../../platforms/types";
 
 interface SettingsPanelProps {
+  platform?: AgentPlatform;
   targetEnvironment?: string;
   remoteSummary?: string;
   gatewayPort?: number;
@@ -17,7 +19,21 @@ interface SettingsPanelProps {
   onReconfigure?: () => void;
   onUninstall?: () => void;
   idleTimeoutMs?: number;
+  hermesMaxTurns?: number;
+  hermesReasoningEffort?: string;
+  hermesPersonality?: string;
+  hermesTerminalBackend?: string;
+  hermesMemoryEnabled?: boolean;
+  hermesVerbose?: boolean;
+  hermesSmartRouting?: boolean;
+  hermesModelBaseUrl?: string;
+  hermesApiServerEnabled?: boolean;
+  hermesApiServerKey?: string;
+  hermesApiServerCorsOrigins?: string;
+  hermesRawConfigYaml?: string;
+  hermesRawEnv?: string;
   onSaveAgentSettings?: (heartbeatMode: string, idleTimeoutMs: number, sandboxMode: string) => void;
+  onSaveHermesSettings?: (updates: Record<string, any>) => void;
 }
 
 function SettingItem({ label, value }: { label: string; value?: string }) {
@@ -77,6 +93,7 @@ function ActionButton({
 }
 
 function SettingsPanel({
+  platform = "openclaw",
   targetEnvironment = "local",
   remoteSummary = "",
   gatewayPort,
@@ -92,13 +109,78 @@ function SettingsPanel({
   onReconfigure,
   onUninstall,
   idleTimeoutMs = 0,
+  hermesMaxTurns = 60,
+  hermesReasoningEffort = "medium",
+  hermesPersonality = "helpful",
+  hermesTerminalBackend = "local",
+  hermesMemoryEnabled = true,
+  hermesVerbose = false,
+  hermesSmartRouting = false,
+  hermesModelBaseUrl = "",
+  hermesApiServerEnabled = true,
+  hermesApiServerKey = "",
+  hermesApiServerCorsOrigins = "*",
+  hermesRawConfigYaml = "",
+  hermesRawEnv = "",
   onSaveAgentSettings,
+  onSaveHermesSettings,
 }: SettingsPanelProps) {
   const envLabel = targetEnvironment === "cloud" ? "Remote Gateway" : "Local Gateway";
   const [draftHeartbeatMode, setDraftHeartbeatMode] = useState(heartbeatMode);
   const [draftIdleTimeout, setDraftIdleTimeout] = useState(idleTimeoutMs);
   const [draftSandboxMode, setDraftSandboxMode] = useState(sandboxMode);
+  const [draftTerminalBackend, setDraftTerminalBackend] = useState(hermesTerminalBackend);
+  const [draftMaxTurns, setDraftMaxTurns] = useState(hermesMaxTurns);
+  const [draftReasoningEffort, setDraftReasoningEffort] = useState(hermesReasoningEffort);
+  const [draftPersonality, setDraftPersonality] = useState(hermesPersonality);
+  const [draftMemoryEnabled, setDraftMemoryEnabled] = useState(hermesMemoryEnabled);
+  const [draftVerbose, setDraftVerbose] = useState(hermesVerbose);
+  const [draftSmartRouting, setDraftSmartRouting] = useState(hermesSmartRouting);
+  const [draftModelBaseUrl, setDraftModelBaseUrl] = useState(hermesModelBaseUrl);
+  const [draftApiServerEnabled, setDraftApiServerEnabled] = useState(hermesApiServerEnabled);
+  const [draftApiServerKey, setDraftApiServerKey] = useState(hermesApiServerKey);
+  const [draftApiServerCorsOrigins, setDraftApiServerCorsOrigins] = useState(hermesApiServerCorsOrigins);
+  const [draftRawConfigYaml, setDraftRawConfigYaml] = useState(hermesRawConfigYaml);
+  const [draftRawEnv, setDraftRawEnv] = useState(hermesRawEnv);
+  
   const [settingsDirty, setSettingsDirty] = useState(false);
+
+  useEffect(() => {
+    setDraftHeartbeatMode(heartbeatMode);
+    setDraftIdleTimeout(idleTimeoutMs);
+    setDraftSandboxMode(sandboxMode);
+    setDraftTerminalBackend(hermesTerminalBackend);
+    setDraftMaxTurns(hermesMaxTurns);
+    setDraftReasoningEffort(hermesReasoningEffort);
+    setDraftPersonality(hermesPersonality);
+    setDraftMemoryEnabled(hermesMemoryEnabled);
+    setDraftVerbose(hermesVerbose);
+    setDraftSmartRouting(hermesSmartRouting);
+    setDraftModelBaseUrl(hermesModelBaseUrl);
+    setDraftApiServerEnabled(hermesApiServerEnabled);
+    setDraftApiServerKey(hermesApiServerKey);
+    setDraftApiServerCorsOrigins(hermesApiServerCorsOrigins);
+    setDraftRawConfigYaml(hermesRawConfigYaml);
+    setDraftRawEnv(hermesRawEnv);
+    setSettingsDirty(false);
+  }, [
+    heartbeatMode,
+    idleTimeoutMs,
+    sandboxMode,
+    hermesTerminalBackend,
+    hermesMaxTurns,
+    hermesReasoningEffort,
+    hermesPersonality,
+    hermesMemoryEnabled,
+    hermesVerbose,
+    hermesSmartRouting,
+    hermesModelBaseUrl,
+    hermesApiServerEnabled,
+    hermesApiServerKey,
+    hermesApiServerCorsOrigins,
+    hermesRawConfigYaml,
+    hermesRawEnv,
+  ]);
 
   const handleHeartbeatChange = (mode: string) => {
     setDraftHeartbeatMode(mode);
@@ -115,12 +197,40 @@ function SettingsPanel({
     setSettingsDirty(true);
   };
 
+  const handleTerminalBackendChange = (mode: string) => {
+    setDraftTerminalBackend(mode);
+    setSettingsDirty(true);
+  };
+
   const handleSaveSettings = () => {
-    if (onSaveAgentSettings) {
+    if (isHermes && onSaveHermesSettings) {
+      const rawFilesChanged =
+        draftRawConfigYaml !== hermesRawConfigYaml || draftRawEnv !== hermesRawEnv;
+      onSaveHermesSettings({
+        hermesTerminalBackend: draftTerminalBackend,
+        hermesMaxTurns: draftMaxTurns,
+        hermesReasoningEffort: draftReasoningEffort,
+        hermesPersonality: draftPersonality,
+        hermesMemoryEnabled: draftMemoryEnabled,
+        hermesVerbose: draftVerbose,
+        hermesSmartRouting: draftSmartRouting,
+        hermesModelBaseUrl: draftModelBaseUrl,
+        hermesApiServerEnabled: draftApiServerEnabled,
+        hermesApiServerKey: draftApiServerKey,
+        hermesApiServerCorsOrigins: draftApiServerCorsOrigins,
+        hermesRawConfigYaml: draftRawConfigYaml,
+        hermesRawEnv: draftRawEnv,
+        hermesApplyRawFiles: rawFilesChanged,
+      });
+      setSettingsDirty(false);
+    } else if (onSaveAgentSettings) {
       onSaveAgentSettings(draftHeartbeatMode, draftIdleTimeout, draftSandboxMode);
       setSettingsDirty(false);
     }
   };
+
+  const isHermes = platform === "hermes";
+  const platformName = isHermes ? "Hermes Agent" : "OpenClaw";
 
   return (
     <div data-testid="settings-panel" className="space-y-5">
@@ -133,7 +243,7 @@ function SettingsPanel({
         </h4>
         <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-0)] p-3">
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs font-semibold text-[var(--text-main)]">{envLabel}</span>
+            <span className="text-xs font-semibold text-[var(--text-main)]">{envLabel} ({platformName})</span>
             <Badge variant="connected">Active</Badge>
           </div>
           {remoteSummary && (
@@ -150,66 +260,235 @@ function SettingsPanel({
         <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-0)] px-3 divide-y divide-[var(--border)]">
           <SettingItem label="Port" value={gatewayPort ? String(gatewayPort) : undefined} />
           <SettingItem label="Bind Address" value={gatewayBind} />
-          <SettingItem label="Auth Mode" value={gatewayAuthMode} />
+          {!isHermes && <SettingItem label="Auth Mode" value={gatewayAuthMode} />}
         </div>
       </div>
 
-      {/* Session section - Editable */}
-      <div>
-        <h4 className="text-[0.65rem] font-semibold text-[var(--text-subtle)] uppercase tracking-wider mb-2">
-          Session
-        </h4>
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-0)] p-3 space-y-3">
-          <div>
-            <label className="text-xs font-medium text-[var(--text-main)] block mb-1">
-              Heartbeat Mode
-            </label>
-            <select
-              value={draftHeartbeatMode}
-              onChange={(e) => handleHeartbeatChange(e.target.value)}
-              className="w-full px-2 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--surface-border)] text-xs text-[var(--text-main)]"
-            >
-              <option value="never">Never</option>
-              <option value="30m">Every 30 minutes</option>
-              <option value="1h">Every hour</option>
-              <option value="6h">Every 6 hours</option>
-              <option value="idle">When idle</option>
-            </select>
+      {/* Hermes Session section */}
+      {isHermes && (
+        <div>
+          <h4 className="text-[0.65rem] font-semibold text-[var(--text-subtle)] uppercase tracking-wider mb-2">
+            Provider &amp; Model
+          </h4>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-0)] p-3 space-y-3 mb-4">
+            <div>
+              <label htmlFor="hermes-model-base-url" className="text-xs font-medium text-[var(--text-main)] block mb-1">
+                Model Base URL
+              </label>
+              <input
+                id="hermes-model-base-url"
+                aria-label="Model Base URL"
+                type="text"
+                value={draftModelBaseUrl}
+                onChange={(e) => { setDraftModelBaseUrl(e.target.value); setSettingsDirty(true); }}
+                className="w-full px-2 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--surface-border)] text-xs text-[var(--text-main)]"
+                placeholder="https://api.openai.com/v1"
+              />
+            </div>
           </div>
 
-          {draftHeartbeatMode === "idle" && (
+          <h4 className="text-[0.65rem] font-semibold text-[var(--text-subtle)] uppercase tracking-wider mb-2">
+            Execution Environment
+          </h4>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-0)] p-3 space-y-3">
             <div>
               <label className="text-xs font-medium text-[var(--text-main)] block mb-1">
-                Idle Timeout (ms)
+                Terminal Backend
+              </label>
+              <select
+                value={draftTerminalBackend}
+                onChange={(e) => handleTerminalBackendChange(e.target.value)}
+                className="w-full px-2 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--surface-border)] text-xs text-[var(--text-main)]"
+              >
+                <option value="local">Local (Host OS)</option>
+                <option value="docker">Docker Container</option>
+                <option value="flyio">Fly.io (Cloud)</option>
+              </select>
+              <p className="text-[0.6rem] text-[var(--text-muted)] mt-1.5">
+                Controls where Hermes executes shell commands and writes files.
+              </p>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-[var(--text-main)] block mb-1">
+                Max Turns
               </label>
               <input
                 type="number"
-                value={draftIdleTimeout}
-                onChange={(e) => handleIdleTimeoutChange(parseInt(e.target.value, 10))}
+                value={draftMaxTurns}
+                onChange={(e) => { setDraftMaxTurns(parseInt(e.target.value, 10)); setSettingsDirty(true); }}
                 className="w-full px-2 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--surface-border)] text-xs text-[var(--text-main)]"
               />
             </div>
-          )}
+            <div>
+              <label className="text-xs font-medium text-[var(--text-main)] block mb-1">
+                Reasoning Effort
+              </label>
+              <select
+                value={draftReasoningEffort}
+                onChange={(e) => { setDraftReasoningEffort(e.target.value); setSettingsDirty(true); }}
+                className="w-full px-2 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--surface-border)] text-xs text-[var(--text-main)]"
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-[var(--text-main)] block mb-1">
+                Personality
+              </label>
+              <select
+                value={draftPersonality}
+                onChange={(e) => { setDraftPersonality(e.target.value); setSettingsDirty(true); }}
+                className="w-full px-2 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--surface-border)] text-xs text-[var(--text-main)]"
+              >
+                <option value="helpful">Helpful</option>
+                <option value="concise">Concise</option>
+                <option value="technical">Technical</option>
+                <option value="creative">Creative</option>
+                <option value="teacher">Teacher</option>
+                <option value="kawaii">Kawaii / Anime</option>
+                <option value="pirate">Pirate</option>
+                <option value="shakespeare">Shakespeare</option>
+                <option value="surfer">Surfer</option>
+                <option value="noir">Noir Detective</option>
+                <option value="uwu">UwU</option>
+                <option value="philosopher">Philosopher</option>
+                <option value="hype">Hype Bro</option>
+              </select>
+            </div>
+          </div>
 
-          <div>
-            <label className="text-xs font-medium text-[var(--text-main)] block mb-1">
-              Sandbox Mode
+          <h4 className="text-[0.65rem] font-semibold text-[var(--text-subtle)] uppercase tracking-wider mt-4 mb-2">
+            API Server
+          </h4>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-0)] p-3 space-y-3">
+            <label className="flex items-center gap-2 text-xs font-medium text-[var(--text-main)]">
+              <input
+                type="checkbox"
+                checked={draftApiServerEnabled}
+                onChange={(e) => { setDraftApiServerEnabled(e.target.checked); setSettingsDirty(true); }}
+              />
+              Enable API Server
             </label>
-            <select
-              value={draftSandboxMode}
-              onChange={(e) => handleSandboxModeChange(e.target.value)}
-              className="w-full px-2 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--surface-border)] text-xs text-[var(--text-main)]"
-            >
-              <option value="none">None</option>
-              <option value="partial">Partial (sub-agents only)</option>
-              <option value="full">Full</option>
-            </select>
+            <div>
+              <label htmlFor="hermes-api-server-key" className="text-xs font-medium text-[var(--text-main)] block mb-1">
+                API Server Key
+              </label>
+              <input
+                id="hermes-api-server-key"
+                aria-label="API Server Key"
+                type="password"
+                value={draftApiServerKey}
+                onChange={(e) => { setDraftApiServerKey(e.target.value); setSettingsDirty(true); }}
+                className="w-full px-2 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--surface-border)] text-xs text-[var(--text-main)]"
+              />
+            </div>
+            <div>
+              <label htmlFor="hermes-api-server-cors" className="text-xs font-medium text-[var(--text-main)] block mb-1">
+                API Server CORS Origins
+              </label>
+              <input
+                id="hermes-api-server-cors"
+                aria-label="API Server CORS Origins"
+                type="text"
+                value={draftApiServerCorsOrigins}
+                onChange={(e) => { setDraftApiServerCorsOrigins(e.target.value); setSettingsDirty(true); }}
+                className="w-full px-2 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--surface-border)] text-xs text-[var(--text-main)]"
+              />
+            </div>
+          </div>
+
+          <h4 className="text-[0.65rem] font-semibold text-[var(--text-subtle)] uppercase tracking-wider mt-4 mb-2">
+            Raw Config Files
+          </h4>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-0)] p-3 space-y-3">
+            <div>
+              <label htmlFor="hermes-raw-config-yaml" className="text-xs font-medium text-[var(--text-main)] block mb-1">
+                Raw config.yaml
+              </label>
+              <textarea
+                id="hermes-raw-config-yaml"
+                aria-label="Raw config.yaml"
+                value={draftRawConfigYaml}
+                onChange={(e) => { setDraftRawConfigYaml(e.target.value); setSettingsDirty(true); }}
+                className="w-full min-h-32 px-2 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--surface-border)] text-xs text-[var(--text-main)] font-mono"
+              />
+            </div>
+            <div>
+              <label htmlFor="hermes-raw-env" className="text-xs font-medium text-[var(--text-main)] block mb-1">
+                Raw .env
+              </label>
+              <textarea
+                id="hermes-raw-env"
+                aria-label="Raw .env"
+                value={draftRawEnv}
+                onChange={(e) => { setDraftRawEnv(e.target.value); setSettingsDirty(true); }}
+                className="w-full min-h-24 px-2 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--surface-border)] text-xs text-[var(--text-main)] font-mono"
+              />
+            </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* Session section - Editable */}
+      {!isHermes && (
+        <div>
+          <h4 className="text-[0.65rem] font-semibold text-[var(--text-subtle)] uppercase tracking-wider mb-2">
+            Session
+          </h4>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-0)] p-3 space-y-3">
+            <div>
+              <label className="text-xs font-medium text-[var(--text-main)] block mb-1">
+                Heartbeat Mode
+              </label>
+              <select
+                value={draftHeartbeatMode}
+                onChange={(e) => handleHeartbeatChange(e.target.value)}
+                className="w-full px-2 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--surface-border)] text-xs text-[var(--text-main)]"
+              >
+                <option value="never">Never</option>
+                <option value="30m">Every 30 minutes</option>
+                <option value="1h">Every hour</option>
+                <option value="6h">Every 6 hours</option>
+                <option value="idle">When idle</option>
+              </select>
+            </div>
+
+            {draftHeartbeatMode === "idle" && (
+              <div>
+                <label className="text-xs font-medium text-[var(--text-main)] block mb-1">
+                  Idle Timeout (ms)
+                </label>
+                <input
+                  type="number"
+                  value={draftIdleTimeout}
+                  onChange={(e) => handleIdleTimeoutChange(parseInt(e.target.value, 10))}
+                  className="w-full px-2 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--surface-border)] text-xs text-[var(--text-main)]"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="text-xs font-medium text-[var(--text-main)] block mb-1">
+                Sandbox Mode
+              </label>
+              <select
+                value={draftSandboxMode}
+                onChange={(e) => handleSandboxModeChange(e.target.value)}
+                className="w-full px-2 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--surface-border)] text-xs text-[var(--text-main)]"
+              >
+                <option value="none">None</option>
+                <option value="partial">Partial (sub-agents only)</option>
+                <option value="full">Full</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Save button if settings are dirty */}
-      {settingsDirty && onSaveAgentSettings && (
+      {settingsDirty && (isHermes ? !!onSaveHermesSettings : !!onSaveAgentSettings) && (
         <div className="flex gap-2">
           <button
             type="button"
@@ -217,6 +496,19 @@ function SettingsPanel({
               setDraftHeartbeatMode(heartbeatMode);
               setDraftIdleTimeout(idleTimeoutMs);
               setDraftSandboxMode(sandboxMode);
+              setDraftTerminalBackend(hermesTerminalBackend);
+              setDraftMaxTurns(hermesMaxTurns);
+              setDraftReasoningEffort(hermesReasoningEffort);
+              setDraftPersonality(hermesPersonality);
+              setDraftMemoryEnabled(hermesMemoryEnabled);
+              setDraftVerbose(hermesVerbose);
+              setDraftSmartRouting(hermesSmartRouting);
+              setDraftModelBaseUrl(hermesModelBaseUrl);
+              setDraftApiServerEnabled(hermesApiServerEnabled);
+              setDraftApiServerKey(hermesApiServerKey);
+              setDraftApiServerCorsOrigins(hermesApiServerCorsOrigins);
+              setDraftRawConfigYaml(hermesRawConfigYaml);
+              setDraftRawEnv(hermesRawEnv);
               setSettingsDirty(false);
             }}
             className="flex-1 px-3 py-2 rounded-md bg-[var(--surface-hover)] text-xs font-medium text-[var(--text-main)] hover:bg-[var(--surface-active)] transition-colors"
@@ -245,19 +537,21 @@ function SettingsPanel({
         <div className="space-y-2">
           <ActionButton
             label="Repair System"
-            description="Run openclaw doctor --repair"
+            description={isHermes ? "Run hermes doctor" : "Run openclaw doctor --repair"}
             onClick={onRepair}
             disabled={busy}
           />
+          {!isHermes && (
+            <ActionButton
+              label="Security Audit"
+              description="Run openclaw security audit --fix"
+              onClick={onAudit}
+              disabled={busy}
+            />
+          )}
           <ActionButton
-            label="Security Audit"
-            description="Run openclaw security audit --fix"
-            onClick={onAudit}
-            disabled={busy}
-          />
-          <ActionButton
-            label="Upgrade OpenClaw"
-            description="Update the installed OpenClaw version"
+            label={`Upgrade ${platformName}`}
+            description={`Update the installed ${platformName} version`}
             onClick={onUpgrade}
             disabled={busy}
           />
@@ -269,7 +563,7 @@ function SettingsPanel({
           />
           <ActionButton
             label="Uninstall"
-            description="Remove OpenClaw and local data"
+            description={`Remove ${platformName} and local data`}
             onClick={onUninstall}
             disabled={busy}
             danger

@@ -416,8 +416,10 @@ pub fn build_auth_profiles_doc(
                     let fallback_auth =
                         default_provider_auth(&normalized_provider, "", "token", local_base_url);
                     let profile_key = resolve_profile_name(&normalized_provider, &fallback_auth);
-                    let profile =
-                        fallback_auth.profile.clone().unwrap_or(serde_json::json!({}));
+                    let profile = fallback_auth
+                        .profile
+                        .clone()
+                        .unwrap_or(serde_json::json!({}));
                     profiles_map.entry(profile_key.clone()).or_insert(profile);
                     last_good
                         .entry(normalized_provider.clone())
@@ -426,10 +428,8 @@ pub fn build_auth_profiles_doc(
                     if normalized_provider == "local" {
                         let runtime_auth =
                             default_provider_auth("llamacpp", "", "token", local_base_url);
-                        let runtime_profile_key =
-                            resolve_profile_name("llamacpp", &runtime_auth);
-                        let runtime_profile =
-                            runtime_auth.profile.unwrap_or(serde_json::json!({}));
+                        let runtime_profile_key = resolve_profile_name("llamacpp", &runtime_auth);
+                        let runtime_profile = runtime_auth.profile.unwrap_or(serde_json::json!({}));
                         profiles_map
                             .entry(runtime_profile_key.clone())
                             .or_insert(runtime_profile);
@@ -594,6 +594,27 @@ pub fn build_provider_auth_command(
     oauth_provider_id: &str,
 ) -> String {
     build_provider_auth_command_for_binary("openclaw", method, oauth_provider_id)
+}
+
+pub fn build_hermes_provider_auth_command(
+    method: &str,
+    oauth_provider_id: &str,
+) -> Result<String, String> {
+    if oauth_provider_id != "openai-codex" {
+        return Err(format!(
+            "Hermes Agent OAuth is not supported for provider `{}` yet.",
+            oauth_provider_id
+        ));
+    }
+
+    let mut cmd = format!(
+        "export HERMES_HOME=\"$HOME/.hermes\"; hermes auth add --type oauth {}",
+        shell_single_quote(oauth_provider_id)
+    );
+    if !method.is_empty() && method != oauth_provider_id {
+        cmd.push_str(&format!(" --label {}", shell_single_quote(method)));
+    }
+    Ok(cmd)
 }
 
 pub fn build_provider_auth_command_for_binary(
@@ -883,6 +904,39 @@ fn build_remote_provider_auth_terminal_command(
     parts.join(" ")
 }
 
+fn build_remote_hermes_provider_auth_terminal_command(
+    remote: &RemoteInfo,
+    prefix: &str,
+    method: &str,
+    oauth_provider_id: &str,
+) -> Result<String, String> {
+    let remote_hermes_command = build_hermes_provider_auth_command(method, oauth_provider_id)?;
+    let remote_shell_command = format!("{}{}", prefix, remote_hermes_command);
+
+    let mut parts = vec![
+        "ssh".to_string(),
+        "-o".to_string(),
+        "ExitOnForwardFailure=yes".to_string(),
+        "-o".to_string(),
+        "StrictHostKeyChecking=accept-new".to_string(),
+        "-t".to_string(),
+    ];
+
+    if let Some(path) = remote.private_key_path.as_deref() {
+        if !path.trim().is_empty() {
+            parts.push("-i".to_string());
+            parts.push(shell_single_quote(path));
+        }
+    }
+
+    parts.push(format!("{}@{}", remote.user, remote.ip));
+    parts.push(format!(
+        "/bin/sh -lc {}",
+        shell_single_quote(&remote_shell_command)
+    ));
+    Ok(parts.join(" "))
+}
+
 // --- Terminal launch helpers ---
 
 #[allow(dead_code)]
@@ -899,7 +953,13 @@ pub fn build_unix_terminal_script(
     command: &str,
     marker_path: &str,
 ) -> String {
-    let requires_local_openclaw = !command.trim_start().starts_with("ssh ");
+    let required_local_cli = if command.trim_start().starts_with("ssh ") {
+        None
+    } else if command.contains("hermes auth ") {
+        Some(("hermes", "Hermes"))
+    } else {
+        Some(("openclaw", "OpenClaw"))
+    };
     let env_bootstrap = match platform {
         TerminalPlatform::Macos => concat!(
             "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; ",
@@ -917,10 +977,12 @@ pub fn build_unix_terminal_script(
     };
     let bootstrapped_command = match platform {
         TerminalPlatform::Macos | TerminalPlatform::Linux => {
-            let local_check = if requires_local_openclaw {
-                "if ! command -v openclaw >/dev/null 2>&1; then\n  printf '%s\n' 'OpenClaw CLI not found in launched shell.' >&2\n  exit 127\nfi\n"
+            let local_check = if let Some((binary, label)) = required_local_cli {
+                format!(
+                    "if ! command -v {binary} >/dev/null 2>&1; then\n  printf '%s\n' '{label} CLI not found in launched shell.' >&2\n  exit 127\nfi\n"
+                )
             } else {
-                ""
+                String::new()
             };
             format!("{env_bootstrap}\n{local_check}{command}")
         }
@@ -1334,6 +1396,52 @@ pub fn start_provider_auth(
         })
 }
 
+pub fn hermes_oauth_provider_auth_data(method: &str, oauth_provider_id: &str) -> ProviderAuthData {
+    let auth_method = if method.trim().is_empty() {
+        oauth_provider_id
+    } else {
+        method
+    };
+    ProviderAuthData {
+        auth_method: auth_method.to_string(),
+        token: String::new(),
+        profile_key: Some(format!("{}:default", oauth_provider_id)),
+        profile: Some(serde_json::json!({
+            "type": "oauth",
+            "provider": oauth_provider_id,
+        })),
+        oauth_provider_id: Some(oauth_provider_id.to_string()),
+    }
+}
+
+/// Hermes owns its OAuth state in ~/.hermes. Launch the Hermes CLI auth flow and
+/// return a provider-auth record that lets the wizard keep model/provider mapping
+/// in sync without importing OpenClaw auth profiles.
+pub fn start_hermes_provider_auth(
+    _provider: &str,
+    method: &str,
+    oauth_provider_id: &str,
+    remote: Option<&RemoteInfo>,
+) -> Result<ProviderAuthData, String> {
+    if let Some(remote) = remote {
+        let sess = connect_ssh(remote)?;
+        let os_type = execute_ssh(&sess, "uname -s")?.trim().to_string();
+        let prefix = get_env_prefix(&os_type);
+        let terminal_command = build_remote_hermes_provider_auth_terminal_command(
+            remote,
+            &prefix,
+            method,
+            oauth_provider_id,
+        )?;
+        launch_provider_auth_terminal(&terminal_command)?;
+        return Ok(hermes_oauth_provider_auth_data(method, oauth_provider_id));
+    }
+
+    let cmd = build_hermes_provider_auth_command(method, oauth_provider_id)?;
+    launch_provider_auth_terminal(&cmd)?;
+    Ok(hermes_oauth_provider_auth_data(method, oauth_provider_id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1437,6 +1545,15 @@ mod tests {
     }
 
     #[test]
+    fn test_build_hermes_provider_auth_command_uses_hermes_auth_add() {
+        let cmd = build_hermes_provider_auth_command("openai-codex", "openai-codex").unwrap();
+        assert_eq!(
+            cmd,
+            "export HERMES_HOME=\"$HOME/.hermes\"; hermes auth add --type oauth 'openai-codex'"
+        );
+    }
+
+    #[test]
     fn test_build_provider_auth_command_with_method() {
         let cmd = build_provider_auth_command("google", "gemini-cli", "google-gemini-cli");
         assert_eq!(
@@ -1469,6 +1586,18 @@ mod tests {
         assert!(script.contains(". \"$HOME/.profile\" 2>/dev/null || true;"));
         assert!(script.contains("command -v openclaw >/dev/null 2>&1"));
         assert!(script.contains("OpenClaw CLI not found in launched shell."));
+    }
+
+    #[test]
+    fn test_build_unix_terminal_script_checks_hermes_for_hermes_auth() {
+        let script = build_unix_terminal_script(
+            TerminalPlatform::Linux,
+            "export HERMES_HOME=\"$HOME/.hermes\"; hermes auth add --type oauth 'openai-codex'",
+            "/tmp/clawnetes-oauth.exit",
+        );
+        assert!(script.contains("command -v hermes >/dev/null 2>&1"));
+        assert!(script.contains("Hermes CLI not found in launched shell."));
+        assert!(!script.contains("command -v openclaw >/dev/null 2>&1"));
     }
 
     #[test]

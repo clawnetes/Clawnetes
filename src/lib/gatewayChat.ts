@@ -279,7 +279,7 @@ export class GatewayChatClient {
   onAgentEvent?: (payload: GatewayAgentEventPayload) => void;
   onSessionsChanged?: (payload: GatewaySessionsChangedPayload) => void;
   onSeqGap?: () => void;
-  onReady?: (hello: GatewayHelloOk) => void;
+  onReady?: (hello?: any) => void;
 
   constructor(private bootstrap: GatewayChatBootstrap) {}
 

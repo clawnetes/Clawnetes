@@ -20,12 +20,33 @@ import {
   normalizeSkillAndToolSelection,
 } from "./toolSelection";
 import type { AgentConfigData, ProviderAuthConfig, RemoteConfig, ToolPolicy } from "../types";
+import type { AgentPlatform } from "../platforms/types";
 import type { WizardState } from "../hooks/useWizardState";
 
 type Setter<T> = (value: T | ((prev: T) => T)) => void;
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
+}
+
 export interface AdvancedTransitionController {
   step: number;
+  platform: AgentPlatform;
   licenseStatusLoaded: boolean;
   licenseUnlocked: boolean;
   licenseStatusError: string;
@@ -49,7 +70,9 @@ export async function continueToAdvancedSettings(
 
   if (controller.step === 17 && !controller.initialConfigRef.current) {
     try {
-      controller.initialConfigRef.current = await invoke("get_current_config", { remote: null });
+      controller.initialConfigRef.current = controller.platform === "hermes"
+        ? await invoke("get_platform_config", { platform: "hermes", remote: null })
+        : await invoke("get_current_config", { remote: null });
     } catch (error) {
       console.warn("Could not load config baseline for change detection:", error);
     }
@@ -118,6 +141,7 @@ function getInitialMessagingSettings(initial: any) {
 export interface InstallController {
   state: Pick<
     WizardState,
+    | "platform"
     | "targetEnvironment"
     | "remoteIp"
     | "remoteUser"
@@ -174,7 +198,7 @@ export async function handleInstall(controller: InstallController) {
     ? hasMessagingSettingsChanged(initialMessagingSettings, currentMessagingSettings)
     : true;
 
-  if (state.checks.openclaw || isUpdate) {
+  if (state.platform !== "hermes" && (state.checks.openclaw || isUpdate)) {
     try {
       if (state.messagingChannel !== "none") {
         const status: boolean = await invoke("check_messaging_link_status", {
@@ -229,22 +253,52 @@ export async function handleInstall(controller: InstallController) {
       controller.setProgress(isUpdate ? "Updating remote configuration..." : "Deploying to remote server...");
       controller.setLogs(isUpdate ? "Updating remote configuration..." : "Preparing remote environment...");
 
-      await invoke("setup_remote_openclaw", {
-        remote: remoteConfig,
-        config: configPayload,
-      });
-
-      for (const skill of state.selectedSkills) {
-        controller.setProgress(`Installing skill on remote: ${skill}...`);
-        controller.setLogs(`Installing skill: ${skill}...`);
-        try {
-          await invoke("install_remote_skill", {
+      if (state.platform === "hermes") {
+        if (!state.checks.openclaw) {
+          controller.setProgress("Installing Hermes Agent on the remote host...");
+          controller.setLogs("Installing Hermes Agent on the remote host...");
+          await invoke("install_platform", {
+            platform: "hermes",
             remote: remoteConfig,
-            name: skill,
           });
+        }
+        await invoke("configure_platform", {
+          platform: "hermes",
+          remote: remoteConfig,
+          config: configPayload,
+        });
+        try {
+          await withTimeout(
+            invoke("restart_platform_service", {
+              platform: "hermes",
+              remote: remoteConfig,
+            }),
+            15_000,
+            "Starting Hermes services",
+          );
         } catch (error) {
-          console.error(`Failed to install skill ${skill}:`, error);
-          controller.setLogs((prev) => `${prev}\nWarning: Failed to install skill ${skill}: ${error}`);
+          controller.setLogs((prev) => `${prev}\nWarning: ${error}`);
+        }
+      } else {
+        await invoke("setup_remote_openclaw", {
+          remote: remoteConfig,
+          config: configPayload,
+        });
+      }
+
+      if (state.platform !== "hermes") {
+        for (const skill of state.selectedSkills) {
+          controller.setProgress(`Installing skill on remote: ${skill}...`);
+          controller.setLogs(`Installing skill: ${skill}...`);
+          try {
+            await invoke("install_remote_skill", {
+              remote: remoteConfig,
+              name: skill,
+            });
+          } catch (error) {
+            console.error(`Failed to install skill ${skill}:`, error);
+            controller.setLogs((prev) => `${prev}\nWarning: Failed to install skill ${skill}: ${error}`);
+          }
         }
       }
 
@@ -269,6 +323,7 @@ export async function handleInstall(controller: InstallController) {
         const tunnelWorking: boolean = await invoke("verify_tunnel_connectivity", {
           gatewayPort: state.gatewayPort,
           remote: remoteConfig,
+          platform: state.platform,
         });
         if (!tunnelWorking) {
           throw new Error("Backend update pending. Please restart the application (Ctrl+C and npm run tauri dev) to apply the latest fixes.");
@@ -288,47 +343,77 @@ export async function handleInstall(controller: InstallController) {
       }
 
       controller.setProgress("Finalizing setup...");
-      if (shouldShowTelegramPairing(state.messagingChannel, actualIsPaired)) {
+      if (state.platform !== "hermes" && shouldShowTelegramPairing(state.messagingChannel, actualIsPaired)) {
         const instruction: string = await invoke("generate_pairing_code");
         controller.setPairingCode(instruction);
       }
 
-      const url: string = await invoke("get_dashboard_url", {
-        gatewayPort: state.gatewayPort,
-        isRemote: true,
-        remote: remoteConfig,
-      });
+      const url: string = state.platform === "hermes"
+        ? `http://127.0.0.1:${state.gatewayPort}/v1`
+        : await invoke("get_dashboard_url", {
+            gatewayPort: state.gatewayPort,
+            isRemote: true,
+            remote: remoteConfig,
+          });
       controller.setDashboardUrl(url);
       controller.setProgress("");
       controller.setStep(17);
     } else {
       if (!state.checks.openclaw) {
-        controller.setProgress("Installing OpenClaw (this may take a minute)...");
-        controller.setLogs("Installing OpenClaw (this may take a minute)...");
-        await invoke("install_openclaw");
-        const version: string = await invoke("get_openclaw_version");
+        controller.setProgress(`Installing ${state.platform === "hermes" ? "Hermes Agent" : "OpenClaw"} (this may take a minute)...`);
+        controller.setLogs(`Installing ${state.platform === "hermes" ? "Hermes Agent" : "OpenClaw"} (this may take a minute)...`);
+        if (state.platform === "hermes") {
+          await invoke("install_platform", { platform: "hermes", remote: null });
+        } else {
+          await invoke("install_openclaw");
+        }
+        const version: string = state.platform === "hermes"
+          ? await invoke("get_platform_version", { platform: "hermes", remote: null })
+          : await invoke("get_openclaw_version");
         controller.setOpenClawVersion(version);
         controller.setChecks((prev) => ({ ...prev, openclaw: true }));
       }
 
       controller.setProgress("Configuring agent...");
       controller.setLogs("Configuring...");
-      await invoke("configure_agent", {
-        config: configPayload,
-      });
+      if (state.platform === "hermes") {
+        await invoke("configure_platform", {
+          platform: "hermes",
+          config: configPayload,
+          remote: null,
+        });
+      } else {
+        await invoke("configure_agent", {
+          config: configPayload,
+        });
+      }
 
-      for (const skill of state.selectedSkills) {
-        controller.setProgress(`Installing skill: ${skill}...`);
-        controller.setLogs(`Installing skill: ${skill}...`);
-        try {
-          await invoke("install_skill", { name: skill });
-        } catch (error) {
-          console.error(`Failed to install skill ${skill}:`, error);
-          controller.setLogs((prev) => `${prev}\nWarning: Failed to install skill ${skill}: ${error}`);
+      if (state.platform !== "hermes") {
+        for (const skill of state.selectedSkills) {
+          controller.setProgress(`Installing skill: ${skill}...`);
+          controller.setLogs(`Installing skill: ${skill}...`);
+          try {
+            await invoke("install_skill", { name: skill });
+          } catch (error) {
+            console.error(`Failed to install skill ${skill}:`, error);
+            controller.setLogs((prev) => `${prev}\nWarning: Failed to install skill ${skill}: ${error}`);
+          }
         }
       }
 
-      if (isUpdate || state.messagingChannel === "whatsapp") {
+      if (state.platform === "hermes") {
+        controller.setProgress("Starting Hermes services...");
+        controller.setLogs("Starting Hermes services...");
+        try {
+          await withTimeout(
+            invoke("restart_platform_service", { platform: "hermes", remote: null }),
+            15_000,
+            "Starting Hermes services",
+          );
+        } catch (error) {
+          controller.setLogs((prev) => `${prev}\nWarning: ${error}`);
+        }
+      } else if (isUpdate || state.messagingChannel === "whatsapp") {
         controller.setProgress("Restarting Gateway (this may take 20-30 seconds)...");
         controller.setLogs("Restarting Gateway...");
         await invoke("restart_openclaw_gateway", { remote: null });
@@ -338,7 +423,7 @@ export async function handleInstall(controller: InstallController) {
         await invoke("start_gateway");
       }
 
-      if (agentSessionIds.length > 0) {
+      if (state.platform !== "hermes" && agentSessionIds.length > 0) {
         controller.setProgress("Initializing agent sessions...");
         controller.setLogs("Initializing agent sessions...");
         try {
@@ -349,15 +434,17 @@ export async function handleInstall(controller: InstallController) {
       }
 
       controller.setProgress("Finalizing setup...");
-      if (shouldShowTelegramPairing(state.messagingChannel, actualIsPaired)) {
+      if (state.platform !== "hermes" && shouldShowTelegramPairing(state.messagingChannel, actualIsPaired)) {
         const instruction: string = await invoke("generate_pairing_code");
         controller.setPairingCode(instruction);
       }
 
-      const url: string = await invoke("get_dashboard_url", {
-        isRemote: false,
-        remote: null,
-      });
+      const url: string = state.platform === "hermes"
+        ? `http://127.0.0.1:${state.gatewayPort}/v1`
+        : await invoke("get_dashboard_url", {
+            isRemote: false,
+            remote: null,
+          });
       controller.setDashboardUrl(url);
       controller.setProgress("");
       controller.setStep(17);
@@ -374,6 +461,7 @@ export async function handleInstall(controller: InstallController) {
 export interface MaintenanceController {
   state: Pick<
     WizardState,
+    | "platform"
     | "targetEnvironment"
     | "sshStatus"
     | "remoteIp"
@@ -403,7 +491,14 @@ export async function handleMaintenanceAction(
       ? buildRemoteConfig(controller.state)
       : null;
 
-    if (action === "repair") {
+    if (controller.state.platform === "hermes") {
+      response = await invoke("run_platform_maintenance", {
+        platform: "hermes",
+        action,
+        remote: remoteConfig,
+      });
+      controller.setMaintenanceStatus(`✅ ${action} completed successfully.`);
+    } else if (action === "repair") {
       response = remoteConfig
         ? await invoke("run_remote_doctor_repair", { remote: remoteConfig })
         : await invoke("run_doctor_repair");
@@ -437,8 +532,11 @@ export async function handleMaintenanceAction(
     controller.setLoading(false);
     return true;
   } catch (error) {
-    controller.setLogs((prev) => `${prev}\nError: ${error}`);
-    controller.setMaintenanceStatus(`❌ ${action} failed.`);
+    const message = String(error || "Unknown error").trim();
+    const firstLine = message.split(/\r?\n/).find(Boolean) || "Unknown error";
+    const shortMessage = firstLine.length > 220 ? `${firstLine.slice(0, 217)}...` : firstLine;
+    controller.setLogs((prev) => `${prev}\nError: ${message}`);
+    controller.setMaintenanceStatus(`❌ ${action} failed: ${shortMessage}`);
     controller.setLoading(false);
     return false;
   }
@@ -447,6 +545,7 @@ export async function handleMaintenanceAction(
 export interface ConfigLoaderController {
   state: Pick<
     WizardState,
+    | "platform"
     | "targetEnvironment"
     | "remoteIp"
     | "remoteUser"
@@ -505,6 +604,19 @@ export interface ConfigLoaderController {
   setNumAgents: Setter<number>;
   setAgentConfigs: Setter<AgentConfigData[]>;
   setIsPaired: Setter<boolean>;
+  setHermesMaxTurns: Setter<number>;
+  setHermesReasoningEffort: Setter<string>;
+  setHermesPersonality: Setter<string>;
+  setHermesTerminalBackend: Setter<string>;
+  setHermesMemoryEnabled: Setter<boolean>;
+  setHermesVerbose: Setter<boolean>;
+  setHermesSmartRouting: Setter<boolean>;
+  setHermesModelBaseUrl: Setter<string>;
+  setHermesApiServerEnabled: Setter<boolean>;
+  setHermesApiServerKey: Setter<string>;
+  setHermesApiServerCorsOrigins: Setter<string>;
+  setHermesRawConfigYaml: Setter<string>;
+  setHermesRawEnv: Setter<string>;
 }
 
 export async function loadExistingConfig(controller: ConfigLoaderController): Promise<boolean> {
@@ -513,7 +625,10 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
 
   try {
     const remoteConfig = buildRemoteConfig(controller.state);
-    const config: any = await invoke("get_current_config", { remote: remoteConfig });
+    const config: any = controller.state.platform === "hermes"
+      ? await invoke("get_platform_config", { platform: "hermes", remote: remoteConfig })
+      : await invoke("get_current_config", { remote: remoteConfig });
+    console.log("Loaded existing config:", config);
     if (!config || typeof config !== "object") {
       controller.initialConfigRef.current = null;
       controller.setMaintenanceStatus("No existing configuration found.");
@@ -543,7 +658,11 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
     controller.setAgentEmoji(config.agent_emoji || "🦞");
     controller.setAgentType(config.agent_type || "custom");
     controller.setTelegramToken(config.telegram_token);
-    controller.setGatewayPort(config.gateway_port);
+    controller.setGatewayPort(
+      controller.state.platform === "hermes" && config.gateway_port === 18789
+        ? 8642
+        : config.gateway_port,
+    );
     controller.setGatewayBind(config.gateway_bind);
     controller.setGatewayAuthMode(config.gateway_auth_mode);
     controller.setTailscaleMode(config.tailscale_mode);
@@ -597,6 +716,21 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
       else if (config.provider === "local") controller.setLocalBaseUrl(config.local_base_url);
     }
 
+    // Hermes specifics
+    if (config.hermes_max_turns !== undefined) controller.setHermesMaxTurns(config.hermes_max_turns);
+    if (config.hermes_reasoning_effort !== undefined) controller.setHermesReasoningEffort(config.hermes_reasoning_effort);
+    if (config.hermes_personality !== undefined) controller.setHermesPersonality(config.hermes_personality);
+    if (config.hermes_terminal_backend !== undefined) controller.setHermesTerminalBackend(config.hermes_terminal_backend);
+    if (config.hermes_memory_enabled !== undefined) controller.setHermesMemoryEnabled(config.hermes_memory_enabled);
+    if (config.hermes_verbose !== undefined) controller.setHermesVerbose(config.hermes_verbose);
+    if (config.hermes_smart_routing !== undefined) controller.setHermesSmartRouting(config.hermes_smart_routing);
+    if (config.hermes_model_base_url !== undefined) controller.setHermesModelBaseUrl(config.hermes_model_base_url);
+    if (config.hermes_api_server_enabled !== undefined) controller.setHermesApiServerEnabled(config.hermes_api_server_enabled);
+    if (config.hermes_api_server_key !== undefined) controller.setHermesApiServerKey(config.hermes_api_server_key);
+    if (config.hermes_api_server_cors_origins !== undefined) controller.setHermesApiServerCorsOrigins(config.hermes_api_server_cors_origins);
+    if (config.hermes_raw_config_yaml !== undefined) controller.setHermesRawConfigYaml(config.hermes_raw_config_yaml);
+    if (config.hermes_raw_env !== undefined) controller.setHermesRawEnv(config.hermes_raw_env);
+
     controller.setEnableMultiAgent(config.enable_multi_agent);
     if (config.enable_multi_agent && loadedAgentConfigs.length > 0) {
       controller.setNumAgents(loadedAgentConfigs.length);
@@ -637,7 +771,7 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
     }
 
     try {
-      if (loadedMessagingChannel !== "none") {
+      if (controller.state.platform !== "hermes" && loadedMessagingChannel !== "none") {
         const linked: boolean = await invoke("check_messaging_link_status", {
           channel: loadedMessagingChannel,
           remote: remoteConfig,

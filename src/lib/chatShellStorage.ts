@@ -85,8 +85,18 @@ function clampThreads(threads: StoredChatThread[]) {
     .slice(0, MAX_THREADS_PER_SCOPE);
 }
 
-export function buildChatScopeKey(scope: { wsUrl?: string; targetEnvironment?: string; gatewayPort?: number }) {
-  return [scope.targetEnvironment || "local", scope.gatewayPort || 0, scope.wsUrl || ""].join("|");
+export function buildChatScopeKey(scope: {
+  platform?: string;
+  wsUrl?: string;
+  targetEnvironment?: string;
+  gatewayPort?: number;
+}) {
+  return [
+    scope.platform || "openclaw",
+    scope.targetEnvironment || "local",
+    scope.gatewayPort || 0,
+    scope.wsUrl || "",
+  ].join("|");
 }
 
 export function loadStoredThreads(scopeKey: string): StoredChatThread[] {

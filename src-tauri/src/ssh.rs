@@ -19,13 +19,13 @@ pub const REMOTE_TUNNEL_LOCAL_PORT: u16 = 28789;
 
 pub fn get_env_prefix(os_type: &str) -> String {
     if os_type == "Darwin" {
-        "eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; ".to_string()
+        "export PATH=\"/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH\"; eval \"$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)\"; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; ".to_string()
     } else if os_type == "Windows" {
         // WSL2: Source profile and try to load NVM explicitly
-        "export PATH=\"$PATH:/usr/local/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; ".to_string()
+        "export PATH=\"$PATH:/usr/local/bin:$HOME/.local/bin:$HOME/.cargo/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; ".to_string()
     } else {
         // Linux: Source profile and try to load NVM explicitly
-        "export PATH=\"$PATH:/usr/local/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; ".to_string()
+        "export PATH=\"$PATH:/usr/local/bin:$HOME/.local/bin:$HOME/.cargo/bin\"; . ~/.profile 2>/dev/null; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; ".to_string()
     }
 }
 
@@ -203,11 +203,8 @@ pub fn start_ssh_tunnel(remote: &RemoteInfo, remote_gateway_port: u16) -> Result
                         };
 
                         let mut remote_channel =
-                            match sess.channel_direct_tcpip(
-                                "127.0.0.1",
-                                remote_gateway_port,
-                                None,
-                            ) {
+                            match sess.channel_direct_tcpip("127.0.0.1", remote_gateway_port, None)
+                            {
                                 Ok(c) => c,
                                 Err(e) => {
                                     eprintln!("Failed to open SSH channel for tunnel: {}", e);

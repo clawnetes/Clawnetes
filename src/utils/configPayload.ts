@@ -1,10 +1,12 @@
 import type { AgentConfigData, AgentTypeId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "../types";
+import type { AgentPlatform } from "../platforms/types";
 import { applyModelProviderAuth } from "./providerAuth";
 import { getSkillIdSet, materializeToolPolicy, normalizeSkillAndToolSelection, normalizeToolPolicy } from "./toolSelection";
 import { AVAILABLE_SKILLS } from "../presets/availableSkills";
 import { toConfigSandboxMode } from "./sandboxMode";
 
 export interface ConfigPayloadInput {
+  platform: AgentPlatform;
   provider: string;
   apiKey: string;
   authMethod: string;
@@ -47,6 +49,20 @@ export interface ConfigPayloadInput {
   whatsappDmPolicy: string;
   whatsappPhoneNumber: string;
   mode: string;
+  hermesMaxTurns?: number;
+  hermesReasoningEffort?: string;
+  hermesPersonality?: string;
+  hermesTerminalBackend?: string;
+  hermesMemoryEnabled?: boolean;
+  hermesVerbose?: boolean;
+  hermesSmartRouting?: boolean;
+  hermesModelBaseUrl?: string;
+  hermesApiServerEnabled?: boolean;
+  hermesApiServerKey?: string;
+  hermesApiServerCorsOrigins?: string;
+  hermesRawConfigYaml?: string;
+  hermesRawEnv?: string;
+  hermesApplyRawFiles?: boolean;
 }
 
 export function buildAgentToolsPayload(
@@ -84,8 +100,12 @@ Managed by Clawnetes.`;
   const isPresetAgent = input.agentType !== "custom";
   const usePresetFields = isPresetAgent || input.mode === "advanced";
   const normalizedTopLevelToolPolicy = normalizeToolPolicy(input.toolPolicy, availableSkillIds);
+  const gatewayPort = input.platform === "hermes" && input.gatewayPort === 18789
+    ? 8642
+    : input.gatewayPort;
 
   return {
+    platform: input.platform,
     provider: input.provider,
     api_key: effectiveProviderAuths[input.provider]?.token || input.apiKey,
     auth_method: effectiveProviderAuths[input.provider]?.auth_method || input.authMethod,
@@ -94,7 +114,7 @@ Managed by Clawnetes.`;
     agent_name: input.agentName,
     agent_vibe: "",
     telegram_token: input.telegramToken,
-    gateway_port: input.gatewayPort,
+    gateway_port: gatewayPort,
     gateway_bind: input.gatewayBind,
     gateway_auth_mode: input.gatewayAuthMode,
     tailscale_mode: input.tailscaleMode,
@@ -167,5 +187,19 @@ Managed by Clawnetes.`,
     whatsapp_enabled: input.messagingChannel === "whatsapp",
     whatsapp_dm_policy: input.messagingChannel === "whatsapp" ? input.whatsappDmPolicy : null,
     whatsapp_phone_number: input.messagingChannel === "whatsapp" ? input.whatsappPhoneNumber : null,
+    hermes_max_turns: input.hermesMaxTurns,
+    hermes_reasoning_effort: input.hermesReasoningEffort,
+    hermes_personality: input.hermesPersonality,
+    hermes_terminal_backend: input.hermesTerminalBackend,
+    hermes_memory_enabled: input.hermesMemoryEnabled,
+    hermes_verbose: input.hermesVerbose,
+    hermes_smart_routing: input.hermesSmartRouting,
+    hermes_model_base_url: input.hermesModelBaseUrl,
+    hermes_api_server_enabled: input.hermesApiServerEnabled,
+    hermes_api_server_key: input.hermesApiServerKey,
+    hermes_api_server_cors_origins: input.hermesApiServerCorsOrigins,
+    hermes_raw_config_yaml: input.hermesRawConfigYaml,
+    hermes_raw_env: input.hermesRawEnv,
+    hermes_apply_raw_files: input.hermesApplyRawFiles,
   };
 }

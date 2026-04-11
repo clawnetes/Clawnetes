@@ -1,4 +1,6 @@
 // Shared TypeScript interfaces for Clawnetes
+import type { AgentPlatform, ChatTransportKind } from "../platforms/types";
+export type { AgentPlatform, ChatTransportKind };
 
 export interface PersonaTemplate {
   name: string;
@@ -116,6 +118,12 @@ export interface GatewayChatBootstrap {
   gatewayPort: number;
   tunnelActive: boolean;
   openClawVersion: string;
+  platform?: AgentPlatform;
+  chatTransport?: ChatTransportKind;
+  apiBaseUrl?: string;
+  apiKey?: string;
+  supportsRuns?: boolean;
+  supportsAgentDiscovery?: boolean;
 }
 
 export interface ChatTranscriptScrollSnapshot {
@@ -194,6 +202,7 @@ export interface CronJobConfig {
 
 // Config Payload sent to Rust backend
 export interface ConfigPayload {
+  platform?: AgentPlatform;
   provider: string;
   api_key: string;
   auth_method: string;
@@ -238,6 +247,20 @@ export interface ConfigPayload {
   // WhatsApp channel
   whatsapp_enabled?: boolean;
   whatsapp_dm_policy?: string | null;
+  hermes_max_turns?: number;
+  hermes_reasoning_effort?: string | null;
+  hermes_personality?: string | null;
+  hermes_terminal_backend?: string | null;
+  hermes_memory_enabled?: boolean;
+  hermes_verbose?: boolean;
+  hermes_smart_routing?: boolean;
+  hermes_model_base_url?: string | null;
+  hermes_api_server_enabled?: boolean;
+  hermes_api_server_key?: string | null;
+  hermes_api_server_cors_origins?: string | null;
+  hermes_raw_config_yaml?: string | null;
+  hermes_raw_env?: string | null;
+  hermes_apply_raw_files?: boolean;
 }
 
 export interface AgentPayloadData {

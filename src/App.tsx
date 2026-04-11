@@ -42,6 +42,10 @@ import StepSecurity from "./components/steps/StepSecurity";
 import StepIdentity from "./components/steps/StepIdentity";
 import StepAgentProfile from "./components/steps/StepAgentProfile";
 import StepAgentType from "./components/steps/StepAgentType";
+import StepPlatformSelect from "./components/steps/StepPlatformSelect";
+import StepHermesConfig from "./components/steps/hermes/StepHermesConfig";
+import StepHermesMessaging from "./components/steps/hermes/StepHermesMessaging";
+import StepHermesReview from "./components/steps/hermes/StepHermesReview";
 import StepSystemCheck from "./components/steps/StepSystemCheck";
 import StepGateway from "./components/steps/StepGateway";
 import StepChannels from "./components/steps/StepChannels";
@@ -65,6 +69,31 @@ import StepComplete from "./components/steps/StepComplete";
 import ChatShell from "./components/chat/ChatShell";
 import ConfigureDrawer from "./components/chat/ConfigureDrawer";
 import { TEXT_ENTRY_PROPS } from "./components/ui/textEntryProps";
+import { HERMES_SUPPORTED_MODEL_PROVIDERS } from "./platforms/hermes";
+
+const HERMES_SUPPORTED_OAUTH_PROVIDER_IDS = new Set(["openai-codex", "google-gemini-cli"]);
+const LOCAL_CHAT_BOOTSTRAP_TIMEOUT_MS = 15_000;
+const REMOTE_CHAT_BOOTSTRAP_TIMEOUT_MS = 30_000;
+const CHAT_CONFIG_REFRESH_TIMEOUT_MS = 15_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds.`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
+}
 
 function App() {
   const [state, dispatch] = useWizardState();
@@ -74,8 +103,10 @@ function App() {
   const [configUpdating, setConfigUpdating] = useState(false);
   const [pendingMaintenanceConfirm, setPendingMaintenanceConfirm] = useState<"repair" | "audit" | "update" | "uninstall" | null>(null);
   const [chatBootstrap, setChatBootstrap] = useState<GatewayChatBootstrap | null>(null);
-  const [chatBootstrapping, setChatBootstrapping] = useState(false);
+  const [chatConnecting, setChatConnecting] = useState(false);
+  const [chatConfigLoading, setChatConfigLoading] = useState(false);
   const [chatBootstrapError, setChatBootstrapError] = useState("");
+  const [chatWorkspaceWarning, setChatWorkspaceWarning] = useState("");
   const [pendingChatReturnScrollSnapshot, setPendingChatReturnScrollSnapshot] = useState<ChatTranscriptScrollSnapshot | null>(null);
   const [storedEnvironments, setStoredEnvironments] = useState<StoredEnvironment[]>([]);
   const [addingEnvFromChat, setAddingEnvFromChat] = useState(false);
@@ -83,7 +114,7 @@ function App() {
 
   // Destructure state for backwards-compatible access throughout the component
   const {
-    step, mode, skipBasicConfig, targetEnvironment,
+    step, mode, skipBasicConfig, platform, targetEnvironment,
     remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
     sshStatus, sshError, tunnelActive,
     checks, loading, error, logs, pairingCode, installingNode, nodeInstallError,
@@ -112,9 +143,27 @@ function App() {
     whatsappQrDataUrl, whatsappPaired, whatsappQrStep, whatsappQrLoading,
     pairingInput, pairingStatus, isPaired,
     validateOutput, validating,
+    hermesMaxTurns, hermesReasoningEffort, hermesPersonality, hermesTerminalBackend,
+    hermesMemoryEnabled, hermesVerbose, hermesSmartRouting, hermesModelBaseUrl,
+    hermesApiServerEnabled, hermesApiServerKey, hermesApiServerCorsOrigins,
+    hermesRawConfigYaml, hermesRawEnv
   } = state;
 
   // Create setter functions with same signatures as the original useState setters
+  const setHermesMaxTurns = fieldSetter(dispatch, "hermesMaxTurns");
+  const setHermesReasoningEffort = fieldSetter(dispatch, "hermesReasoningEffort");
+  const setHermesPersonality = fieldSetter(dispatch, "hermesPersonality");
+  const setHermesTerminalBackend = fieldSetter(dispatch, "hermesTerminalBackend");
+  const setHermesMemoryEnabled = fieldSetter(dispatch, "hermesMemoryEnabled");
+  const setHermesVerbose = fieldSetter(dispatch, "hermesVerbose");
+  const setHermesSmartRouting = fieldSetter(dispatch, "hermesSmartRouting");
+  const setHermesModelBaseUrl = fieldSetter(dispatch, "hermesModelBaseUrl");
+  const setHermesApiServerEnabled = fieldSetter(dispatch, "hermesApiServerEnabled");
+  const setHermesApiServerKey = fieldSetter(dispatch, "hermesApiServerKey");
+  const setHermesApiServerCorsOrigins = fieldSetter(dispatch, "hermesApiServerCorsOrigins");
+  const setHermesRawConfigYaml = fieldSetter(dispatch, "hermesRawConfigYaml");
+  const setHermesRawEnv = fieldSetter(dispatch, "hermesRawEnv");
+
   const setStep = fieldSetter(dispatch, "step");
   const setMode = fieldSetter(dispatch, "mode");
   const setSkipBasicConfig = fieldSetter(dispatch, "skipBasicConfig");
@@ -285,9 +334,21 @@ function App() {
 
   const isPresetAgent = agentType !== "custom";
 
-  const stepsList = [
+  const stepsList = platform === "hermes" ? [
     { id: 0, name: "System State", hidden: true },
     { id: 0.5, name: "Welcome", hidden: true },
+    { id: 0.75, name: "Platform" },
+    { id: 1, name: "Environment" },
+    { id: 2, name: "System Check" },
+    { id: 3, name: "Security" },
+    { id: 19, name: "Config" },
+    { id: 20, name: "Messaging" },
+    { id: 21, name: "Review" },
+    { id: 17, name: "Complete" },
+  ] : [
+    { id: 0, name: "System State", hidden: true },
+    { id: 0.5, name: "Welcome", hidden: true },
+    { id: 0.75, name: "Platform" },
     { id: 1, name: "Environment" },
     { id: 2, name: "System Check" },
     { id: 3, name: "Security" },
@@ -317,7 +378,9 @@ function App() {
     providerAuths,
     selectedSkills,
     availableSkills,
-  });
+  }).filter((item) => (
+    platform !== "hermes" || HERMES_SUPPORTED_OAUTH_PROVIDER_IDS.has(item.oauthProviderId)
+  ));
 
   const buildActiveRemoteConfig = useCallback(() => {
     if (targetEnvironment !== "cloud") {
@@ -332,47 +395,103 @@ function App() {
     };
   }, [remoteIp, remotePassword, remotePrivateKeyPath, remoteUser, targetEnvironment]);
 
+  const persistSelectedEnvironment = useCallback(() => {
+    const saved = upsertEnvironment({
+      platform,
+      type: targetEnvironment as "local" | "cloud",
+      remoteIp: targetEnvironment === "cloud" ? remoteIp : undefined,
+      remoteUser: targetEnvironment === "cloud" ? remoteUser : undefined,
+      remotePassword: targetEnvironment === "cloud" ? remotePassword : undefined,
+      remotePrivateKeyPath: targetEnvironment === "cloud" ? remotePrivateKeyPath : undefined,
+    });
+    setActiveEnvironmentId(saved.id);
+    setStoredEnvironments(loadEnvironments());
+    return saved;
+  }, [platform, targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath]);
+
   const bootstrapGatewayChat = useCallback(async () => {
-    setChatBootstrapping(true);
+    const remote = buildActiveRemoteConfig();
+    const bootstrapLabel = platform === "hermes"
+      ? "Preparing the Hermes API connection"
+      : "Preparing the OpenClaw gateway connection";
+    const bootstrapTimeoutMs = targetEnvironment === "cloud"
+      ? REMOTE_CHAT_BOOTSTRAP_TIMEOUT_MS
+      : LOCAL_CHAT_BOOTSTRAP_TIMEOUT_MS;
+
+    persistSelectedEnvironment();
+    setChatConnecting(true);
+    setChatConfigLoading(false);
     setChatBootstrapError("");
+    setChatWorkspaceWarning("");
 
     try {
-      const bootstrap = await invoke<GatewayChatBootstrap>("prepare_gateway_chat_connection", {
-        gatewayPort,
-        remote: buildActiveRemoteConfig(),
-      });
+      const bootstrap = platform === "hermes"
+        ? await withTimeout(
+            invoke<GatewayChatBootstrap>("prepare_platform_chat_bootstrap", {
+              platform: "hermes",
+              gatewayPort,
+              remote,
+            }),
+            bootstrapTimeoutMs,
+            bootstrapLabel,
+          )
+        : await withTimeout(
+            invoke<GatewayChatBootstrap>("prepare_gateway_chat_connection", {
+              gatewayPort,
+              remote,
+            }),
+            bootstrapTimeoutMs,
+            bootstrapLabel,
+          );
+
       setChatBootstrap(bootstrap);
       setAppScreen("chat");
-      await loadExistingConfigRef.current().catch(() => {});
-      // Save this environment to the registry
-      const saved = upsertEnvironment({
-        type: targetEnvironment as "local" | "cloud",
-        remoteIp: targetEnvironment === "cloud" ? remoteIp : undefined,
-        remoteUser: targetEnvironment === "cloud" ? remoteUser : undefined,
-        remotePassword: targetEnvironment === "cloud" ? remotePassword : undefined,
-        remotePrivateKeyPath: targetEnvironment === "cloud" ? remotePrivateKeyPath : undefined,
+      setChatConnecting(false);
+      setChatConfigLoading(true);
+
+      void withTimeout(
+        loadExistingConfigRef.current(),
+        CHAT_CONFIG_REFRESH_TIMEOUT_MS,
+        platform === "hermes"
+          ? "Loading the saved Hermes configuration"
+          : "Loading the saved OpenClaw configuration",
+      ).then(
+        () => {
+          setChatWorkspaceWarning("");
+        },
+        (error) => {
+          console.warn("Chat configuration refresh failed:", error);
+          setChatWorkspaceWarning(String(error));
+        },
+      ).finally(() => {
+        setChatConfigLoading(false);
       });
-      setActiveEnvironmentId(saved.id);
-      setStoredEnvironments(loadEnvironments());
     } catch (error) {
       setChatBootstrap(null);
       setChatBootstrapError(String(error));
     } finally {
-      setChatBootstrapping(false);
+      setChatConnecting(false);
     }
-  }, [buildActiveRemoteConfig, gatewayPort, targetEnvironment, remoteIp, remoteUser]);
+  }, [buildActiveRemoteConfig, gatewayPort, persistSelectedEnvironment, platform, targetEnvironment]);
 
   useEffect(() => { void checkSystem(true, false); setStoredEnvironments(loadEnvironments()); }, []);
 
-  const activeStoredEnvironmentId = chatBootstrap ? storedEnvironments.find(
-    (e) => e.type === (chatBootstrap.targetEnvironment as "local" | "cloud")
-      && (chatBootstrap.targetEnvironment === "local" || (e.remoteIp === remoteIp && e.remoteUser === remoteUser)),
-  )?.id || null : null;
+  const activeStoredEnvironmentId = storedEnvironments.find(
+    (e) => e.platform === platform
+      && e.type === (targetEnvironment as "local" | "cloud")
+      && (targetEnvironment === "local" || (e.remoteIp === remoteIp && e.remoteUser === remoteUser)),
+  )?.id || null;
 
   const handleSwitchEnvironment = useCallback((envId: string) => {
     const envs = loadEnvironments();
     const env = envs.find((e) => e.id === envId);
     if (!env) return;
+
+    setActiveEnvironmentId(env.id);
+    dispatch({ type: "SET_FIELD", field: "platform", value: env.platform });
+    setChatBootstrapError("");
+    setChatWorkspaceWarning("");
+    setChatConfigLoading(false);
 
     if (env.type === "cloud") {
       setTargetEnvironment("cloud");
@@ -391,7 +510,7 @@ function App() {
     setRemotePassword("");
     setRemotePrivateKeyPath("");
     setChatBootstrap(null);
-  }, [setTargetEnvironment, setRemoteIp, setRemoteUser, setRemotePassword, setRemotePrivateKeyPath]);
+  }, [dispatch, setTargetEnvironment, setRemoteIp, setRemoteUser, setRemotePassword, setRemotePrivateKeyPath]);
 
   const handleRemoveEnvironment = useCallback((envId: string) => {
     const env = loadEnvironments().find((entry) => entry.id === envId);
@@ -426,9 +545,9 @@ function App() {
 
   useEffect(() => {
     if (appScreen !== "chat") return;
-    if (chatBootstrapping || chatBootstrap) return;
+    if (chatConnecting || chatBootstrap || chatBootstrapError) return;
     void bootstrapGatewayChat();
-  }, [appScreen, chatBootstrap, chatBootstrapping, bootstrapGatewayChat]);
+  }, [appScreen, chatBootstrap, chatBootstrapError, chatConnecting, bootstrapGatewayChat]);
 
   useEffect(() => {
     let cancelled = false;
@@ -458,6 +577,7 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (platform === "hermes") return;
     if (step === 17) {
       const checkPairing = async () => {
         try {
@@ -481,7 +601,7 @@ function App() {
       };
       if (messagingChannel !== "none") checkPairing();
     }
-  }, [step, messagingChannel, targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath]);
+  }, [step, messagingChannel, targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath, platform]);
 
   useEffect(() => {
     if (step !== 17) return;
@@ -582,13 +702,17 @@ function App() {
   }
 
   const configPayloadInput = {
+    platform,
     provider, apiKey, authMethod, model, userName, agentName, agentEmoji, agentType,
     telegramToken, gatewayPort, gatewayBind, gatewayAuthMode, tailscaleMode, nodeManager,
     selectedSkills, serviceKeys, providerAuths, sandboxMode, toolPolicy, enableFallbacks,
     fallbackModels, heartbeatMode, idleTimeoutMs, identityMd, userMd, soulMd, toolsMd,
     agentsMd, heartbeatMd, memoryMd, memoryEnabled, enableMultiAgent, agentConfigs, isPaired,
     cronJobs, localBaseUrl, lmstudioBaseUrl, thinkingLevel, messagingChannel, whatsappDmPolicy,
-    whatsappPhoneNumber, mode,
+    whatsappPhoneNumber, mode, hermesMaxTurns, hermesReasoningEffort, hermesPersonality,
+    hermesTerminalBackend, hermesMemoryEnabled, hermesVerbose, hermesSmartRouting,
+    hermesModelBaseUrl, hermesApiServerEnabled, hermesApiServerKey, hermesApiServerCorsOrigins,
+    hermesRawConfigYaml, hermesRawEnv,
   };
   const configPayloadRef = useRef(configPayloadInput);
   configPayloadRef.current = configPayloadInput;
@@ -596,6 +720,7 @@ function App() {
   const continueToAdvancedSettings = useCallback(async () => {
     await continueToAdvancedSettingsController({
       step,
+      platform,
       licenseStatusLoaded,
       licenseUnlocked,
       licenseStatusError,
@@ -621,11 +746,13 @@ function App() {
     setSkipBasicConfig,
     setStep,
     step,
+    platform,
   ]);
 
   const handleAdvancedTransition = useCallback(async () => {
     await handleAdvancedTransitionController({
       step,
+      platform,
       licenseStatusLoaded,
       licenseUnlocked,
       licenseStatusError,
@@ -651,6 +778,7 @@ function App() {
     setSkipBasicConfig,
     setStep,
     step,
+    platform,
   ]);
 
   async function runDeferredOAuthQueue() {
@@ -658,26 +786,35 @@ function App() {
 
     setOauthCompletionRunning(true);
     setOauthCompletionStarted(true);
+    const platformName = platform === "hermes" ? "Hermes" : "OpenClaw";
     const { nextProviderAuths, successfulItems } = await executeDeferredOAuthQueue({
       queue: deferredOAuthQueue,
       initialProviderAuths: providerAuths,
-      invokeProviderAuth: (item) => invoke<ProviderAuthConfig>("start_provider_auth", {
-        provider: item.targetProvider,
-        method: item.authMethod,
-        oauthProviderId: item.oauthProviderId,
-        remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
-      }),
+      invokeProviderAuth: (item) => platform === "hermes"
+        ? invoke<ProviderAuthConfig>("start_platform_provider_auth", {
+            platform: "hermes",
+            provider: item.targetProvider,
+            method: item.authMethod,
+            oauthProviderId: item.oauthProviderId,
+            remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
+          })
+        : invoke<ProviderAuthConfig>("start_provider_auth", {
+            provider: item.targetProvider,
+            method: item.authMethod,
+            oauthProviderId: item.oauthProviderId,
+            remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
+          }),
       onItemStart: (item) => {
         setOauthCompletionResults(prev => ({
           ...prev,
-          [item.id]: { status: "pending", message: "Opening a terminal for interactive OpenClaw authentication..." },
+          [item.id]: { status: "pending", message: `Opening a terminal for interactive ${platformName} authentication...` },
         }));
       },
       onItemSuccess: (item, result) => {
         updateProviderAuth(item.targetProvider, result);
         setOauthCompletionResults(prev => ({
           ...prev,
-          [item.id]: { status: "success", message: `Connected via ${item.label}. OpenClaw imported the auth profile.` },
+          [item.id]: { status: "success", message: `Connected via ${item.label}. ${platformName} imported the auth profile.` },
         }));
       },
       onItemError: (item, message) => {
@@ -696,13 +833,22 @@ function App() {
 
     if (successfulItems.length > 0 && targetEnvironment !== "cloud") {
       try {
-        await invoke("configure_agent", {
-          config: {
-            ...buildConfigPayload(configPayloadInput, nextProviderAuths),
-            preserve_state: true,
-          },
-          remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
-        });
+        const oauthPayload = {
+          ...buildConfigPayload(configPayloadInput, nextProviderAuths),
+          preserve_state: true,
+        };
+        if (platform === "hermes") {
+          await invoke("configure_platform", {
+            platform: "hermes",
+            config: oauthPayload,
+            remote: null,
+          });
+        } else {
+          await invoke("configure_agent", {
+            config: oauthPayload,
+            remote: null,
+          });
+        }
       } catch (e: any) {
         const message = `OAuth succeeded, but saving the imported auth profile failed: ${String(e)}`;
         setOauthCompletionResults(prev => {
@@ -721,9 +867,16 @@ function App() {
   function renderProviderAuthEditor(targetProvider: string, options?: { keyPrefix?: string; showProviderLabel?: boolean; showMissingWarning?: boolean; marginTop?: string }) {
     const normalizedProvider = getBaseProvider(targetProvider);
     const auth = getProviderAuth(normalizedProvider);
-    const authOptions = getProviderAuthOptions(normalizedProvider);
-    const selectedAuthOption = authOptions.find((option) => option.value === auth.auth_method);
-    const hasCredential = isOAuthMethod(auth.auth_method) ? !!auth.profile_key : !!auth.token;
+    const authOptions = getProviderAuthOptions(normalizedProvider).filter((option) => (
+      platform !== "hermes"
+        || !isOAuthMethod(option.value)
+        || ("oauthProviderId" in option
+          && typeof option.oauthProviderId === "string"
+          && HERMES_SUPPORTED_OAUTH_PROVIDER_IDS.has(option.oauthProviderId))
+    ));
+    const effectiveAuthMethod = auth.auth_method;
+    const selectedAuthOption = authOptions.find((option) => option.value === effectiveAuthMethod);
+    const hasCredential = isOAuthMethod(effectiveAuthMethod) ? !!auth.profile_key : !!auth.token;
     const providerQueueItem = deferredOAuthQueue.find(item => item.source === "provider" && item.targetProvider === normalizedProvider);
     const completionResult = providerQueueItem ? oauthCompletionResults[providerQueueItem.id] : null;
     const showProviderLabel = options?.showProviderLabel ?? true;
@@ -742,7 +895,7 @@ function App() {
               <button
                 key={option.value}
                 type="button"
-                className={auth.auth_method === option.value ? "primary" : "secondary"}
+                className={effectiveAuthMethod === option.value ? "primary" : "secondary"}
                 style={buttonStyle}
                 onClick={() => setProviderAuthMethod(normalizedProvider, option.value)}
                 disabled={providerAuthBusy[normalizedProvider]}
@@ -759,30 +912,34 @@ function App() {
           </p>
         )}
 
-        {(auth.auth_method === "token" || auth.auth_method === "setup-token") && (
+        {(effectiveAuthMethod === "token" || effectiveAuthMethod === "setup-token") && (
           <div style={{ marginTop: "0.75rem" }}>
             <label style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-              {auth.auth_method === "setup-token" ? "Claude Code Setup Token" : normalizedProvider === "google" ? "Gemini API Key" : "API Key"}
+              {effectiveAuthMethod === "setup-token" ? "Claude Code Setup Token" : normalizedProvider === "google" ? "Gemini API Key" : "API Key"}
             </label>
             <input
               {...TEXT_ENTRY_PROPS}
               type="password"
               data-testid="input-api-key"
-              placeholder={auth.auth_method === "setup-token" ? "Paste `claude setup-token` output" : normalizedProvider === "google" ? "Paste your Gemini API key" : `Paste your ${normalizedProvider} API key`}
+              placeholder={effectiveAuthMethod === "setup-token" ? "Paste `claude setup-token` output" : normalizedProvider === "google" ? "Paste your Gemini API key" : `Paste your ${normalizedProvider} API key`}
               value={auth.token}
               onChange={(e) => updateProviderAuth(normalizedProvider, { token: e.target.value })}
             />
           </div>
         )}
 
-        {isOAuthMethod(auth.auth_method) && (
+        {isOAuthMethod(effectiveAuthMethod) && (
           <div style={{ marginTop: "0.75rem" }}>
             <p className="input-hint" style={{ marginTop: "0.5rem" }}>
               {hasCredential
                 ? `Imported profile ${auth.profile_key}.`
-                : checks.openclaw
-                  ? "OAuth will open automatically at the end of setup."
-                  : "OAuth will open automatically after OpenClaw is installed and setup reaches the final step."}
+                : platform === "hermes"
+                  ? (checks.openclaw
+                      ? "Hermes OAuth will open automatically at the end of setup."
+                      : "Hermes OAuth will open automatically after Hermes Agent is installed and setup reaches the final step.")
+                  : checks.openclaw
+                    ? "OAuth will open automatically at the end of setup."
+                    : "OAuth will open automatically after OpenClaw is installed and setup reaches the final step."}
             </p>
             {normalizedProvider === "google" && auth.auth_method === "google-gemini-cli" && !hasCredential && (
               <p className="input-hint" style={{ marginTop: "0.25rem", color: "var(--warning, #b45309)" }}>
@@ -831,57 +988,94 @@ function App() {
   }
 
   async function checkSystem(skipRedirect = false, allowInstalledChat = true) {
-    // Always check local system on initial load
-    const res: any = await invoke("check_prerequisites");
-    setChecks({
-      node: res.node_installed,
-      docker: res.docker_running,
-      openclaw: res.openclaw_installed
-    });
-    const version: string = await invoke("get_openclaw_version");
-    setOpenClawVersion(version);
+    try {
+      // Always check local system on initial load
+      const res: any = platform === "hermes"
+        ? await invoke("check_platform_prerequisites", { platform: "hermes", remote: null })
+        : await invoke("check_prerequisites");
+      setChecks({
+        node: res.nodeInstalled ?? res.node_installed,
+        docker: res.dockerRunning ?? res.docker_running,
+        openclaw: platform === "hermes" ? (res.platformInstalled ?? res.platform_installed) : res.openclaw_installed
+      });
+      let version = "Not Installed";
+      try {
+        version = platform === "hermes"
+          ? await invoke("get_platform_version", { platform: "hermes", remote: null })
+          : await invoke("get_openclaw_version");
+      } catch (e) {
+        console.warn("Could not get version:", e);
+      }
+      setOpenClawVersion(version);
 
-    if (res.openclaw_installed) {
-      if (allowInstalledChat) {
-        setAppScreen("chat");
+      const platformInstalled = platform === "hermes" ? (res.platformInstalled ?? res.platform_installed) : res.openclaw_installed;
+      if (platformInstalled) {
+        if (allowInstalledChat) {
+          setAppScreen("chat");
+        } else {
+          setStep(0.75);
+          setAppScreen("setup");
+        }
+        return true;
+      } else if (!skipRedirect) {
+        setStep(0.5);
+        setAppScreen("setup");
       } else {
-        setStep(1);
         setAppScreen("setup");
       }
-      return true;
-    } else if (!skipRedirect) {
-      setStep(0.5);
-      setAppScreen("setup");
-    } else {
-      setAppScreen("setup");
+      return platformInstalled;
+    } catch (e) {
+      console.error("Failed to check local system prerequisites:", e);
+      setChecks({ node: false, docker: false, openclaw: false });
+      if (!skipRedirect) {
+        setStep(0.5);
+        setAppScreen("setup");
+      }
+      return false;
     }
-    return res.openclaw_installed;
   }
 
   async function checkRemoteSystem(skipRedirect = false) {
     // Check remote system (called from Step 1 when cloud environment is selected)
     if (sshStatus === "success") {
-      const remote = {
-        ip: remoteIp,
-        user: remoteUser,
-        password: remotePassword || null,
-        privateKeyPath: remotePrivateKeyPath || null
-      };
+      try {
+        const remote = {
+          ip: remoteIp,
+          user: remoteUser,
+          password: remotePassword || null,
+          privateKeyPath: remotePrivateKeyPath || null
+        };
 
-      const res: any = await invoke("check_remote_prerequisites", { remote });
-      setChecks({
-        node: res.node_installed,
-        docker: res.docker_running,
-        openclaw: res.openclaw_installed
-      });
-      const version: string = await invoke("get_remote_openclaw_version", { remote });
-      setOpenClawVersion(version);
+        const res: any = platform === "hermes"
+          ? await invoke("check_platform_prerequisites", { platform: "hermes", remote })
+          : await invoke("check_remote_prerequisites", { remote });
+        setChecks({
+          node: res.nodeInstalled ?? res.node_installed,
+          docker: res.dockerRunning ?? res.docker_running,
+          openclaw: platform === "hermes" ? (res.platformInstalled ?? res.platform_installed) : res.openclaw_installed
+        });
+        
+        let version = "Not Installed";
+        try {
+          version = platform === "hermes"
+            ? await invoke("get_platform_version", { platform: "hermes", remote })
+            : await invoke("get_remote_openclaw_version", { remote });
+        } catch (e) {
+          console.warn("Could not get remote version:", e);
+        }
+        setOpenClawVersion(version);
 
-      if (res.openclaw_installed) {
-        setAppScreen("chat");
-        return true;
+        const platformInstalled = platform === "hermes" ? (res.platformInstalled ?? res.platform_installed) : res.openclaw_installed;
+        if (platformInstalled) {
+          setAppScreen("chat");
+          return true;
+        }
+        return platformInstalled;
+      } catch (e) {
+        console.error("Failed to check remote system prerequisites:", e);
+        setChecks({ node: false, docker: false, openclaw: false });
+        return false;
       }
-      return res.openclaw_installed;
     }
     return false;
   }
@@ -1124,6 +1318,7 @@ function App() {
 Managed by Clawnetes.`;
 
     return {
+      platform: initial.platform || "openclaw",
       provider: normalizedProvider,
       api_key: initialProviderAuths[normalizedProvider]?.token || initial.api_key,
       auth_method: initialProviderAuths[normalizedProvider]?.auth_method || initial.auth_method,
@@ -1197,6 +1392,19 @@ Managed by Clawnetes.`,
       whatsapp_enabled: initial.whatsapp_enabled || false,
       whatsapp_dm_policy: initial.whatsapp_dm_policy || null,
       whatsapp_phone_number: initial.whatsapp_phone_number || "",
+      hermes_max_turns: initial.hermes_max_turns ?? null,
+      hermes_reasoning_effort: initial.hermes_reasoning_effort || null,
+      hermes_personality: initial.hermes_personality || null,
+      hermes_terminal_backend: initial.hermes_terminal_backend || null,
+      hermes_memory_enabled: initial.hermes_memory_enabled ?? null,
+      hermes_verbose: initial.hermes_verbose ?? null,
+      hermes_smart_routing: initial.hermes_smart_routing ?? null,
+      hermes_model_base_url: initial.hermes_model_base_url || null,
+      hermes_api_server_enabled: initial.hermes_api_server_enabled ?? null,
+      hermes_api_server_key: initial.hermes_api_server_key || null,
+      hermes_api_server_cors_origins: initial.hermes_api_server_cors_origins || null,
+      hermes_raw_config_yaml: initial.hermes_raw_config_yaml || null,
+      hermes_raw_env: initial.hermes_raw_env || null,
     };
   }
 
@@ -1221,6 +1429,7 @@ Managed by Clawnetes.`,
   const handleInstall = useCallback(async () => {
     await handleInstallController({
       state: {
+        platform,
         targetEnvironment,
         remoteIp,
         remoteUser,
@@ -1288,6 +1497,7 @@ Managed by Clawnetes.`,
     whatsappDmPolicy,
     whatsappPaired,
     whatsappPhoneNumber,
+    platform,
   ]);
 
   async function handlePairing() {
@@ -1316,6 +1526,7 @@ Managed by Clawnetes.`,
   const handleMaintenanceAction = useCallback(async (action: string) => {
     return await handleMaintenanceActionController({
       state: {
+        platform,
         targetEnvironment,
         sshStatus,
         remoteIp,
@@ -1343,11 +1554,13 @@ Managed by Clawnetes.`,
     setMaintenanceStatus,
     sshStatus,
     targetEnvironment,
+    platform,
   ]);
 
   const loadExistingConfig = useCallback(async () => {
     return loadExistingConfigController({
       state: {
+        platform,
         targetEnvironment,
         remoteIp,
         remoteUser,
@@ -1406,6 +1619,19 @@ Managed by Clawnetes.`,
       setNumAgents,
       setAgentConfigs,
       setIsPaired,
+      setHermesMaxTurns: fieldSetter(dispatch, "hermesMaxTurns"),
+      setHermesReasoningEffort: fieldSetter(dispatch, "hermesReasoningEffort"),
+      setHermesPersonality: fieldSetter(dispatch, "hermesPersonality"),
+      setHermesTerminalBackend: fieldSetter(dispatch, "hermesTerminalBackend"),
+      setHermesMemoryEnabled: fieldSetter(dispatch, "hermesMemoryEnabled"),
+      setHermesVerbose: fieldSetter(dispatch, "hermesVerbose"),
+      setHermesSmartRouting: fieldSetter(dispatch, "hermesSmartRouting"),
+      setHermesModelBaseUrl: fieldSetter(dispatch, "hermesModelBaseUrl"),
+      setHermesApiServerEnabled: fieldSetter(dispatch, "hermesApiServerEnabled"),
+      setHermesApiServerKey: fieldSetter(dispatch, "hermesApiServerKey"),
+      setHermesApiServerCorsOrigins: fieldSetter(dispatch, "hermesApiServerCorsOrigins"),
+      setHermesRawConfigYaml: fieldSetter(dispatch, "hermesRawConfigYaml"),
+      setHermesRawEnv: fieldSetter(dispatch, "hermesRawEnv"),
     });
   }, [
     availableSkillIds,
@@ -1465,19 +1691,28 @@ Managed by Clawnetes.`,
     setWhatsappPhoneNumber,
     setWhatsappPhoneSubmitted,
     targetEnvironment,
+    platform,
+    dispatch,
   ]);
   loadExistingConfigRef.current = loadExistingConfig;
 
   const restartGatewayAfterPanelUpdate = useCallback(async () => {
     setConfigUpdating(true);
     try {
-      await invoke("restart_openclaw_gateway", {
-        remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
-      });
+      if (platform === "hermes") {
+        await invoke("restart_platform_service", {
+          platform: "hermes",
+          remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
+        });
+      } else {
+        await invoke("restart_openclaw_gateway", {
+          remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
+        });
+      }
     } finally {
       setConfigUpdating(false);
     }
-  }, [targetEnvironment, buildActiveRemoteConfig]);
+  }, [platform, targetEnvironment, buildActiveRemoteConfig]);
 
   const handleToggleTunnel = useCallback(async () => {
     await handleToggleTunnelController({
@@ -1505,13 +1740,15 @@ Managed by Clawnetes.`,
   ]);
 
   const openChatWorkspace = useCallback(() => {
+    persistSelectedEnvironment();
     setChatBootstrap(null);
     setChatBootstrapError("");
+    setChatWorkspaceWarning("");
     setLogs("");
     setMaintenanceStatus("");
     setMaintCompleted(false);
     setAppScreen("chat");
-  }, [setLogs, setMaintCompleted, setMaintenanceStatus]);
+  }, [persistSelectedEnvironment, setLogs, setMaintCompleted, setMaintenanceStatus]);
 
   const openCommandCenter = useCallback((snapshot: ChatTranscriptScrollSnapshot | null) => {
     setPendingChatReturnScrollSnapshot(snapshot);
@@ -1531,8 +1768,8 @@ Managed by Clawnetes.`,
     setChatBootstrapError("");
     setAppScreen("setup");
     setMode("advanced");
-    setStep(6);
-  }, [loadExistingConfig, setMode, setStep]);
+    setStep(platform === "hermes" ? 19 : 6);
+  }, [loadExistingConfig, platform, setMode, setStep]);
 
   useEffect(() => {
     if (appScreen !== "chat" && appScreen !== "command-center") {
@@ -1590,14 +1827,30 @@ Managed by Clawnetes.`,
 
   // ── Panel handlers (for right panel in chat) ──
 
+  const saveUpdatedConfig = useCallback(async (payload: any) => {
+    const remote = targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null;
+    if (platform === "hermes") {
+      await invoke("configure_platform", { platform: "hermes", config: { ...payload, preserve_state: true }, remote });
+    } else {
+      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote });
+    }
+  }, [platform, targetEnvironment, buildActiveRemoteConfig]);
+
   const handlePanelModelChange = useCallback(async (newModel: string) => {
     let nextAgentConfigs = configPayloadRef.current.agentConfigs;
     const nextProvider = getBaseProviderFromModel(newModel) || configPayloadRef.current.provider;
+
+    if (platform === "hermes" && !HERMES_SUPPORTED_MODEL_PROVIDERS.includes(nextProvider as typeof HERMES_SUPPORTED_MODEL_PROVIDERS[number])) {
+      console.error(`Rejected unsupported Hermes model provider: ${nextProvider}`);
+      return;
+    }
     
     let nextApiKey = configPayloadRef.current.apiKey;
     let nextAuthMethod = configPayloadRef.current.authMethod;
 
-    if (activeAgentId && activeAgentId !== "main") {
+    const isMain = !activeAgentId || activeAgentId === "main" || platform === "hermes";
+
+    if (!isMain) {
       // Sub-agent: update that agent's model in agentConfigs
       nextAgentConfigs = nextAgentConfigs.map(a =>
         a.id === activeAgentId ? { ...a, model: newModel } : a
@@ -1618,23 +1871,23 @@ Managed by Clawnetes.`,
       const payload = buildConfigPayload({
         ...configPayloadRef.current,
         agentConfigs: nextAgentConfigs,
-        provider: (activeAgentId === "main" || !activeAgentId) ? nextProvider : configPayloadRef.current.provider,
-        model: (activeAgentId === "main" || !activeAgentId) ? newModel : configPayloadRef.current.model,
-        apiKey: (activeAgentId === "main" || !activeAgentId) ? nextApiKey : configPayloadRef.current.apiKey,
-        authMethod: (activeAgentId === "main" || !activeAgentId) ? nextAuthMethod : configPayloadRef.current.authMethod,
+        provider: isMain ? nextProvider : configPayloadRef.current.provider,
+        model: isMain ? newModel : configPayloadRef.current.model,
+        apiKey: isMain ? nextApiKey : configPayloadRef.current.apiKey,
+        authMethod: isMain ? nextAuthMethod : configPayloadRef.current.authMethod,
       });
-      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await saveUpdatedConfig(payload);
       await restartGatewayAfterPanelUpdate();
     } catch (e) {
       console.error("Failed to update model:", e);
     }
-  }, [activeAgentId, restartGatewayAfterPanelUpdate, setAgentConfigs, setModel, setProvider, setApiKey, setAuthMethod, targetEnvironment, buildActiveRemoteConfig]);
+  }, [activeAgentId, platform, restartGatewayAfterPanelUpdate, setAgentConfigs, setModel, setProvider, setApiKey, setAuthMethod, targetEnvironment, buildActiveRemoteConfig, saveUpdatedConfig]);
 
   const handlePanelFallbacksChange = useCallback(async (newFallbacks: string[]) => {
     setFallbackModels(newFallbacks);
     try {
       const payload = buildConfigPayload({ ...configPayloadRef.current, fallbackModels: newFallbacks });
-      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await saveUpdatedConfig(payload);
       await restartGatewayAfterPanelUpdate();
     } catch (e) {
       console.error("Failed to update fallback models:", e);
@@ -1653,7 +1906,7 @@ Managed by Clawnetes.`,
         lmstudioBaseUrl: provider === "lmstudio" ? baseUrl : configPayloadRef.current.lmstudioBaseUrl,
         localBaseUrl: provider === "local" ? baseUrl : configPayloadRef.current.localBaseUrl,
       });
-      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await saveUpdatedConfig(payload);
       await restartGatewayAfterPanelUpdate();
     } catch (e) {
       console.error("Failed to update local base URL:", e);
@@ -1677,7 +1930,7 @@ Managed by Clawnetes.`,
         apiKey: isCurrentProvider ? auth.token : configPayloadRef.current.apiKey,
         authMethod: isCurrentProvider ? auth.auth_method : configPayloadRef.current.authMethod,
       });
-      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await saveUpdatedConfig(payload);
       await restartGatewayAfterPanelUpdate();
     } catch (e) {
       console.error("Failed to update provider auth:", e);
@@ -1707,7 +1960,7 @@ Managed by Clawnetes.`,
         apiKey: isCurrentProvider ? result.token : configPayloadRef.current.apiKey,
         authMethod: isCurrentProvider ? result.auth_method : configPayloadRef.current.authMethod,
       });
-      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await saveUpdatedConfig(payload);
       await restartGatewayAfterPanelUpdate();
     } catch (e) {
       console.error("OAuth succeeded but saving failed:", e);
@@ -1739,7 +1992,7 @@ Managed by Clawnetes.`,
         selectedSkills: newSkills,
         serviceKeys: newServiceKeys,
       });
-      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await saveUpdatedConfig(payload);
       await restartGatewayAfterPanelUpdate();
     } catch (e) {
       console.error("Failed to save skills config:", e);
@@ -1756,7 +2009,7 @@ Managed by Clawnetes.`,
         ...configPayloadRef.current,
         toolPolicy: newPolicy,
       });
-      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await saveUpdatedConfig(payload);
       await restartGatewayAfterPanelUpdate();
     } catch (e) {
       console.error("Failed to save tool policy:", e);
@@ -1781,7 +2034,7 @@ Managed by Clawnetes.`,
         idleTimeoutMs: newIdleTimeoutMs,
         sandboxMode: newSandboxMode,
       });
-      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await saveUpdatedConfig(payload);
       await restartGatewayAfterPanelUpdate();
     } catch (e) {
       console.error("Failed to save advanced settings:", e);
@@ -1789,6 +2042,53 @@ Managed by Clawnetes.`,
       setLoading(false);
     }
   }, [restartGatewayAfterPanelUpdate, setHeartbeatMode, setIdleTimeoutMs, setSandboxMode, setLoading]);
+
+  const handleSaveHermesSettings = useCallback(async (updates: Record<string, any>) => {
+    setLoading(true);
+    if ("hermesTerminalBackend" in updates) setHermesTerminalBackend(updates.hermesTerminalBackend);
+    if ("hermesMaxTurns" in updates) setHermesMaxTurns(updates.hermesMaxTurns);
+    if ("hermesReasoningEffort" in updates) setHermesReasoningEffort(updates.hermesReasoningEffort);
+    if ("hermesPersonality" in updates) setHermesPersonality(updates.hermesPersonality);
+    if ("hermesMemoryEnabled" in updates) setHermesMemoryEnabled(updates.hermesMemoryEnabled);
+    if ("hermesVerbose" in updates) setHermesVerbose(updates.hermesVerbose);
+    if ("hermesSmartRouting" in updates) setHermesSmartRouting(updates.hermesSmartRouting);
+    if ("hermesModelBaseUrl" in updates) setHermesModelBaseUrl(updates.hermesModelBaseUrl);
+    if ("hermesApiServerEnabled" in updates) setHermesApiServerEnabled(updates.hermesApiServerEnabled);
+    if ("hermesApiServerKey" in updates) setHermesApiServerKey(updates.hermesApiServerKey);
+    if ("hermesApiServerCorsOrigins" in updates) setHermesApiServerCorsOrigins(updates.hermesApiServerCorsOrigins);
+    if ("hermesRawConfigYaml" in updates) setHermesRawConfigYaml(updates.hermesRawConfigYaml);
+    if ("hermesRawEnv" in updates) setHermesRawEnv(updates.hermesRawEnv);
+
+    try {
+      const payload = buildConfigPayload({
+        ...configPayloadRef.current,
+        ...updates,
+      });
+      await saveUpdatedConfig(payload);
+      await restartGatewayAfterPanelUpdate();
+    } catch (e) {
+      console.error("Failed to save Hermes settings:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    setLoading,
+    setHermesTerminalBackend,
+    setHermesMaxTurns,
+    setHermesReasoningEffort,
+    setHermesPersonality,
+    setHermesMemoryEnabled,
+    setHermesVerbose,
+    setHermesSmartRouting,
+    setHermesModelBaseUrl,
+    setHermesApiServerEnabled,
+    setHermesApiServerKey,
+    setHermesApiServerCorsOrigins,
+    setHermesRawConfigYaml,
+    setHermesRawEnv,
+    saveUpdatedConfig,
+    restartGatewayAfterPanelUpdate
+  ]);
 
   const handlePanelIdentitySave = useCallback(async (tab: string, content: string) => {
     const currentConfig = configPayloadRef.current;
@@ -1804,7 +2104,7 @@ Managed by Clawnetes.`,
     }
     try {
       const remote = targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null;
-      if (!remote && (tab === "identity" || tab === "soul")) {
+      if (platform !== "hermes" && !remote && (tab === "identity" || tab === "soul")) {
         // Local mode + identity/soul: use save_workspace_files (writes .md files directly)
         const newIdentity = tab === "identity" ? content : currentConfig.identityMd;
         const newSoul = tab === "soul" ? content : currentConfig.soulMd;
@@ -1816,16 +2116,16 @@ Managed by Clawnetes.`,
           soul: newSoul,
         });
       } else {
-        // Remote mode (all tabs) OR Local non-identity/soul: use configure_agent to persist
+        // Hermes or remote mode: persist through the platform-aware config command
         const overrides: Record<string, string> = {};
         overrides[`${tab}Md`] = content;
         const payload = buildConfigPayload({ ...currentConfig, ...overrides });
-        await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote });
+        await saveUpdatedConfig(payload);
       }
     } catch (e) {
       console.error(`Failed to save ${tab}:`, e);
     }
-  }, [targetEnvironment, buildActiveRemoteConfig, setAgentsMd, setHeartbeatMd, setIdentityMd, setMemoryMd, setSoulMd, setToolsMd]);
+  }, [targetEnvironment, buildActiveRemoteConfig, platform, saveUpdatedConfig, setAgentsMd, setHeartbeatMd, setIdentityMd, setMemoryMd, setSoulMd, setToolsMd]);
 
   const handlePanelSetupIntegration = useCallback(async (skillId: string) => {
     if (!selectedSkills.includes(skillId)) {
@@ -1848,7 +2148,7 @@ Managed by Clawnetes.`,
         agentConfigs: nextAgentConfigs,
         enableMultiAgent: true,
       });
-      await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null });
+      await saveUpdatedConfig(payload);
       await restartGatewayAfterPanelUpdate();
     } catch (e) {
       console.error("Failed to add agent:", e);
@@ -1907,7 +2207,12 @@ Managed by Clawnetes.`,
   const hasChanges = !initialConfigRef.current || !isDeepEqual(initialPayload, currentPayload);
   const remoteSummary = targetEnvironment === "cloud"
     ? `${remoteUser || "remote-user"}@${remoteIp || "remote-host"}${tunnelActive ? " via SSH tunnel" : ""}`
-    : "Running against the local OpenClaw gateway on loopback.";
+    : platform === "hermes"
+      ? "Running against the local Hermes API server on loopback."
+      : "Running against the local OpenClaw gateway on loopback.";
+  const canManageChatAgents = chatBootstrap?.platform === "hermes"
+    ? chatBootstrap?.supportsAgentDiscovery === true
+    : true;
 
   const renderStep = () => {
     switch (step) {
@@ -1922,6 +2227,8 @@ Managed by Clawnetes.`,
         );
       case 0.5:
         return <StepWelcome />;
+      case 0.75:
+        return <StepPlatformSelect />;
       case 1:
         return <StepEnvironment handleSshCheck={handleSshCheck} checkSystem={checkSystem} checkRemoteSystem={checkRemoteSystem} />;
       case 2:
@@ -1934,6 +2241,12 @@ Managed by Clawnetes.`,
         return <StepAgentProfile />;
       case 6.5:
         return <StepAgentType applyAgentTypePreset={applyAgentTypePreset} />;
+      case 19:
+        return <StepHermesConfig renderProviderAuthEditor={renderProviderAuthEditor} getProviderDefaultModel={getProviderDefaultModel} getProviderModelOptions={getProviderModelOptions} />;
+      case 20:
+        return <StepHermesMessaging />;
+      case 21:
+        return <StepHermesReview handleInstall={handleInstall} hasChanges={hasChanges} initialConfigRef={initialConfigRef} />;
       case 6.7:
         return <StepConfigReview renderProviderAuthEditor={renderProviderAuthEditor} getProviderAuth={getProviderAuth} />;
       case 7:
@@ -1977,6 +2290,24 @@ Managed by Clawnetes.`,
     }
   };
 
+  const maintenancePlatformName = platform === "hermes" ? "Hermes Agent" : "OpenClaw";
+  const maintenanceConfirmTitle =
+    pendingMaintenanceConfirm === "repair"
+      ? "Repair System"
+      : pendingMaintenanceConfirm === "audit"
+        ? "Security Audit"
+        : pendingMaintenanceConfirm === "update"
+          ? `Upgrade ${maintenancePlatformName}`
+          : `Uninstall ${maintenancePlatformName}`;
+  const maintenanceConfirmMessage =
+    pendingMaintenanceConfirm === "repair"
+      ? `Run ${maintenancePlatformName} system repair now?`
+      : pendingMaintenanceConfirm === "audit"
+        ? `Run ${maintenancePlatformName} security audit and apply fixes now?`
+        : pendingMaintenanceConfirm === "update"
+          ? `Upgrade ${maintenancePlatformName} now?`
+          : `Are you absolutely sure you want to completely remove ${maintenancePlatformName} and all its data?`;
+
   return (
     <WizardContext.Provider value={{ state, dispatch }}>
     <div className="app-container">
@@ -1985,7 +2316,9 @@ Managed by Clawnetes.`,
           <div className="content-wrapper">
             <div className="step-view">
               <h2>Preparing Clawnetes</h2>
-              <p className="step-description">Checking your OpenClaw installation and gateway state.</p>
+              <p className="step-description">
+                Checking your {platform === "hermes" ? "Hermes Agent" : "OpenClaw"} installation and service state.
+              </p>
             </div>
           </div>
         </main>
@@ -1993,15 +2326,27 @@ Managed by Clawnetes.`,
         <>
           <ChatShell
             bootstrap={chatBootstrap}
-            bootstrapping={chatBootstrapping}
+            bootstrapping={chatConnecting}
             bootstrapError={chatBootstrapError}
+            workspaceWarning={chatWorkspaceWarning}
+            workspaceWarningPending={chatConfigLoading}
+            onClearWorkspaceWarning={() => setChatWorkspaceWarning("")}
             onRetryConnection={() => {
               setChatBootstrap(null);
+              setChatBootstrapError("");
+              setChatWorkspaceWarning("");
               void bootstrapGatewayChat();
             }}
             onOpenConfigure={openCommandCenter}
             returnScrollSnapshot={pendingChatReturnScrollSnapshot}
             onConsumeReturnScrollSnapshot={() => setPendingChatReturnScrollSnapshot(null)}
+            platform={platform}
+            onSwitchPlatform={(p) => {
+              dispatch({ type: "SET_FIELD", field: "platform", value: p });
+              setChatBootstrap(null);
+              setChatBootstrapError("");
+              setChatWorkspaceWarning("");
+            }}
             environments={storedEnvironments}
             activeEnvironmentId={activeStoredEnvironmentId}
             onSwitchEnvironment={handleSwitchEnvironment}
@@ -2035,8 +2380,8 @@ Managed by Clawnetes.`,
             memoryMd={memoryMd}
             onIdentitySave={handlePanelIdentitySave}
             identitySaving={savingWorkspace}
-            onAddAgent={handlePanelAddAgent}
-            onRemoveAgent={handlePanelRemoveAgent}
+            onAddAgent={canManageChatAgents ? handlePanelAddAgent : undefined}
+            onRemoveAgent={canManageChatAgents ? handlePanelRemoveAgent : undefined}
             isConfigUpdating={configUpdating}
             targetEnvironment={targetEnvironment}
             remoteSummary={remoteSummary}
@@ -2049,6 +2394,22 @@ Managed by Clawnetes.`,
             toolsSaving={loading}
             settingsBusy={loading}
             idleTimeoutMs={idleTimeoutMs}
+            
+            hermesMaxTurns={hermesMaxTurns}
+            hermesReasoningEffort={hermesReasoningEffort}
+            hermesPersonality={hermesPersonality}
+            hermesTerminalBackend={hermesTerminalBackend}
+            hermesMemoryEnabled={hermesMemoryEnabled}
+            hermesVerbose={hermesVerbose}
+            hermesSmartRouting={hermesSmartRouting}
+            hermesModelBaseUrl={hermesModelBaseUrl}
+            hermesApiServerEnabled={hermesApiServerEnabled}
+            hermesApiServerKey={hermesApiServerKey}
+            hermesApiServerCorsOrigins={hermesApiServerCorsOrigins}
+            hermesRawConfigYaml={hermesRawConfigYaml}
+            hermesRawEnv={hermesRawEnv}
+            onSaveHermesSettings={handleSaveHermesSettings}
+
             onSaveToolPolicy={handleSaveToolPolicy}
             onSaveAdvancedSettings={handleSaveAdvancedSettings}
             maintenanceStatus={maintenanceStatus}
@@ -2191,22 +2552,10 @@ Managed by Clawnetes.`,
         <div className="modal-overlay">
           <div className="confirmation-modal" role="dialog" aria-modal="true" aria-labelledby="maintenance-confirm-title">
             <h3 id="maintenance-confirm-title" style={{ marginTop: 0 }}>
-              {pendingMaintenanceConfirm === "repair"
-                ? "Repair System"
-                : pendingMaintenanceConfirm === "audit"
-                  ? "Security Audit"
-                  : pendingMaintenanceConfirm === "update"
-                    ? "Upgrade OpenClaw"
-                    : "Uninstall OpenClaw"}
+              {maintenanceConfirmTitle}
             </h3>
             <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>
-              {pendingMaintenanceConfirm === "repair"
-                ? "Run OpenClaw system repair now?"
-                : pendingMaintenanceConfirm === "audit"
-                  ? "Run OpenClaw security audit and apply fixes now?"
-                  : pendingMaintenanceConfirm === "update"
-                    ? "Upgrade OpenClaw now?"
-                    : "Are you absolutely sure you want to completely remove OpenClaw and all its data?"}
+              {maintenanceConfirmMessage}
             </p>
             <div className="button-group" style={{ marginTop: "1.5rem" }}>
               <button className="primary" onClick={() => void confirmMaintenanceAction()} disabled={loading} type="button">

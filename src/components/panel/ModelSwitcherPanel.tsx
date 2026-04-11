@@ -19,13 +19,14 @@ import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 interface ModelSwitcherPanelProps {
   currentModel: string;
   fallbackModels: string[];
+  allowedProviders?: string[];
   currentLocalBaseUrl?: string;
   currentLmstudioBaseUrl?: string;
-  onModelChange?: (model: string) => void;
-  onFallbacksChange?: (models: string[]) => void;
-  onLocalBaseUrlChange?: (provider: "lmstudio" | "local", baseUrl: string) => void;
+  onModelChange?: (model: string) => void | Promise<void>;
+  onFallbacksChange?: (models: string[]) => void | Promise<void>;
+  onLocalBaseUrlChange?: (provider: "lmstudio" | "local", baseUrl: string) => void | Promise<void>;
   providerAuths?: Record<string, ProviderAuthConfig>;
-  onProviderAuthChange?: (provider: string, auth: ProviderAuthConfig) => void;
+  onProviderAuthChange?: (provider: string, auth: ProviderAuthConfig) => void | Promise<void>;
   onStartOAuth?: (provider: string, authMethod: string, oauthProviderId: string) => Promise<ProviderAuthConfig>;
   onDetectLocalModels?: (provider: "ollama" | "lmstudio" | "local", baseUrl?: string) => Promise<string[]>;
 }
@@ -419,6 +420,7 @@ function LocalModelSection({
 function ModelSwitcherPanel({
   currentModel,
   fallbackModels,
+  allowedProviders,
   currentLocalBaseUrl = "",
   currentLmstudioBaseUrl = "",
   onModelChange,
@@ -488,6 +490,27 @@ function ModelSwitcherPanel({
     }
   }, [draftProvider, getProviderBaseUrl]);
 
+  useEffect(() => {
+    if (!allowedProviders || allowedProviders.length === 0) {
+      return;
+    }
+
+    if (allowedProviders.includes(draftProvider)) {
+      return;
+    }
+
+    const fallbackProvider = allowedProviders[0];
+    setDraftProvider(fallbackProvider);
+    setDraftModel(DEFAULT_MODELS[fallbackProvider] || "");
+    setDraftAuth(
+      providerAuths[fallbackProvider] || createDefaultProviderAuth(fallbackProvider),
+    );
+    setDetectedModels([]);
+    setDetecting(false);
+    setCustomModelName("");
+    setLocalBaseUrl(getProviderBaseUrl(fallbackProvider));
+  }, [allowedProviders, draftProvider, getProviderBaseUrl, providerAuths]);
+
   // Check if dirty
   const isDirty = useMemo(() => {
     const modelChanged = draftModel !== currentModel || draftProvider !== (getBaseProviderFromModel(currentModel) || "anthropic");
@@ -536,12 +559,12 @@ function ModelSwitcherPanel({
 
   const providerOptions: DropdownOption[] = useMemo(
     () =>
-      ALL_PROVIDERS.map((p) => ({
+      (allowedProviders && allowedProviders.length > 0 ? ALL_PROVIDERS.filter((provider) => allowedProviders.includes(provider)) : ALL_PROVIDERS).map((p) => ({
         value: p,
         label: displayProviderName(p),
         icon: p,
       })),
-    [],
+    [allowedProviders],
   );
 
   const modelOptions: DropdownOption[] = useMemo(() => {
@@ -671,22 +694,22 @@ function ModelSwitcherPanel({
             existingAuth.auth_method !== draftAuth.auth_method ||
             existingAuth.token !== draftAuth.token);
         if (authChanged) {
-          onProviderAuthChange?.(draftProvider, draftAuth);
+          await onProviderAuthChange?.(draftProvider, draftAuth);
         }
       }
 
       // Save model change
       if (draftModel && draftModel !== currentModel) {
-        onModelChange?.(draftModel);
+        await onModelChange?.(draftModel);
       }
 
       // Save fallbacks change
       if (JSON.stringify(draftFallbacks) !== JSON.stringify(fallbackModels)) {
-        onFallbacksChange?.(draftFallbacks);
+        await onFallbacksChange?.(draftFallbacks);
       }
 
       if ((draftProvider === "lmstudio" || draftProvider === "local") && localBaseUrl !== getProviderBaseUrl(draftProvider)) {
-        onLocalBaseUrlChange?.(draftProvider, localBaseUrl);
+        await onLocalBaseUrlChange?.(draftProvider, localBaseUrl);
       }
     } catch (e) {
       setSaveError(String(e));

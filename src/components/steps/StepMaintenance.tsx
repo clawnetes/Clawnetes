@@ -15,8 +15,11 @@ function StepMaintenance({ handleMaintenanceAction, onRequestConfirmation, loadE
   const {
     targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
     tunnelActive, sshStatus, selectedMaint, loading, logs, gatewayPort,
-    maintenanceStatus, maintCompleted,
+    maintenanceStatus, maintCompleted, platform,
   } = state;
+  const isHermes = platform === "hermes";
+  const platformName = isHermes ? "Hermes Agent" : "OpenClaw";
+  const endpointLabel = isHermes ? "API endpoint" : "Dashboard";
 
   const setField = (field: string, value: unknown) =>
     dispatch({ type: "SET_FIELD", field: field as any, value });
@@ -25,7 +28,7 @@ function StepMaintenance({ handleMaintenanceAction, onRequestConfirmation, loadE
     <div className="step-view">
       <h2>Welcome Back</h2>
       <p className="step-description">
-        OpenClaw is already installed {targetEnvironment === "cloud" ? `on ${remoteIp}` : "on your system"}. What would you like to do?
+        {platformName} is already installed {targetEnvironment === "cloud" ? `on ${remoteIp}` : "on your system"}. What would you like to do?
       </p>
 
       {/* Quick Action Buttons */}
@@ -35,24 +38,26 @@ function StepMaintenance({ handleMaintenanceAction, onRequestConfirmation, loadE
           style={{ flex: 1 }}
           onClick={async () => {
             try {
-              const url: string = await invoke("get_dashboard_url", {
-                isRemote: targetEnvironment === "cloud",
-                gatewayPort,
-                remote: targetEnvironment === "cloud" ? {
-                  ip: remoteIp,
-                  user: remoteUser,
-                  password: remotePassword || null,
-                  privateKeyPath: remotePrivateKeyPath || null
-                } : null
-              });
+              const url: string = isHermes
+                ? `http://127.0.0.1:${targetEnvironment === "cloud" ? REMOTE_TUNNEL_ACCESS_PORT : gatewayPort}/v1`
+                : await invoke("get_dashboard_url", {
+                    isRemote: targetEnvironment === "cloud",
+                    gatewayPort,
+                    remote: targetEnvironment === "cloud" ? {
+                      ip: remoteIp,
+                      user: remoteUser,
+                      password: remotePassword || null,
+                      privateKeyPath: remotePrivateKeyPath || null
+                    } : null
+                  });
               await openExternal(url);
             } catch (e) {
-              setField("maintenanceStatus", `❌ Failed to get dashboard URL: ${e}`);
+              setField("maintenanceStatus", `❌ Failed to open ${endpointLabel.toLowerCase()}: ${e}`);
             }
           }}
           disabled={targetEnvironment === "cloud" && !tunnelActive}
         >
-          🌐 Open Dashboard
+          🌐 Open {endpointLabel}
         </button>
 
         {targetEnvironment === "cloud" && (
@@ -103,7 +108,7 @@ function StepMaintenance({ handleMaintenanceAction, onRequestConfirmation, loadE
                     }
                   });
                   setField("tunnelActive", true);
-                  setField("maintenanceStatus", `✅ SSH tunnel established successfully. Dashboard is now accessible on localhost:${REMOTE_TUNNEL_ACCESS_PORT}.`);
+                  setField("maintenanceStatus", `✅ SSH tunnel established successfully. ${endpointLabel} is now accessible on localhost:${REMOTE_TUNNEL_ACCESS_PORT}.`);
                 } catch (e) {
                   const friendlyError = formatSshError(String(e));
                   setField("maintenanceStatus", `❌ Failed to establish tunnel: ${friendlyError}`);
@@ -125,7 +130,7 @@ function StepMaintenance({ handleMaintenanceAction, onRequestConfirmation, loadE
           onClick={() => !loading && setField("selectedMaint", "repair")}
         >
           <h3>🛠 Repair System</h3>
-          <p>Run <code>openclaw doctor --repair</code> to fix configuration and service issues.</p>
+          <p>Run <code>{isHermes ? "hermes doctor" : "openclaw doctor --repair"}</code> to fix configuration and service issues.</p>
         </div>
 
         <div
@@ -133,22 +138,22 @@ function StepMaintenance({ handleMaintenanceAction, onRequestConfirmation, loadE
           onClick={() => !loading && setField("selectedMaint", "audit")}
         >
           <h3>🛡 Security Audit</h3>
-          <p>Run <code>openclaw security audit --fix</code> to audit and tighten system permissions.</p>
+          <p>{isHermes ? "Run Hermes diagnostics and report configuration issues." : <>Run <code>openclaw security audit --fix</code> to audit and tighten system permissions.</>}</p>
         </div>
 
         <div
           className={`mode-card ${selectedMaint === "update" ? "active" : ""}`}
           onClick={() => !loading && setField("selectedMaint", "update")}
         >
-          <h3>🚀 Upgrade OpenClaw Version</h3>
-          <p>Upgrade to the latest version of OpenClaw.</p>
+          <h3>🚀 Upgrade {platformName}</h3>
+          <p>Upgrade to the latest version of {platformName}.</p>
         </div>
 
         <div
           className={`mode-card ${selectedMaint === "reconfigure" ? "active" : ""}`}
           onClick={() => !loading && setField("selectedMaint", "reconfigure")}
         >
-          <h3>⚙️ Reconfigure OpenClaw</h3>
+          <h3>⚙️ Reconfigure {platformName}</h3>
           <p>Proceed to the standard setup wizard to re-configure your agent and channels.</p>
         </div>
 
@@ -158,7 +163,7 @@ function StepMaintenance({ handleMaintenanceAction, onRequestConfirmation, loadE
           onClick={() => !loading && setField("selectedMaint", "uninstall")}
         >
           <h3 style={selectedMaint === "uninstall" ? { color: "var(--error)" } : {}}>🗑 Uninstall Completely</h3>
-          <p>Remove the OpenClaw CLI and all {targetEnvironment === "local" ? "local" : "remote"} configuration/data files.</p>
+          <p>Remove {platformName} and all {targetEnvironment === "local" ? "local" : "remote"} configuration/data files.</p>
         </div>
       </div>
 

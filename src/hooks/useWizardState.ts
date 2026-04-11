@@ -1,14 +1,18 @@
 import { useReducer } from "react";
 import type { AgentConfigData, AgentTypeId, BusinessFunctionId, CronJobConfig, ProviderAuthConfig, ToolPolicy } from "../types";
+import type { AgentPlatform } from "../platforms/types";
 import { DEFAULT_TOOL_POLICY } from "../utils/toolSelection";
 import { createDefaultProviderAuth } from "../utils/providerAuth";
 import type { MessagingChannel } from "../utils/messagingPairing";
+
+import { loadEnvironments, getActiveEnvironmentId } from "../lib/environmentStorage";
 
 export interface WizardState {
   // Navigation
   step: number;
   mode: string;
   skipBasicConfig: boolean;
+  platform: AgentPlatform;
 
   // Environment
   targetEnvironment: string;
@@ -162,12 +166,27 @@ export interface WizardState {
   // Validation
   validateOutput: string;
   validating: boolean;
+  // Hermes
+  hermesMaxTurns: number;
+  hermesReasoningEffort: string;
+  hermesPersonality: string;
+  hermesTerminalBackend: string;
+  hermesMemoryEnabled: boolean;
+  hermesVerbose: boolean;
+  hermesSmartRouting: boolean;
+  hermesModelBaseUrl: string;
+  hermesApiServerEnabled: boolean;
+  hermesApiServerKey: string;
+  hermesApiServerCorsOrigins: string;
+  hermesRawConfigYaml: string;
+  hermesRawEnv: string;
 }
 
 export const INITIAL_WIZARD_STATE: WizardState = {
   step: 0.5,
   mode: "basic",
   skipBasicConfig: false,
+  platform: "openclaw",
   targetEnvironment: "local",
   remoteIp: "",
   remoteUser: "",
@@ -271,6 +290,32 @@ export const INITIAL_WIZARD_STATE: WizardState = {
   thinkingLevel: "adaptive",
   validateOutput: "",
   validating: false,
+  hermesMaxTurns: 60,
+  hermesReasoningEffort: "medium",
+  hermesPersonality: "helpful",
+  hermesTerminalBackend: "local",
+  hermesMemoryEnabled: true,
+  hermesVerbose: false,
+  hermesSmartRouting: false,
+  hermesModelBaseUrl: "",
+  hermesApiServerEnabled: true,
+  hermesApiServerKey: "",
+  hermesApiServerCorsOrigins: "*",
+  hermesRawConfigYaml: "",
+  hermesRawEnv: "",
+};
+
+export const PLATFORM_DEFAULTS: Record<AgentPlatform, Pick<WizardState, "gatewayPort" | "gatewayBind" | "gatewayAuthMode">> = {
+  openclaw: {
+    gatewayPort: 18789,
+    gatewayBind: "loopback",
+    gatewayAuthMode: "token",
+  },
+  hermes: {
+    gatewayPort: 8642,
+    gatewayBind: "127.0.0.1",
+    gatewayAuthMode: "token",
+  },
 };
 
 export type WizardAction =
@@ -281,6 +326,14 @@ export type WizardAction =
 export function wizardReducer(state: WizardState, action: WizardAction): WizardState {
   switch (action.type) {
     case "SET_FIELD":
+      if (action.field === "platform") {
+        const platform = action.value as AgentPlatform;
+        return {
+          ...state,
+          platform,
+          ...PLATFORM_DEFAULTS[platform],
+        };
+      }
       return { ...state, [action.field]: action.value };
     case "UPDATE_FIELD":
       return {
@@ -314,5 +367,30 @@ export function fieldSetter<K extends keyof WizardState>(
 }
 
 export function useWizardState() {
-  return useReducer(wizardReducer, INITIAL_WIZARD_STATE);
+  return useReducer(wizardReducer, INITIAL_WIZARD_STATE, (initial) => {
+    // Only run in browser
+    if (typeof window !== "undefined") {
+      try {
+        const envs = loadEnvironments();
+        const activeId = getActiveEnvironmentId() || (envs[0]?.id ?? null);
+        const activeEnv = envs.find((e) => e.id === activeId);
+        if (activeEnv) {
+          const platform = activeEnv.platform || "openclaw";
+          return {
+            ...initial,
+            platform,
+            ...PLATFORM_DEFAULTS[platform],
+            targetEnvironment: activeEnv.type || "local",
+            remoteIp: activeEnv.remoteIp || "",
+            remoteUser: activeEnv.remoteUser || "",
+            remotePassword: activeEnv.remotePassword || "",
+            remotePrivateKeyPath: activeEnv.remotePrivateKeyPath || "",
+          };
+        }
+      } catch (e) {
+        console.warn("Failed to load initial environment state:", e);
+      }
+    }
+    return initial;
+  });
 }

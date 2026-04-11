@@ -8,6 +8,7 @@ mod maintenance;
 mod models;
 mod oauth;
 mod pairing;
+mod platforms;
 mod remote;
 mod ssh;
 mod system;
@@ -23,6 +24,7 @@ use tauri::{command, Manager};
 extern crate lazy_static;
 
 use license::verify_license_with_gumroad;
+use platforms::types::{AgentPlatform, PlatformPrereqCheck};
 use ssh::connect_ssh;
 use system::shell_command;
 #[cfg(target_os = "windows")]
@@ -88,7 +90,13 @@ fn save_workspace_files(
     user: String,
     soul: String,
 ) -> Result<String, String> {
-    config::save_workspace_files(remote.as_ref(), agent_id.as_deref(), &identity, &user, &soul)
+    config::save_workspace_files(
+        remote.as_ref(),
+        agent_id.as_deref(),
+        &identity,
+        &user,
+        &soul,
+    )
 }
 
 #[command]
@@ -172,6 +180,27 @@ fn start_provider_auth(
 }
 
 #[command]
+fn start_platform_provider_auth(
+    platform: AgentPlatform,
+    provider: String,
+    method: String,
+    oauth_provider_id: String,
+    remote: Option<RemoteInfo>,
+) -> Result<ProviderAuthData, String> {
+    match platform {
+        AgentPlatform::Openclaw => {
+            oauth::start_provider_auth(&provider, &method, &oauth_provider_id, remote.as_ref())
+        }
+        AgentPlatform::Hermes => oauth::start_hermes_provider_auth(
+            &provider,
+            &method,
+            &oauth_provider_id,
+            remote.as_ref(),
+        ),
+    }
+}
+
+#[command]
 fn close_app(window: tauri::Window) {
     let _ = window.close();
 }
@@ -217,9 +246,14 @@ fn install_openclaw() -> Result<String, String> {
 }
 
 #[command]
-async fn configure_agent(config: AgentConfig, remote: Option<RemoteInfo>) -> Result<String, String> {
+async fn configure_agent(
+    config: AgentConfig,
+    remote: Option<RemoteInfo>,
+) -> Result<String, String> {
     if let Some(remote_info) = remote {
-        remote::apply_agent_config(&remote_info, config).await.map_err(|e| e.to_string())
+        remote::apply_agent_config(&remote_info, config)
+            .await
+            .map_err(|e| e.to_string())
     } else {
         config::configure_agent(config)
     }
@@ -255,11 +289,12 @@ fn get_dashboard_url(
 }
 
 #[command]
-fn verify_tunnel_connectivity(remote: RemoteInfo, gateway_port: Option<u16>) -> Result<bool, String> {
-    gateway::verify_tunnel_connectivity(
-        &remote,
-        gateway_port.unwrap_or(ssh::DEFAULT_GATEWAY_PORT),
-    )
+fn verify_tunnel_connectivity(
+    remote: RemoteInfo,
+    gateway_port: Option<u16>,
+    platform: Option<AgentPlatform>,
+) -> Result<bool, String> {
+    gateway::verify_tunnel_connectivity(&remote, gateway_port.unwrap_or(ssh::DEFAULT_GATEWAY_PORT), platform)
 }
 
 #[command]
@@ -278,6 +313,113 @@ fn check_messaging_link_status(
 #[command]
 async fn get_current_config(remote: Option<RemoteInfo>) -> Result<CurrentConfig, String> {
     config::get_current_config(remote.as_ref())
+}
+
+#[command]
+fn check_platform_prerequisites(
+    platform: AgentPlatform,
+    remote: Option<RemoteInfo>,
+) -> Result<PlatformPrereqCheck, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::check_prerequisites(remote.as_ref()),
+        AgentPlatform::Hermes => platforms::hermes::check_prerequisites(remote.as_ref()),
+    }
+}
+
+#[command]
+fn install_platform(platform: AgentPlatform, remote: Option<RemoteInfo>) -> Result<String, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::install(remote.as_ref()),
+        AgentPlatform::Hermes => platforms::hermes::install(remote.as_ref()),
+    }
+}
+
+#[command]
+fn get_platform_version(
+    platform: AgentPlatform,
+    remote: Option<RemoteInfo>,
+) -> Result<String, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::get_version(remote.as_ref()),
+        AgentPlatform::Hermes => platforms::hermes::get_version(remote.as_ref()),
+    }
+}
+
+#[command]
+fn get_platform_config(
+    platform: AgentPlatform,
+    remote: Option<RemoteInfo>,
+) -> Result<CurrentConfig, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::get_config(remote.as_ref()),
+        AgentPlatform::Hermes => platforms::hermes::get_config(remote.as_ref()),
+    }
+}
+
+#[command]
+async fn configure_platform(
+    platform: AgentPlatform,
+    config: AgentConfig,
+    remote: Option<RemoteInfo>,
+) -> Result<String, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::configure(config, remote.as_ref()).await,
+        AgentPlatform::Hermes => platforms::hermes::configure(&config, remote.as_ref()),
+    }
+}
+
+#[command]
+async fn prepare_platform_chat_bootstrap(
+    platform: AgentPlatform,
+    gateway_port: Option<u16>,
+    remote: Option<RemoteInfo>,
+) -> Result<GatewayChatBootstrap, String> {
+    match platform {
+        AgentPlatform::Openclaw => {
+            platforms::openclaw::prepare_chat_bootstrap(gateway_port, remote.as_ref()).await
+        }
+        AgentPlatform::Hermes => {
+            tauri::async_runtime::spawn_blocking(move || {
+                platforms::hermes::prepare_chat_bootstrap(remote.as_ref())
+            })
+            .await
+            .map_err(|error| format!("Failed to join Hermes chat bootstrap task: {}", error))?
+        }
+    }
+}
+
+#[command]
+async fn start_platform_service(
+    platform: AgentPlatform,
+    remote: Option<RemoteInfo>,
+) -> Result<String, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::start_service(remote.as_ref()).await,
+        AgentPlatform::Hermes => platforms::hermes::start_gateway(remote.as_ref()),
+    }
+}
+
+#[command]
+async fn restart_platform_service(
+    platform: AgentPlatform,
+    remote: Option<RemoteInfo>,
+) -> Result<String, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::restart_service(remote.as_ref()).await,
+        AgentPlatform::Hermes => platforms::hermes::restart_gateway(remote.as_ref()),
+    }
+}
+
+#[command]
+fn run_platform_maintenance(
+    platform: AgentPlatform,
+    action: String,
+    remote: Option<RemoteInfo>,
+) -> Result<String, String> {
+    match platform {
+        AgentPlatform::Openclaw => platforms::openclaw::run_maintenance(&action, remote.as_ref()),
+        AgentPlatform::Hermes => platforms::hermes::run_maintenance(&action, remote.as_ref()),
+    }
 }
 
 #[command]
@@ -398,6 +540,7 @@ fn main() {
             install_skill,
             install_remote_skill,
             start_provider_auth,
+            start_platform_provider_auth,
             get_openclaw_version,
             uninstall_openclaw,
             run_doctor_repair,
@@ -419,6 +562,15 @@ fn main() {
             prepare_gateway_chat_connection,
             verify_tunnel_connectivity,
             get_current_config,
+            check_platform_prerequisites,
+            install_platform,
+            get_platform_version,
+            get_platform_config,
+            configure_platform,
+            prepare_platform_chat_bootstrap,
+            start_platform_service,
+            restart_platform_service,
+            run_platform_maintenance,
             has_saved_license,
             verify_and_store_license,
             check_pairing_status,

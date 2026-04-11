@@ -5,7 +5,7 @@ import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 export default function StepAgentProfile() {
   const { state, dispatch } = useWizard();
-  const { agentName, agentEmoji, identityMd, skipBasicConfig } = state;
+  const { agentName, agentEmoji, identityMd, skipBasicConfig, platform } = state;
 
   const setField = (field: string, value: unknown) =>
     dispatch({ type: "SET_FIELD", field: field as any, value });

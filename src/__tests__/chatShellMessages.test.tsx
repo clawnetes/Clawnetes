@@ -402,7 +402,11 @@ function setupInvokeMock() {
     if (cmd === "check_prerequisites") {
       return Promise.resolve({ node_installed: true, docker_running: true, openclaw_installed: true });
     }
+    if (cmd === "check_platform_prerequisites") {
+      return Promise.resolve({ node_installed: true, git_installed: true, platform_installed: true });
+    }
     if (cmd === "get_openclaw_version") return Promise.resolve("2026.4.8");
+    if (cmd === "get_platform_version") return Promise.resolve("Hermes Agent");
     if (cmd === "has_saved_license") return Promise.resolve(false);
     if (cmd === "prepare_gateway_chat_connection") {
       return Promise.resolve({
@@ -414,6 +418,21 @@ function setupInvokeMock() {
         openClawVersion: "2026.4.8",
       });
     }
+    if (cmd === "prepare_platform_chat_bootstrap") {
+      return Promise.resolve({
+        wsUrl: "",
+        authToken: "hermes-token",
+        targetEnvironment: "local",
+        gatewayPort: 8642,
+        tunnelActive: false,
+        openClawVersion: "Hermes Agent",
+        platform: "hermes",
+        chatTransport: "hermes-api",
+        apiBaseUrl: "http://127.0.0.1:8642/v1",
+        apiKey: "hermes-key",
+      });
+    }
+    if (cmd === "run_platform_maintenance") return Promise.resolve("hermes-maintenance-ok");
     if (cmd === "run_doctor_repair") return Promise.resolve("repair-ok");
     if (cmd === "run_security_audit_fix") return Promise.resolve("audit-ok");
     if (cmd === "install_openclaw") return Promise.resolve("update-ok");
@@ -424,6 +443,35 @@ function setupInvokeMock() {
 
 async function openInstalledLocalChat(user: ReturnType<typeof userEvent.setup> = userEvent.setup()) {
   render(<App />);
+
+  await waitFor(() => {
+    expect(screen.getByTestId("step-platform-select")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByTestId("btn-next"));
+
+  await waitFor(() => {
+    expect(screen.getByTestId("step-environment")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByTestId("btn-continue"));
+
+  await waitFor(() => {
+    expect(screen.getByTestId("chat-sidebar-brand")).toHaveTextContent("Clawnetes");
+  });
+
+  return user;
+}
+
+async function openInstalledHermesChat(user: ReturnType<typeof userEvent.setup> = userEvent.setup()) {
+  render(<App />);
+
+  await waitFor(() => {
+    expect(screen.getByTestId("step-platform-select")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByTestId("platform-card-hermes"));
+  await user.click(screen.getByTestId("btn-next"));
 
   await waitFor(() => {
     expect(screen.getByTestId("step-environment")).toBeInTheDocument();
@@ -445,12 +493,9 @@ async function openSettingsPanel(user: ReturnType<typeof userEvent.setup>) {
 
   await user.click(screen.getByRole("button", { name: "Settings" }));
 
-  // Click the Advanced tab to render the settings panel
-  await waitFor(() => {
-    expect(screen.getByText("Advanced")).toBeInTheDocument();
-  });
-
-  await user.click(screen.getByText("Advanced"));
+  // Click the Settings/Advanced tab to render the settings panel.
+  const settingsTab = await waitFor(() => screen.getByRole("tab", { name: /Advanced|Settings/ }));
+  await user.click(settingsTab);
 
   await waitFor(() => {
     expect(screen.getByTestId("settings-panel")).toBeInTheDocument();
@@ -1846,6 +1891,39 @@ describe("ChatShell fresh chat flow", () => {
     expect(screen.getByTestId("settings-panel")).toBeInTheDocument();
   });
 
+  it("shows Hermes Agent copy and uses platform maintenance when uninstalling Hermes", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: "ok" }), { status: 200 })));
+
+    await openInstalledHermesChat(user);
+    await openSettingsPanel(user);
+
+    await user.click(screen.getByRole("button", { name: /Uninstall/ }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Uninstall Hermes Agent")).toBeInTheDocument();
+    expect(
+      screen.getByText("Are you absolutely sure you want to completely remove Hermes Agent and all its data?"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Uninstall OpenClaw")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Yes" }));
+
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.some(
+          ([cmd, args]) =>
+            cmd === "run_platform_maintenance" &&
+            args?.platform === "hermes" &&
+            args?.action === "uninstall",
+        ),
+      ).toBe(true);
+    });
+  });
+
   it("keeps the command center visible when uninstall fails after confirmation", async () => {
     const user = userEvent.setup();
     const { WebSocket } = createMockWebSocket();
@@ -1891,7 +1969,7 @@ describe("ChatShell fresh chat flow", () => {
     });
 
     expect(screen.queryByText("Welcome to Clawnetes")).not.toBeInTheDocument();
-    expect(screen.getByText("❌ uninstall failed.")).toBeInTheDocument();
+    expect(screen.getByText("❌ uninstall failed: permission denied")).toBeInTheDocument();
     expect(localStorage.getItem("clawnetes.chat.threads.v1")).not.toBeNull();
     expect(localStorage.getItem("clawnetes.chat.selection.v1")).not.toBeNull();
   });

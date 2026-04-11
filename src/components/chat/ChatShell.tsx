@@ -1,14 +1,15 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { AgentConfigData, ChatTranscriptScrollSnapshot, GatewayChatBootstrap, ProviderAuthConfig, ToolPolicy } from "../../types";
+import type { AgentConfigData, AgentPlatform, ChatTranscriptScrollSnapshot, GatewayChatBootstrap, ProviderAuthConfig, ToolPolicy } from "../../types";
 import {
-  GatewayChatClient,
   type GatewayAgentEventPayload,
   type GatewayChatAgent,
   type GatewayConnectState,
   type GatewayChatEventPayload,
   type GatewayChatSession,
   type GatewaySessionsChangedPayload,
+  GatewayChatClient,
 } from "../../lib/gatewayChat";
+import { createChatTransportClient, type ChatTransportClient } from "../../lib/chatTransport";
 import {
   buildChatScopeKey,
   hideLiveSession,
@@ -62,6 +63,9 @@ interface ChatShellProps {
   bootstrap: GatewayChatBootstrap | null;
   bootstrapping: boolean;
   bootstrapError: string;
+  workspaceWarning?: string;
+  workspaceWarningPending?: boolean;
+  onClearWorkspaceWarning?: () => void;
   onRetryConnection: () => void;
   onOpenConfigure: (snapshot: ChatTranscriptScrollSnapshot | null) => void;
   environments?: StoredEnvironment[];
@@ -79,9 +83,9 @@ interface ChatShellProps {
   lmstudioBaseUrl?: string;
   agentSkills?: string[];
   serviceKeys?: Record<string, string>;
-  onModelChange?: (model: string) => void;
-  onFallbacksChange?: (models: string[]) => void;
-  onLocalBaseUrlChange?: (provider: "lmstudio" | "local", baseUrl: string) => void;
+  onModelChange?: (model: string) => void | Promise<void>;
+  onFallbacksChange?: (models: string[]) => void | Promise<void>;
+  onLocalBaseUrlChange?: (provider: "lmstudio" | "local", baseUrl: string) => void | Promise<void>;
   providerAuths?: Record<string, ProviderAuthConfig>;
   onProviderAuthChange?: (provider: string, auth: ProviderAuthConfig) => void | Promise<void>;
   onStartOAuth?: (provider: string, authMethod: string, oauthProviderId: string) => Promise<ProviderAuthConfig>;
@@ -108,9 +112,25 @@ interface ChatShellProps {
   gatewayAuthMode?: string;
   heartbeatMode?: string;
   sandboxMode?: string;
-  toolPolicy?: ToolPolicy;
+  toolPolicy?: ToolPolicy | null;
   toolsSaving?: boolean;
   idleTimeoutMs?: number;
+
+  hermesMaxTurns?: number;
+  hermesReasoningEffort?: string;
+  hermesPersonality?: string;
+  hermesTerminalBackend?: string;
+  hermesMemoryEnabled?: boolean;
+  hermesVerbose?: boolean;
+  hermesSmartRouting?: boolean;
+  hermesModelBaseUrl?: string;
+  hermesApiServerEnabled?: boolean;
+  hermesApiServerKey?: string;
+  hermesApiServerCorsOrigins?: string;
+  hermesRawConfigYaml?: string;
+  hermesRawEnv?: string;
+  onSaveHermesSettings?: (updates: Record<string, any>) => void;
+
   onSaveToolPolicy?: (policy: ToolPolicy) => void;
   onSaveAdvancedSettings?: (heartbeatMode: string, idleTimeoutMs: number, sandboxMode: string) => void;
   settingsBusy?: boolean;
@@ -123,6 +143,8 @@ interface ChatShellProps {
   isConfigUpdating?: boolean;
   returnScrollSnapshot?: ChatTranscriptScrollSnapshot | null;
   onConsumeReturnScrollSnapshot?: () => void;
+  platform: AgentPlatform;
+  onSwitchPlatform: (platform: AgentPlatform) => void;
 }
 
 function readPrefersDark() {
@@ -155,7 +177,11 @@ function isNearBottom(element: HTMLDivElement, threshold = 96) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
 
-function formatOpenClawStatusLabel(version: string) {
+function formatConnectionStatusLabel(bootstrap: GatewayChatBootstrap) {
+  if (bootstrap.platform === "hermes") {
+    return "Clawnetes with Hermes Agent";
+  }
+  const version = bootstrap.openClawVersion;
   const trimmedVersion = version.trim();
   if (!trimmedVersion) {
     return "Clawnetes with OpenClaw";
@@ -319,6 +345,14 @@ function runHasVisibleAssistantMessage(messages: ChatMessage[], runId?: string |
     message.runId === runId &&
     !!sanitizeAssistantTranscriptText(message.rawText || message.text).trim()
   ));
+}
+
+function normalizeThreadsForBootstrap(
+  bootstrap: GatewayChatBootstrap | null,
+  threads: StoredChatThread[],
+) {
+  void bootstrap;
+  return threads;
 }
 
 function finalizeRunMessages(messages: ChatMessage[], runId?: string | null) {
@@ -485,7 +519,8 @@ function sessionMatchesActiveContext(params: {
 }
 
 function ChatShell({
-  bootstrap, bootstrapping, bootstrapError, onRetryConnection, onOpenConfigure,
+  bootstrap, bootstrapping, bootstrapError, workspaceWarning = "", workspaceWarningPending = false, onClearWorkspaceWarning,
+  onRetryConnection, onOpenConfigure,
   environments, activeEnvironmentId, onSwitchEnvironment, onAddEnvironment, onRemoveEnvironment, onAgentSwitch,
   agents: propAgents,
   activeAgentId: chatActiveAgentId,
@@ -495,11 +530,15 @@ function ChatShell({
   onIdentitySave, identitySaving,
   targetEnvironment, remoteSummary, gatewayPort, gatewayBind, gatewayAuthMode,
   heartbeatMode, sandboxMode, toolPolicy, toolsSaving, idleTimeoutMs, onSaveToolPolicy, onSaveAdvancedSettings, settingsBusy, maintenanceStatus,
+  hermesMaxTurns, hermesReasoningEffort, hermesPersonality, hermesTerminalBackend, hermesMemoryEnabled, hermesVerbose, hermesSmartRouting, onSaveHermesSettings,
+  hermesModelBaseUrl, hermesApiServerEnabled, hermesApiServerKey, hermesApiServerCorsOrigins, hermesRawConfigYaml, hermesRawEnv,
   onRepair, onAudit, onUpgrade, onReconfigure, onUninstall, isConfigUpdating = false,
   returnScrollSnapshot = null,
   onConsumeReturnScrollSnapshot,
+  platform,
+  onSwitchPlatform,
 }: ChatShellProps) {
-  const clientRef = useRef<GatewayChatClient | null>(null);
+  const clientRef = useRef<ChatTransportClient | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const activeAgentIdRef = useRef("");
@@ -533,6 +572,8 @@ function ChatShell({
   const deferredSessionRefreshRef = useRef<GatewaySessionsChangedPayload | null>(null);
   const pendingSessionListRefreshRef = useRef(false);
   const configUpdatingRef = useRef(isConfigUpdating);
+  const pendingThreadsScopeHydrationRef = useRef<string | null>(null);
+  const hydratedThreadsScopeRef = useRef("");
 
   const [connectionLabel, setConnectionLabel] = useState("Connecting to gateway...");
   const [connectionState, setConnectionState] = useState<GatewayConnectState["status"]>("connecting");
@@ -632,6 +673,7 @@ function ChatShell({
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId) || null;
   const activeThreadIsArchived = activeThread?.status === "archived";
+  const activeThreadTitle = activeThread?.title;
 
   const isSessionHidden = useCallback((agentId: string, sessionKey: string) => {
     if (!scopeKey || !sessionKey) {
@@ -938,7 +980,7 @@ function ChatShell({
   function scheduleHistoryReconcileRetry(
     sessionKey: string,
     threadId: string,
-    client: GatewayChatClient,
+    client: ChatTransportClient,
     sessionSnapshot?: GatewayChatSession | GatewaySessionsChangedPayload | null,
   ) {
     if (historyReconcileTimerRef.current !== null) {
@@ -953,20 +995,37 @@ function ChatShell({
 
   useEffect(() => {
     if (!scopeKey) {
+      pendingThreadsScopeHydrationRef.current = null;
+      hydratedThreadsScopeRef.current = "";
       setThreads([]);
+      setLiveSessions([]);
+      setMessages([]);
+      setReplyRecoveryPending(false);
+      activeRunIdRef.current = "";
+      setActiveRunId("");
+      setActiveSessionKey("");
       setActiveThreadId("");
       return;
     }
-    setThreads(loadStoredThreads(scopeKey));
-  }, [scopeKey]);
+    pendingThreadsScopeHydrationRef.current = scopeKey;
+    setThreads(normalizeThreadsForBootstrap(bootstrap, loadStoredThreads(scopeKey)));
+  }, [bootstrap, scopeKey]);
 
   useEffect(() => {
     if (!scopeKey) return;
+    if (pendingThreadsScopeHydrationRef.current === scopeKey) {
+      hydratedThreadsScopeRef.current = scopeKey;
+      pendingThreadsScopeHydrationRef.current = null;
+      return;
+    }
+    if (hydratedThreadsScopeRef.current !== scopeKey) {
+      return;
+    }
     saveStoredThreads(scopeKey, threads);
   }, [scopeKey, threads]);
 
   useEffect(() => {
-    if (!scopeKey || !activeAgentId) return;
+    if (!scopeKey || !activeAgentId || hydratedThreadsScopeRef.current !== scopeKey) return;
     saveStoredAgentId(scopeKey, activeAgentId);
     if (activeThreadId) {
       saveStoredSelection(scopeKey, activeAgentId, activeThreadId);
@@ -1074,6 +1133,7 @@ function ChatShell({
     agentId: string;
     sessionKey: string;
     session?: GatewayChatSession;
+    messages?: ChatMessage[];
     preferredThreadId?: string;
     sessionId?: string;
   }) {
@@ -1118,8 +1178,9 @@ function ChatShell({
               matchedSessionKey: params.sessionKey,
             }),
             sessionId: params.sessionId || params.session?.sessionId || thread.sessionId,
-            title: deriveThreadTitle({ session: params.session, messages: thread.messages, fallback: thread.title }),
-            preview: deriveThreadPreview({ session: params.session, messages: thread.messages, fallback: thread.preview }),
+            messages: params.messages ? toStoredMessages(params.messages) : thread.messages,
+            title: deriveThreadTitle({ session: params.session, messages: params.messages ? toStoredMessages(params.messages) : thread.messages, fallback: thread.title }),
+            preview: deriveThreadPreview({ session: params.session, messages: params.messages ? toStoredMessages(params.messages) : thread.messages, fallback: thread.preview }),
             updatedAt: params.session?.updatedAt || thread.updatedAt || Date.now(),
           }];
         }),
@@ -1158,27 +1219,27 @@ function ChatShell({
   useEffect(() => {
     if (!bootstrap) return;
 
-    const client = new GatewayChatClient(bootstrap);
+    const client = createChatTransportClient(bootstrap);
     clientRef.current = client;
 
     client.onStateChange = (state) => {
       setConnectionState(state.status);
 
       if (state.status === "connected") {
-        setConnectionLabel(formatOpenClawStatusLabel(bootstrap.openClawVersion));
+        setConnectionLabel(formatConnectionStatusLabel(bootstrap));
         setShellError("");
       } else if (state.status === "reconnecting") {
-        setConnectionLabel("Reconnecting to gateway...");
+        setConnectionLabel(bootstrap.platform === "hermes" ? "Reconnecting to Hermes..." : "Reconnecting to gateway...");
       } else if (state.status === "challenged") {
         setConnectionLabel("Authorizing gateway session...");
       } else if (state.status === "authenticating") {
-        setConnectionLabel("Authenticating with OpenClaw...");
+        setConnectionLabel(bootstrap.platform === "hermes" ? "Authenticating with Hermes..." : "Authenticating with OpenClaw...");
       } else if (state.status === "failed") {
         const message = state.error || "Gateway connection failed.";
         setConnectionLabel(message);
         setShellError(message);
       } else {
-        setConnectionLabel("Connecting to gateway...");
+        setConnectionLabel(bootstrap.platform === "hermes" ? "Connecting to Hermes..." : "Connecting to gateway...");
       }
     };
 
@@ -1285,7 +1346,7 @@ function ChatShell({
     };
   }, [bootstrap, scopeKey]);
 
-  async function bootstrapShell(client: GatewayChatClient) {
+  async function bootstrapShell(client: ChatTransportClient) {
     try {
       setShellError("");
       clearHistoryReconcile();
@@ -2129,6 +2190,7 @@ function ChatShell({
       <ChatPanelContext.Provider value={panelContextValue}>
         <div className="chat-shell-fullpanel" data-theme={resolvedTheme}>
           <RightPanel
+            platform={platform}
             activeAgentName={activeDisplayAgent?.name || activeAgentId}
             activeAgentEmoji={activeDisplayAgent && "emoji" in activeDisplayAgent ? String(activeDisplayAgent.emoji || "") || undefined : undefined}
             modelRef={resolvedModelRef}
@@ -2163,9 +2225,23 @@ function ChatShell({
             gatewayAuthMode={gatewayAuthMode}
             heartbeatMode={resolvedHeartbeatMode}
             sandboxMode={resolvedSandboxMode}
-            toolPolicy={resolvedToolPolicy}
+            toolPolicy={resolvedToolPolicy || undefined}
             toolsSaving={toolsSaving}
             idleTimeoutMs={resolvedIdleTimeoutMs}
+            hermesMaxTurns={hermesMaxTurns}
+            hermesReasoningEffort={hermesReasoningEffort}
+            hermesPersonality={hermesPersonality}
+            hermesTerminalBackend={hermesTerminalBackend}
+            hermesMemoryEnabled={hermesMemoryEnabled}
+            hermesVerbose={hermesVerbose}
+            hermesSmartRouting={hermesSmartRouting}
+            hermesModelBaseUrl={hermesModelBaseUrl}
+            hermesApiServerEnabled={hermesApiServerEnabled}
+            hermesApiServerKey={hermesApiServerKey}
+            hermesApiServerCorsOrigins={hermesApiServerCorsOrigins}
+            hermesRawConfigYaml={hermesRawConfigYaml}
+            hermesRawEnv={hermesRawEnv}
+            onSaveHermesSettings={onSaveHermesSettings}
             onSaveToolPolicy={onSaveToolPolicy}
             onSaveAdvancedSettings={onSaveAdvancedSettings}
             settingsBusy={settingsBusy}
@@ -2185,6 +2261,8 @@ function ChatShell({
     <ChatPanelContext.Provider value={panelContextValue}>
       <div className="chat-shell" data-theme={resolvedTheme}>
         <ChatSidebar
+          platform={platform}
+          onSwitchPlatform={onSwitchPlatform}
           environments={environments}
           activeEnvironmentId={activeEnvironmentId}
           onSwitchEnvironment={onSwitchEnvironment}
@@ -2228,10 +2306,32 @@ function ChatShell({
             onOpenModelPanel={() => openPanel("model")}
           />
 
+          {bootstrap && (workspaceWarningPending || workspaceWarning) && (
+            <div className={`chat-inline-status ${workspaceWarning ? "warning" : "pending"}`} role={workspaceWarning ? "status" : undefined}>
+              <div>
+                <p className="chat-inline-status-title">
+                  {workspaceWarning
+                    ? "Configuration refresh needs attention"
+                    : "Refreshing saved configuration"}
+                </p>
+                <p className="chat-inline-status-detail">
+                  {workspaceWarning
+                    ? workspaceWarning
+                    : "Chat is ready. Clawnetes is still loading the saved workspace configuration in the background."}
+                </p>
+              </div>
+              {workspaceWarning && onClearWorkspaceWarning && (
+                <button type="button" className="chat-inline-status-action" onClick={onClearWorkspaceWarning}>
+                  Dismiss
+                </button>
+              )}
+            </div>
+          )}
+
           {!bootstrap && (
             <div className="chat-bootstrap-status">
               <p className="chat-bootstrap-title">Starting the gateway workspace</p>
-              <p className="chat-bootstrap-detail">{bootstrapping ? "Preparing the OpenClaw gateway connection..." : bootstrapError || "No gateway connection available."}</p>
+              <p className="chat-bootstrap-detail">{bootstrapping ? (platform === "hermes" ? "Preparing the Hermes API connection..." : "Preparing the OpenClaw gateway connection...") : bootstrapError || "No gateway connection available."}</p>
               {!bootstrapping && <button onClick={onRetryConnection}>Retry</button>}
             </div>
           )}
@@ -2250,10 +2350,12 @@ function ChatShell({
                 messages={messages}
                 activeAgentName={activeAgentName}
                 activeThreadIsArchived={activeThreadIsArchived}
-                activeThreadTitle={activeThread?.title}
+                activeThreadTitle={activeThreadTitle}
                 activeSessionKey={activeSessionKey}
                 onSetComposerValue={setComposerValue}
-              />
+                onClearError={() => setShellError("")}
+                platform={platform}
+                />
 
               <ChatComposer
                 composerValue={composerValue}

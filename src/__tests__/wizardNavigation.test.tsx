@@ -8,11 +8,17 @@ vi.mock("../lib/tauri", () => ({
     if (cmd === "check_prerequisites") {
       return Promise.resolve({ node_installed: true, docker_running: false, openclaw_installed: false });
     }
+    if (cmd === "check_platform_prerequisites") {
+      return Promise.resolve({ node_installed: true, docker_running: false, platform_installed: false });
+    }
     if (cmd === "has_saved_license") {
       return Promise.resolve(false);
     }
     if (cmd === "get_openclaw_version") {
       return Promise.resolve("1.0.0");
+    }
+    if (cmd === "get_platform_version") {
+      return Promise.resolve("Hermes Agent");
     }
     return Promise.resolve(null);
   }),
@@ -22,6 +28,7 @@ vi.mock("../lib/tauri", () => ({
 
 import App from "../App";
 import { invoke } from "../lib/tauri";
+import { INITIAL_WIZARD_STATE, wizardReducer } from "../hooks/useWizardState";
 
 async function navigateToConnectBrain() {
   const user = userEvent.setup();
@@ -32,6 +39,13 @@ async function navigateToConnectBrain() {
   });
 
   await user.click(screen.getByText("Start Setup"));
+  await waitFor(() => {
+    expect(screen.getByText("Agent Platform")).toBeInTheDocument();
+  });
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await waitFor(() => {
+    expect(screen.getByText("Target Environment")).toBeInTheDocument();
+  });
   await user.click(screen.getByRole("button", { name: "Continue" }));
   await waitFor(() => {
     expect(screen.getByText("System Check")).toBeInTheDocument();
@@ -69,6 +83,21 @@ async function navigateToConnectBrain() {
   return user;
 }
 
+async function navigateToAgentType() {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await waitFor(() => {
+    expect(screen.getByText("Start Setup")).toBeInTheDocument();
+  });
+
+  await user.click(screen.getByText("Start Setup"));
+  await waitFor(() => {
+    expect(screen.getByText("Agent Platform")).toBeInTheDocument();
+  });
+  return user;
+}
+
 describe("Wizard Step List", () => {
   it("renders the welcome page by default", async () => {
     render(<App />);
@@ -83,7 +112,7 @@ describe("Wizard Step List", () => {
       expect(screen.getByText("Start Setup")).toBeInTheDocument();
     });
     fireEvent.click(screen.getByText("Start Setup"));
-    expect(screen.getByText("Target Environment")).toBeInTheDocument();
+    expect(screen.getByText("Agent Platform")).toBeInTheDocument();
   });
 
   it("checks for a saved advanced license on startup", async () => {
@@ -103,6 +132,10 @@ describe("Wizard Step List", () => {
     });
 
     await user.click(screen.getByText("Start Setup"));
+    await waitFor(() => {
+      expect(screen.getByText("Agent Platform")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByText("☁️ Cloud Server"));
 
     for (const testId of ["input-remote-ip", "input-remote-user", "input-remote-key", "input-remote-password"]) {
@@ -128,6 +161,10 @@ describe("Wizard Step List", () => {
     });
 
     await user.click(screen.getByText("Start Setup"));
+    await waitFor(() => {
+      expect(screen.getByText("Agent Platform")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByText("☁️ Cloud Server"));
 
     expect(screen.getByTestId("input-remote-ip")).toHaveValue("");
@@ -173,6 +210,13 @@ describe("Wizard text-entry behavior", () => {
     });
 
     await user.click(screen.getByText("Start Setup"));
+    await waitFor(() => {
+      expect(screen.getByText("Agent Platform")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("Target Environment")).toBeInTheDocument();
+    });
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => {
       expect(screen.getByText("System Check")).toBeInTheDocument();
@@ -261,6 +305,147 @@ describe("AgentConfigData type includes new fields", () => {
     expect(config.agentsMd).toBe("");
     expect(config.allowedTools).toContain("filesystem");
     expect(config.cronJobs).toHaveLength(1);
+  });
+});
+
+describe("Platform state", () => {
+  it("defaults to openclaw and updates independently of the current step", () => {
+    expect(INITIAL_WIZARD_STATE.platform).toBe("openclaw");
+
+    const nextState = wizardReducer(INITIAL_WIZARD_STATE, {
+      type: "BATCH_UPDATE",
+      updates: {
+        platform: "hermes",
+        step: 6,
+      },
+    });
+
+    expect(nextState.platform).toBe("hermes");
+    expect(nextState.step).toBe(6);
+    expect(nextState.targetEnvironment).toBe(INITIAL_WIZARD_STATE.targetEnvironment);
+  });
+
+  it("shows openclaw as the default platform and allows selecting hermes", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText("Start Setup")).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Start Setup"));
+    await waitFor(() => {
+      expect(screen.getByText("Agent Platform")).toBeInTheDocument();
+    });
+    expect(screen.getByText("OpenClaw")).toBeInTheDocument();
+    expect(screen.getByText("Hermes Agent")).toBeInTheDocument();
+
+    const openclawCard = screen.getByTestId("platform-card-openclaw");
+    const hermesCard = screen.getByTestId("platform-card-hermes");
+
+    expect(openclawCard.className).toContain("active");
+    expect(hermesCard.className).not.toContain("active");
+
+    await user.click(hermesCard);
+
+    expect(hermesCard.className).toContain("active");
+    expect(openclawCard.className).not.toContain("active");
+  });
+
+  it("allows navigating back from Target Environment to Agent Platform", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText("Start Setup")).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Start Setup"));
+    await waitFor(() => {
+      expect(screen.getByText("Agent Platform")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("Target Environment")).toBeInTheDocument();
+    });
+
+    const backButton = screen.getByTestId("btn-back");
+    expect(backButton).toBeInTheDocument();
+    await user.click(backButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("Agent Platform")).toBeInTheDocument();
+    });
+  });
+
+  it("routes hermes selection into a hermes-specific setup step", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText("Start Setup")).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Start Setup"));
+    await waitFor(() => {
+      expect(screen.getByText("Agent Platform")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("platform-card-hermes"));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("Target Environment")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("System Check")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("Security Baseline")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "I Understand" }));
+    await waitFor(() => {
+      expect(screen.getByText("Hermes Configuration")).toBeInTheDocument();
+    });
+  });
+
+  it("walks through the hermes-specific wizard steps after platform selection", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText("Start Setup")).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Start Setup"));
+    await waitFor(() => {
+      expect(screen.getByText("Agent Platform")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("platform-card-hermes"));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("Target Environment")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("System Check")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("Security Baseline")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "I Understand" }));
+    await waitFor(() => {
+      expect(screen.getByText("Hermes Configuration")).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText("Model Base URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("Terminal Backend")).toBeInTheDocument();
+    expect(screen.getByLabelText("API Server Key")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => {
+      expect(screen.getByText("Hermes Messaging")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("step-hermes-review")).toBeInTheDocument();
+      expect(screen.getByText("Finalizing Hermes Installation")).toBeInTheDocument();
+    });
   });
 });
 

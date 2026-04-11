@@ -19,6 +19,7 @@ import ChatHeader from "../chat/ChatHeader";
 import ChatSidebar from "../chat/ChatSidebar";
 import ChatTranscript from "../chat/ChatTranscript";
 import type { ChatMessage } from "../../lib/chatMessageFilters";
+import type { AgentPlatform } from "../../platforms/types";
 
 describe("ChatMessageBody", () => {
   it("renders plain text for user messages", () => {
@@ -396,6 +397,8 @@ describe("ChatTranscript", () => {
 
 describe("ChatSidebar", () => {
   const baseProps = {
+    platform: "openclaw" as AgentPlatform,
+    onSwitchPlatform: vi.fn(),
     canCreateChat: true,
     onNewChat: vi.fn(),
     liveThreads: [],
@@ -406,7 +409,6 @@ describe("ChatSidebar", () => {
     themePreference: "dark" as const,
     onThemeChange: vi.fn(),
     onOpenConfigure: vi.fn(),
-    onOpenPanel: vi.fn(),
     connectionLabel: "Connected",
   };
 
@@ -429,9 +431,9 @@ describe("ChatSidebar", () => {
       <ChatSidebar
         {...baseProps}
         environments={[
-          { id: "local", name: "Local", type: "local", addedAt: 1, lastUsedAt: 3 },
-          { id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
-          { id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
+          { platform: "openclaw", id: "local", name: "Local", type: "local", addedAt: 1, lastUsedAt: 3 },
+          { platform: "openclaw", id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
+          { platform: "openclaw", id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
         ]}
         activeEnvironmentId="active"
         onSwitchEnvironment={vi.fn()}
@@ -454,8 +456,8 @@ describe("ChatSidebar", () => {
       <ChatSidebar
         {...baseProps}
         environments={[
-          { id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
-          { id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
+          { platform: "openclaw", id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
+          { platform: "openclaw", id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
         ]}
         activeEnvironmentId="active"
         onSwitchEnvironment={onSwitchEnvironment}
@@ -481,8 +483,8 @@ describe("ChatSidebar", () => {
       <ChatSidebar
         {...baseProps}
         environments={[
-          { id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
-          { id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
+          { platform: "openclaw", id: "active", name: "ubuntu@10.0.0.8", type: "cloud", remoteIp: "10.0.0.8", remoteUser: "ubuntu", addedAt: 2, lastUsedAt: 2 },
+          { platform: "openclaw", id: "old", name: "deploy@10.0.0.9", type: "cloud", remoteIp: "10.0.0.9", remoteUser: "deploy", addedAt: 3, lastUsedAt: 1 },
         ]}
         activeEnvironmentId="active"
         onSwitchEnvironment={vi.fn()}
