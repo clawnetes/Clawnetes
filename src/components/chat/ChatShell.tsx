@@ -1133,6 +1133,7 @@ function ChatShell({
     agentId: string;
     sessionKey: string;
     session?: GatewayChatSession;
+    messages?: ChatMessage[];
     preferredThreadId?: string;
     sessionId?: string;
   }) {
