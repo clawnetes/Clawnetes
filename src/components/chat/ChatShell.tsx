@@ -63,6 +63,9 @@ interface ChatShellProps {
   bootstrap: GatewayChatBootstrap | null;
   bootstrapping: boolean;
   bootstrapError: string;
+  workspaceWarning?: string;
+  workspaceWarningPending?: boolean;
+  onClearWorkspaceWarning?: () => void;
   onRetryConnection: () => void;
   onOpenConfigure: (snapshot: ChatTranscriptScrollSnapshot | null) => void;
   environments?: StoredEnvironment[];
@@ -516,7 +519,8 @@ function sessionMatchesActiveContext(params: {
 }
 
 function ChatShell({
-  bootstrap, bootstrapping, bootstrapError, onRetryConnection, onOpenConfigure,
+  bootstrap, bootstrapping, bootstrapError, workspaceWarning = "", workspaceWarningPending = false, onClearWorkspaceWarning,
+  onRetryConnection, onOpenConfigure,
   environments, activeEnvironmentId, onSwitchEnvironment, onAddEnvironment, onRemoveEnvironment, onAgentSwitch,
   agents: propAgents,
   activeAgentId: chatActiveAgentId,
@@ -2300,6 +2304,28 @@ function ChatShell({
             fallbackCount={resolvedFallbackModels?.length ?? agentFallbackCount}
             onOpenModelPanel={() => openPanel("model")}
           />
+
+          {bootstrap && (workspaceWarningPending || workspaceWarning) && (
+            <div className={`chat-inline-status ${workspaceWarning ? "warning" : "pending"}`} role={workspaceWarning ? "status" : undefined}>
+              <div>
+                <p className="chat-inline-status-title">
+                  {workspaceWarning
+                    ? "Configuration refresh needs attention"
+                    : "Refreshing saved configuration"}
+                </p>
+                <p className="chat-inline-status-detail">
+                  {workspaceWarning
+                    ? workspaceWarning
+                    : "Chat is ready. Clawnetes is still loading the saved workspace configuration in the background."}
+                </p>
+              </div>
+              {workspaceWarning && onClearWorkspaceWarning && (
+                <button type="button" className="chat-inline-status-action" onClick={onClearWorkspaceWarning}>
+                  Dismiss
+                </button>
+              )}
+            </div>
+          )}
 
           {!bootstrap && (
             <div className="chat-bootstrap-status">

@@ -72,6 +72,28 @@ import { TEXT_ENTRY_PROPS } from "./components/ui/textEntryProps";
 import { HERMES_SUPPORTED_MODEL_PROVIDERS } from "./platforms/hermes";
 
 const HERMES_SUPPORTED_OAUTH_PROVIDER_IDS = new Set(["openai-codex", "google-gemini-cli"]);
+const LOCAL_CHAT_BOOTSTRAP_TIMEOUT_MS = 15_000;
+const REMOTE_CHAT_BOOTSTRAP_TIMEOUT_MS = 30_000;
+const CHAT_CONFIG_REFRESH_TIMEOUT_MS = 15_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds.`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
+}
 
 function App() {
   const [state, dispatch] = useWizardState();
@@ -81,8 +103,10 @@ function App() {
   const [configUpdating, setConfigUpdating] = useState(false);
   const [pendingMaintenanceConfirm, setPendingMaintenanceConfirm] = useState<"repair" | "audit" | "update" | "uninstall" | null>(null);
   const [chatBootstrap, setChatBootstrap] = useState<GatewayChatBootstrap | null>(null);
-  const [chatBootstrapping, setChatBootstrapping] = useState(false);
+  const [chatConnecting, setChatConnecting] = useState(false);
+  const [chatConfigLoading, setChatConfigLoading] = useState(false);
   const [chatBootstrapError, setChatBootstrapError] = useState("");
+  const [chatWorkspaceWarning, setChatWorkspaceWarning] = useState("");
   const [pendingChatReturnScrollSnapshot, setPendingChatReturnScrollSnapshot] = useState<ChatTranscriptScrollSnapshot | null>(null);
   const [storedEnvironments, setStoredEnvironments] = useState<StoredEnvironment[]>([]);
   const [addingEnvFromChat, setAddingEnvFromChat] = useState(false);
@@ -371,57 +395,103 @@ function App() {
     };
   }, [remoteIp, remotePassword, remotePrivateKeyPath, remoteUser, targetEnvironment]);
 
+  const persistSelectedEnvironment = useCallback(() => {
+    const saved = upsertEnvironment({
+      platform,
+      type: targetEnvironment as "local" | "cloud",
+      remoteIp: targetEnvironment === "cloud" ? remoteIp : undefined,
+      remoteUser: targetEnvironment === "cloud" ? remoteUser : undefined,
+      remotePassword: targetEnvironment === "cloud" ? remotePassword : undefined,
+      remotePrivateKeyPath: targetEnvironment === "cloud" ? remotePrivateKeyPath : undefined,
+    });
+    setActiveEnvironmentId(saved.id);
+    setStoredEnvironments(loadEnvironments());
+    return saved;
+  }, [platform, targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath]);
+
   const bootstrapGatewayChat = useCallback(async () => {
-    setChatBootstrapping(true);
+    const remote = buildActiveRemoteConfig();
+    const bootstrapLabel = platform === "hermes"
+      ? "Preparing the Hermes API connection"
+      : "Preparing the OpenClaw gateway connection";
+    const bootstrapTimeoutMs = targetEnvironment === "cloud"
+      ? REMOTE_CHAT_BOOTSTRAP_TIMEOUT_MS
+      : LOCAL_CHAT_BOOTSTRAP_TIMEOUT_MS;
+
+    persistSelectedEnvironment();
+    setChatConnecting(true);
+    setChatConfigLoading(false);
     setChatBootstrapError("");
+    setChatWorkspaceWarning("");
 
     try {
       const bootstrap = platform === "hermes"
-        ? await invoke<GatewayChatBootstrap>("prepare_platform_chat_bootstrap", {
-            platform: "hermes",
-            gatewayPort,
-            remote: buildActiveRemoteConfig(),
-          })
-        : await invoke<GatewayChatBootstrap>("prepare_gateway_chat_connection", {
-            gatewayPort,
-            remote: buildActiveRemoteConfig(),
-          });
+        ? await withTimeout(
+            invoke<GatewayChatBootstrap>("prepare_platform_chat_bootstrap", {
+              platform: "hermes",
+              gatewayPort,
+              remote,
+            }),
+            bootstrapTimeoutMs,
+            bootstrapLabel,
+          )
+        : await withTimeout(
+            invoke<GatewayChatBootstrap>("prepare_gateway_chat_connection", {
+              gatewayPort,
+              remote,
+            }),
+            bootstrapTimeoutMs,
+            bootstrapLabel,
+          );
+
       setChatBootstrap(bootstrap);
       setAppScreen("chat");
-      await loadExistingConfigRef.current().catch(() => {});
-      // Save this environment to the registry
-      const saved = upsertEnvironment({
-        platform,
-        type: targetEnvironment as "local" | "cloud",
-        remoteIp: targetEnvironment === "cloud" ? remoteIp : undefined,
-        remoteUser: targetEnvironment === "cloud" ? remoteUser : undefined,
-        remotePassword: targetEnvironment === "cloud" ? remotePassword : undefined,
-        remotePrivateKeyPath: targetEnvironment === "cloud" ? remotePrivateKeyPath : undefined,
+      setChatConnecting(false);
+      setChatConfigLoading(true);
+
+      void withTimeout(
+        loadExistingConfigRef.current(),
+        CHAT_CONFIG_REFRESH_TIMEOUT_MS,
+        platform === "hermes"
+          ? "Loading the saved Hermes configuration"
+          : "Loading the saved OpenClaw configuration",
+      ).then(
+        () => {
+          setChatWorkspaceWarning("");
+        },
+        (error) => {
+          console.warn("Chat configuration refresh failed:", error);
+          setChatWorkspaceWarning(String(error));
+        },
+      ).finally(() => {
+        setChatConfigLoading(false);
       });
-      setActiveEnvironmentId(saved.id);
-      setStoredEnvironments(loadEnvironments());
     } catch (error) {
       setChatBootstrap(null);
       setChatBootstrapError(String(error));
     } finally {
-      setChatBootstrapping(false);
+      setChatConnecting(false);
     }
-  }, [buildActiveRemoteConfig, gatewayPort, targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath, platform]);
+  }, [buildActiveRemoteConfig, gatewayPort, persistSelectedEnvironment, platform, targetEnvironment]);
 
   useEffect(() => { void checkSystem(true, false); setStoredEnvironments(loadEnvironments()); }, []);
 
-  const activeStoredEnvironmentId = chatBootstrap ? storedEnvironments.find(
-    (e) => e.platform === (chatBootstrap.platform || "openclaw")
-      && e.type === (chatBootstrap.targetEnvironment as "local" | "cloud")
-      && (chatBootstrap.targetEnvironment === "local" || (e.remoteIp === remoteIp && e.remoteUser === remoteUser)),
-  )?.id || null : null;
+  const activeStoredEnvironmentId = storedEnvironments.find(
+    (e) => e.platform === platform
+      && e.type === (targetEnvironment as "local" | "cloud")
+      && (targetEnvironment === "local" || (e.remoteIp === remoteIp && e.remoteUser === remoteUser)),
+  )?.id || null;
 
   const handleSwitchEnvironment = useCallback((envId: string) => {
     const envs = loadEnvironments();
     const env = envs.find((e) => e.id === envId);
     if (!env) return;
 
+    setActiveEnvironmentId(env.id);
     dispatch({ type: "SET_FIELD", field: "platform", value: env.platform });
+    setChatBootstrapError("");
+    setChatWorkspaceWarning("");
+    setChatConfigLoading(false);
 
     if (env.type === "cloud") {
       setTargetEnvironment("cloud");
@@ -475,9 +545,9 @@ function App() {
 
   useEffect(() => {
     if (appScreen !== "chat") return;
-    if (chatBootstrapping || chatBootstrap) return;
+    if (chatConnecting || chatBootstrap || chatBootstrapError) return;
     void bootstrapGatewayChat();
-  }, [appScreen, chatBootstrap, chatBootstrapping, bootstrapGatewayChat]);
+  }, [appScreen, chatBootstrap, chatBootstrapError, chatConnecting, bootstrapGatewayChat]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1670,13 +1740,15 @@ Managed by Clawnetes.`,
   ]);
 
   const openChatWorkspace = useCallback(() => {
+    persistSelectedEnvironment();
     setChatBootstrap(null);
     setChatBootstrapError("");
+    setChatWorkspaceWarning("");
     setLogs("");
     setMaintenanceStatus("");
     setMaintCompleted(false);
     setAppScreen("chat");
-  }, [setLogs, setMaintCompleted, setMaintenanceStatus]);
+  }, [persistSelectedEnvironment, setLogs, setMaintCompleted, setMaintenanceStatus]);
 
   const openCommandCenter = useCallback((snapshot: ChatTranscriptScrollSnapshot | null) => {
     setPendingChatReturnScrollSnapshot(snapshot);
@@ -2254,10 +2326,15 @@ Managed by Clawnetes.`,
         <>
           <ChatShell
             bootstrap={chatBootstrap}
-            bootstrapping={chatBootstrapping}
+            bootstrapping={chatConnecting}
             bootstrapError={chatBootstrapError}
+            workspaceWarning={chatWorkspaceWarning}
+            workspaceWarningPending={chatConfigLoading}
+            onClearWorkspaceWarning={() => setChatWorkspaceWarning("")}
             onRetryConnection={() => {
               setChatBootstrap(null);
+              setChatBootstrapError("");
+              setChatWorkspaceWarning("");
               void bootstrapGatewayChat();
             }}
             onOpenConfigure={openCommandCenter}
@@ -2267,6 +2344,8 @@ Managed by Clawnetes.`,
             onSwitchPlatform={(p) => {
               dispatch({ type: "SET_FIELD", field: "platform", value: p });
               setChatBootstrap(null);
+              setChatBootstrapError("");
+              setChatWorkspaceWarning("");
             }}
             environments={storedEnvironments}
             activeEnvironmentId={activeStoredEnvironmentId}

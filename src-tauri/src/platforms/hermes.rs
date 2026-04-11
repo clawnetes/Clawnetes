@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::thread;
+use std::time::Duration;
 
 use serde_yaml::{Mapping, Value as YamlValue};
 
@@ -11,6 +14,7 @@ use super::types::PlatformPrereqCheck;
 
 const DEFAULT_API_PORT: u16 = 8642;
 const DEFAULT_API_HOST: &str = "127.0.0.1";
+const REMOTE_HERMES_SSH_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn resolve_client_api_host(bind: &str) -> &str {
     match bind.trim() {
@@ -99,6 +103,67 @@ fn hermes_run<E: CommandExecutor>(
     cmd: &str,
 ) -> Result<String, ClawError> {
     executor.run(&format!("{}{}", hermes_prefix(home), cmd))
+}
+
+fn run_timeout_task<T, F>(timeout: Duration, context: &str, task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let context = context.to_string();
+    let (sender, receiver) = mpsc::channel();
+
+    thread::spawn(move || {
+        let _ = sender.send(task());
+    });
+
+    match receiver.recv_timeout(timeout) {
+        Ok(result) => result.map_err(|error| format!("{}: {}", context, error)),
+        Err(RecvTimeoutError::Timeout) => Err(format!(
+            "Timed out after {}s while {}.",
+            timeout.as_secs(),
+            context
+        )),
+        Err(RecvTimeoutError::Disconnected) => {
+            Err(format!("{} failed before returning a result.", context))
+        }
+    }
+}
+
+fn get_remote_config_with_timeout(remote: &RemoteInfo) -> Result<CurrentConfig, String> {
+    let remote = remote.clone();
+    run_timeout_task(
+        REMOTE_HERMES_SSH_TIMEOUT,
+        "reading remote Hermes config over SSH",
+        move || {
+            let executor = SshExecutor::connect(&remote).map_err(String::from)?;
+            get_config_with(&executor).map_err(String::from)
+        },
+    )
+}
+
+fn prepare_remote_chat_bootstrap_with_timeout(
+    remote: &RemoteInfo,
+) -> Result<GatewayChatBootstrap, String> {
+    let remote = remote.clone();
+    run_timeout_task(
+        REMOTE_HERMES_SSH_TIMEOUT,
+        "preparing remote Hermes API bootstrap over SSH",
+        move || {
+            let executor = SshExecutor::connect(&remote).map_err(String::from)?;
+            prepare_chat_bootstrap_with(&executor).map_err(String::from)
+        },
+    )
+}
+
+fn apply_remote_chat_tunnel(mut bootstrap: GatewayChatBootstrap) -> GatewayChatBootstrap {
+    bootstrap.target_environment = "cloud".to_string();
+    bootstrap.tunnel_active = true;
+    bootstrap.api_base_url = Some(format!(
+        "http://127.0.0.1:{}/v1",
+        crate::ssh::REMOTE_TUNNEL_LOCAL_PORT
+    ));
+    bootstrap
 }
 
 fn hermes_maintenance_command(action: &str) -> Result<&'static str, String> {
@@ -818,8 +883,7 @@ pub fn get_version(remote: Option<&RemoteInfo>) -> Result<String, String> {
 
 pub fn get_config(remote: Option<&RemoteInfo>) -> Result<CurrentConfig, String> {
     if let Some(remote_info) = remote {
-        let executor = SshExecutor::connect(remote_info).map_err(String::from)?;
-        return get_config_with(&executor).map_err(String::from);
+        return get_remote_config_with_timeout(remote_info);
     }
     get_config_with(&LocalExecutor).map_err(String::from)
 }
@@ -834,10 +898,7 @@ pub fn configure(config: &AgentConfig, remote: Option<&RemoteInfo>) -> Result<St
 
 pub fn prepare_chat_bootstrap(remote: Option<&RemoteInfo>) -> Result<GatewayChatBootstrap, String> {
     if let Some(remote_info) = remote {
-        let executor = SshExecutor::connect(remote_info).map_err(String::from)?;
-        let mut bootstrap = prepare_chat_bootstrap_with(&executor).map_err(String::from)?;
-        bootstrap.target_environment = "cloud".to_string();
-
+        let bootstrap = prepare_remote_chat_bootstrap_with_timeout(remote_info)?;
         let remote_gateway_port = bootstrap.gateway_port;
         crate::gateway::ensure_remote_gateway_tunnel(remote_info, remote_gateway_port)?;
 
@@ -849,9 +910,7 @@ pub fn prepare_chat_bootstrap(remote: Option<&RemoteInfo>) -> Result<GatewayChat
             eprintln!("Warning: Failed to verify Hermes tunnel connectivity: {}", err);
         }
 
-        bootstrap.tunnel_active = true;
-        bootstrap.api_base_url = Some(format!("http://127.0.0.1:{}/v1", crate::ssh::REMOTE_TUNNEL_LOCAL_PORT));
-        return Ok(bootstrap);
+        return Ok(apply_remote_chat_tunnel(bootstrap));
     }
     prepare_chat_bootstrap_with(&LocalExecutor).map_err(String::from)
 }
@@ -1086,6 +1145,45 @@ mod tests {
         assert_eq!(current.gateway_port, 9999);
         assert_eq!(current.telegram_token, "bot");
         assert_eq!(current.api_key, "sk-ant");
+    }
+
+    #[test]
+    fn timeout_task_returns_clear_timeout_error() {
+        let error =
+            run_timeout_task(Duration::from_millis(10), "reading remote Hermes config over SSH", || {
+                std::thread::sleep(Duration::from_millis(40));
+                Ok::<_, String>(())
+            })
+            .expect_err("timeout should fail");
+
+        assert!(error.contains("Timed out after 0s while reading remote Hermes config over SSH."));
+    }
+
+    #[test]
+    fn apply_remote_chat_tunnel_rewrites_bootstrap_for_local_tunnel() {
+        let bootstrap = GatewayChatBootstrap {
+            ws_url: String::new(),
+            auth_token: "secret".to_string(),
+            target_environment: "local".to_string(),
+            gateway_port: DEFAULT_API_PORT,
+            tunnel_active: false,
+            openclaw_version: "Hermes Agent".to_string(),
+            platform: Some("hermes".to_string()),
+            chat_transport: Some("hermes-api".to_string()),
+            api_base_url: Some("http://127.0.0.1:8642/v1".to_string()),
+            api_key: Some("secret".to_string()),
+            supports_runs: Some(true),
+            supports_agent_discovery: Some(false),
+        };
+
+        let remote_bootstrap = apply_remote_chat_tunnel(bootstrap);
+
+        assert_eq!(remote_bootstrap.target_environment, "cloud");
+        assert!(remote_bootstrap.tunnel_active);
+        assert_eq!(
+            remote_bootstrap.api_base_url.as_deref(),
+            Some("http://127.0.0.1:28789/v1")
+        );
     }
 
     #[test]

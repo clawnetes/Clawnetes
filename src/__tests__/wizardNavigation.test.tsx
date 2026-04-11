@@ -337,7 +337,6 @@ describe("Platform state", () => {
     });
     expect(screen.getByText("OpenClaw")).toBeInTheDocument();
     expect(screen.getByText("Hermes Agent")).toBeInTheDocument();
-    expect(screen.getByText(/Windows uses a WSL2-managed workflow for v1/i)).toBeInTheDocument();
 
     const openclawCard = screen.getByTestId("platform-card-openclaw");
     const hermesCard = screen.getByTestId("platform-card-hermes");
@@ -401,18 +400,7 @@ describe("Platform state", () => {
     });
     await user.click(screen.getByRole("button", { name: "I Understand" }));
     await waitFor(() => {
-      expect(screen.getByText("Your Identity")).toBeInTheDocument();
-    });
-    await user.type(screen.getByPlaceholderText("e.g. David"), "Mulu");
-    await user.click(screen.getByRole("button", { name: "Next" }));
-    await waitFor(() => {
-      expect(screen.getByText("Agent Profile")).toBeInTheDocument();
-    });
-    await user.type(screen.getByPlaceholderText("e.g. Jeeves"), "Hermes");
-    await user.click(screen.getByTestId("btn-next"));
-
-    await waitFor(() => {
-      expect(screen.getByText("Hermes Setup")).toBeInTheDocument();
+      expect(screen.getByText("Hermes Configuration")).toBeInTheDocument();
     });
   });
 
@@ -442,22 +430,6 @@ describe("Platform state", () => {
     });
     await user.click(screen.getByRole("button", { name: "I Understand" }));
     await waitFor(() => {
-      expect(screen.getByText("Your Identity")).toBeInTheDocument();
-    });
-    await user.type(screen.getByPlaceholderText("e.g. David"), "Mulu");
-    await user.click(screen.getByRole("button", { name: "Next" }));
-    await waitFor(() => {
-      expect(screen.getByText("Agent Profile")).toBeInTheDocument();
-    });
-    await user.type(screen.getByPlaceholderText("e.g. Jeeves"), "Hermes");
-    await user.click(screen.getByTestId("btn-next"));
-
-    await waitFor(() => {
-      expect(screen.getByText("Hermes Setup")).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-    await waitFor(() => {
       expect(screen.getByText("Hermes Configuration")).toBeInTheDocument();
     });
     expect(screen.getByLabelText("Model Base URL")).toBeInTheDocument();
@@ -471,7 +443,8 @@ describe("Platform state", () => {
 
     await user.click(screen.getByRole("button", { name: "Next" }));
     await waitFor(() => {
-      expect(screen.getByText("Hermes Review")).toBeInTheDocument();
+      expect(screen.getByTestId("step-hermes-review")).toBeInTheDocument();
+      expect(screen.getByText("Finalizing Hermes Installation")).toBeInTheDocument();
     });
   });
 });

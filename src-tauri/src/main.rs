@@ -378,7 +378,13 @@ async fn prepare_platform_chat_bootstrap(
         AgentPlatform::Openclaw => {
             platforms::openclaw::prepare_chat_bootstrap(gateway_port, remote.as_ref()).await
         }
-        AgentPlatform::Hermes => platforms::hermes::prepare_chat_bootstrap(remote.as_ref()),
+        AgentPlatform::Hermes => {
+            tauri::async_runtime::spawn_blocking(move || {
+                platforms::hermes::prepare_chat_bootstrap(remote.as_ref())
+            })
+            .await
+            .map_err(|error| format!("Failed to join Hermes chat bootstrap task: {}", error))?
+        }
     }
 }
 

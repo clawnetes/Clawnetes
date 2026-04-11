@@ -1003,6 +1003,68 @@ button:disabled {
   line-height: 1.5;
 }
 
+.chat-inline-status {
+  margin: 0.9rem 1.2rem 0;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.chat-inline-status.pending {
+  border-color: rgba(80, 140, 255, 0.18);
+  background: rgba(80, 140, 255, 0.08);
+}
+
+.chat-inline-status.warning {
+  border-color: rgba(255, 180, 70, 0.28);
+  background: rgba(255, 180, 70, 0.12);
+}
+
+.chat-inline-status-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.chat-inline-status-detail {
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text-subtle);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-inline-status-action {
+  flex: 0 0 auto;
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-strong);
+  cursor: pointer;
+}
+
+.chat-inline-status-action:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+@media (max-width: 720px) {
+  .chat-inline-status {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .chat-inline-status-action {
+    align-self: flex-start;
+  }
+}
+
 .chat-empty-stage {
   min-height: 100%;
   display: flex;
