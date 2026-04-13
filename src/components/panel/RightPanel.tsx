@@ -173,6 +173,7 @@ function RightPanel({
             onProviderAuthChange={onProviderAuthChange}
             onStartOAuth={onStartOAuth}
             onDetectLocalModels={onDetectLocalModels}
+            platform={platform}
           />
         );
       case "skills":

@@ -335,4 +335,42 @@ describe("providerAuth utilities", () => {
     ]);
     expect(getDefaultModelForProvider("openai", auths, { openai: "openai/gpt-5.4" })).toBe("openai-codex/gpt-5.4");
   });
+
+  it("keeps Hermes model refs on the base provider even when codex oauth is selected", () => {
+    const auths = {
+      openai: {
+        auth_method: "openai-codex",
+        token: "",
+        profile_key: "openai-codex:default",
+        profile: { type: "oauth" },
+        oauth_provider_id: "openai-codex",
+      },
+    };
+
+    expect(applyModelProviderAuth("openai/gpt-5.4", auths, "hermes")).toBe("openai/gpt-5.4");
+    expect(normalizeModelRefForUi("openai/gpt-5.4", auths, "hermes")).toBe("openai/gpt-5.4");
+    expect(getDisplayModelOptions("openai", auths, {
+      openai: [{ value: "openai/gpt-5.4", label: "GPT-5.4" }],
+    }, "hermes")).toEqual([
+      { value: "openai/gpt-5.4", label: "GPT-5.4", description: undefined },
+    ]);
+    expect(getDefaultModelForProvider("openai", auths, { openai: "openai/gpt-5.4" }, "hermes"))
+      .toBe("openai/gpt-5.4");
+  });
+
+  it("downgrades unsupported Hermes google oauth auth state to token mode", () => {
+    const auths = normalizeProviderAuths({
+      google: {
+        auth_method: "google-gemini-cli",
+        token: "",
+        profile_key: "google-gemini-cli:default",
+        profile: { type: "oauth" },
+        oauth_provider_id: "google-gemini-cli",
+      },
+    }, "google", "", "google-gemini-cli", "hermes");
+
+    expect(auths.google.auth_method).toBe("token");
+    expect(auths.google.profile_key).toBeNull();
+    expect(auths.google.oauth_provider_id).toBeNull();
+  });
 });

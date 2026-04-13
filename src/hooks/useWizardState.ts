@@ -5,7 +5,7 @@ import { DEFAULT_TOOL_POLICY } from "../utils/toolSelection";
 import { createDefaultProviderAuth } from "../utils/providerAuth";
 import type { MessagingChannel } from "../utils/messagingPairing";
 
-import { loadEnvironments, getActiveEnvironmentId } from "../lib/environmentStorage";
+import { getActiveEnvironmentId, loadEnvironments } from "../lib/environmentStorage";
 
 export interface WizardState {
   // Navigation
@@ -373,7 +373,7 @@ export function useWizardState() {
       try {
         const envs = loadEnvironments();
         const activeId = getActiveEnvironmentId() || (envs[0]?.id ?? null);
-        const activeEnv = envs.find((e) => e.id === activeId);
+        const activeEnv = envs.find((e) => e.id === activeId) || null;
         if (activeEnv) {
           const platform = activeEnv.platform || "openclaw";
           return {

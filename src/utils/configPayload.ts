@@ -109,7 +109,7 @@ Managed by Clawnetes.`;
     provider: input.provider,
     api_key: effectiveProviderAuths[input.provider]?.token || input.apiKey,
     auth_method: effectiveProviderAuths[input.provider]?.auth_method || input.authMethod,
-    model: applyModelProviderAuth(input.model, effectiveProviderAuths),
+    model: applyModelProviderAuth(input.model, effectiveProviderAuths, input.platform),
     user_name: input.userName,
     agent_name: input.agentName,
     agent_vibe: "",
@@ -130,7 +130,7 @@ Managed by Clawnetes.`;
     allowed_tools: usePresetFields ? normalizedTopLevelToolPolicy.allow : null,
     denied_tools: usePresetFields ? normalizedTopLevelToolPolicy.deny : null,
     fallback_models: usePresetFields && input.enableFallbacks
-      ? input.fallbackModels.filter(m => m).map(m => applyModelProviderAuth(m, effectiveProviderAuths))
+      ? input.fallbackModels.filter(m => m).map(m => applyModelProviderAuth(m, effectiveProviderAuths, input.platform))
       : null,
     heartbeat_mode: usePresetFields ? input.heartbeatMode : null,
     idle_timeout_ms: usePresetFields && input.heartbeatMode === "idle" ? input.idleTimeoutMs : null,
@@ -149,9 +149,9 @@ Managed by Clawnetes.`;
       return {
         id: a.id,
         name: a.name,
-        model: applyModelProviderAuth(a.model, effectiveProviderAuths),
+        model: applyModelProviderAuth(a.model, effectiveProviderAuths, input.platform),
         fallback_models: a.fallbackModels.length > 0
-          ? a.fallbackModels.map(m => applyModelProviderAuth(m, effectiveProviderAuths))
+          ? a.fallbackModels.map(m => applyModelProviderAuth(m, effectiveProviderAuths, input.platform))
           : null,
         skills: normalizedAgentSelection.skills.length > 0 ? normalizedAgentSelection.skills : null,
         vibe: a.vibe,

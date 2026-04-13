@@ -1,4 +1,4 @@
-import type { ProviderAuthConfig, SkillOption } from "../types";
+import type { ProviderAuthConfig, SkillOption, AgentPlatform } from "../types";
 
 export const LOCAL_PROVIDERS = new Set(["ollama", "lmstudio", "local"]);
 
@@ -10,6 +10,8 @@ export const OAUTH_METHODS_BY_PROVIDER: Record<string, Array<{ value: string; la
     { value: "google-gemini-cli", label: "Google Gemini CLI OAuth", oauthProviderId: "google-gemini-cli" },
   ],
 };
+
+const HERMES_SUPPORTED_OAUTH_PROVIDER_IDS = new Set(["openai-codex"]);
 
 const MODEL_PROVIDER_OVERRIDE_BY_AUTH_METHOD: Record<string, string> = {
   "openai-codex": "openai-codex",
@@ -63,8 +65,12 @@ function getTokenAuthOptions(provider: string): Array<{ value: string; label: st
   return options;
 }
 
-function getSupportedAuthMethod(provider: string, authMethod: string): string {
-  const allowed = new Set(getProviderAuthOptions(provider).map((option) => option.value));
+function getSupportedAuthMethod(
+  provider: string,
+  authMethod: string,
+  platform: AgentPlatform = "openclaw",
+): string {
+  const allowed = new Set(getProviderAuthOptions(provider, platform).map((option) => option.value));
   const legacyMethod = LEGACY_AUTH_METHOD_BY_PROVIDER[provider]?.[authMethod];
   const candidate = legacyMethod || authMethod;
   return allowed.has(candidate) ? candidate : "token";
@@ -74,17 +80,28 @@ export function getBaseProvider(provider: string): string {
   return BASE_PROVIDER_BY_MODEL_PROVIDER[provider] || provider;
 }
 
-export function getEffectiveModelProvider(provider: string, providerAuths: Record<string, ProviderAuthConfig>): string {
+export function getEffectiveModelProvider(
+  provider: string,
+  providerAuths: Record<string, ProviderAuthConfig>,
+  platform: AgentPlatform = "openclaw",
+): string {
   const baseProvider = getBaseProvider(provider);
+  if (platform === "hermes") {
+    return baseProvider;
+  }
   const authMethod = providerAuths[baseProvider]?.auth_method;
   return authMethod ? (MODEL_PROVIDER_OVERRIDE_BY_AUTH_METHOD[authMethod] || baseProvider) : baseProvider;
 }
 
-export function applyModelProviderAuth(modelRef: string, providerAuths: Record<string, ProviderAuthConfig>): string {
+export function applyModelProviderAuth(
+  modelRef: string,
+  providerAuths: Record<string, ProviderAuthConfig>,
+  platform: AgentPlatform = "openclaw",
+): string {
   if (!modelRef || !modelRef.includes("/")) return modelRef;
   const normalizedModelRef = normalizeCrossProviderModelRef(modelRef);
   const [provider, ...rest] = normalizedModelRef.split("/");
-  const effectiveProvider = getEffectiveModelProvider(provider, providerAuths);
+  const effectiveProvider = getEffectiveModelProvider(provider, providerAuths, platform);
   if (effectiveProvider === provider) return normalizedModelRef;
   return `${effectiveProvider}/${rest.join("/")}`;
 }
@@ -94,11 +111,15 @@ export function getBaseProviderFromModel(modelRef: string): string {
   return getBaseProvider(normalizeCrossProviderModelRef(modelRef).split("/")[0]);
 }
 
-export function normalizeModelRefForUi(modelRef: string, providerAuths?: Record<string, ProviderAuthConfig>): string {
+export function normalizeModelRefForUi(
+  modelRef: string,
+  providerAuths?: Record<string, ProviderAuthConfig>,
+  platform: AgentPlatform = "openclaw",
+): string {
   if (!modelRef || !modelRef.includes("/")) return modelRef;
   const normalizedModelRef = normalizeCrossProviderModelRef(modelRef);
   if (providerAuths) {
-    return applyModelProviderAuth(normalizedModelRef, providerAuths);
+    return applyModelProviderAuth(normalizedModelRef, providerAuths, platform);
   }
   const [provider, ...rest] = normalizedModelRef.split("/");
   return `${getBaseProvider(provider)}/${rest.join("/")}`;
@@ -108,12 +129,13 @@ export function getDisplayModelOptions(
   provider: string,
   providerAuths: Record<string, ProviderAuthConfig>,
   modelsByProvider: Record<string, Array<{ value: string; label: string; description?: string }>>,
+  platform: AgentPlatform = "openclaw",
 ): Array<{ value: string; label: string; description?: string }> {
-  const effectiveProvider = getEffectiveModelProvider(provider, providerAuths);
+  const effectiveProvider = getEffectiveModelProvider(provider, providerAuths, platform);
   const showExplicitNamespace = effectiveProvider !== provider;
 
   return (modelsByProvider[provider] || []).map((model) => {
-    const value = applyModelProviderAuth(model.value, providerAuths);
+    const value = applyModelProviderAuth(model.value, providerAuths, platform);
     return {
       value,
       label: showExplicitNamespace ? value : model.label,
@@ -126,9 +148,10 @@ export function getDefaultModelForProvider(
   provider: string,
   providerAuths: Record<string, ProviderAuthConfig>,
   defaultModels: Record<string, string>,
+  platform: AgentPlatform = "openclaw",
 ): string {
   const defaultModel = defaultModels[provider];
-  return defaultModel ? applyModelProviderAuth(defaultModel, providerAuths) : "";
+  return defaultModel ? applyModelProviderAuth(defaultModel, providerAuths, platform) : "";
 }
 
 export function getDefaultAuthMethod(provider: string): string {
@@ -149,12 +172,18 @@ export function createDefaultProviderAuth(provider: string): ProviderAuthConfig 
   };
 }
 
-export function normalizeProviderAuths(providerAuths: Record<string, ProviderAuthConfig> | undefined, provider: string, apiKey: string, authMethod: string): Record<string, ProviderAuthConfig> {
+export function normalizeProviderAuths(
+  providerAuths: Record<string, ProviderAuthConfig> | undefined,
+  provider: string,
+  apiKey: string,
+  authMethod: string,
+  platform: AgentPlatform = "openclaw",
+): Record<string, ProviderAuthConfig> {
   const next: Record<string, ProviderAuthConfig> = {};
 
   for (const [rawProvider, rawAuth] of Object.entries(providerAuths || {})) {
     const normalizedProvider = getBaseProvider(rawProvider);
-    const normalizedMethod = getSupportedAuthMethod(normalizedProvider, rawAuth.auth_method);
+    const normalizedMethod = getSupportedAuthMethod(normalizedProvider, rawAuth.auth_method, platform);
     const oauthOption = OAUTH_METHODS_BY_PROVIDER[normalizedProvider]?.find((option) => option.value === normalizedMethod);
     const normalizedAuth: ProviderAuthConfig = {
       ...createDefaultProviderAuth(normalizedProvider),
@@ -173,7 +202,7 @@ export function normalizeProviderAuths(providerAuths: Record<string, ProviderAut
   }
 
   if (apiKey || authMethod !== "token") {
-    const normalizedMethod = getSupportedAuthMethod(normalizedProvider, authMethod);
+    const normalizedMethod = getSupportedAuthMethod(normalizedProvider, authMethod, platform);
     const oauthOption = OAUTH_METHODS_BY_PROVIDER[normalizedProvider]?.find((option) => option.value === normalizedMethod);
     next[normalizedProvider] = {
       ...next[normalizedProvider],
@@ -219,10 +248,19 @@ export function buildReferencedProviders(input: {
   return getReferencedProviders(models.filter(Boolean));
 }
 
-export function getProviderAuthOptions(provider: string): Array<{ value: string; label: string; description: string; oauthProviderId?: string }> {
+export function getProviderAuthOptions(
+  provider: string,
+  platform: AgentPlatform = "openclaw",
+): Array<{ value: string; label: string; description: string; oauthProviderId?: string }> {
   const options: Array<{ value: string; label: string; description: string; oauthProviderId?: string }> = [...getTokenAuthOptions(provider)];
 
   for (const oauthOption of OAUTH_METHODS_BY_PROVIDER[provider] || []) {
+    if (
+      platform === "hermes"
+      && !HERMES_SUPPORTED_OAUTH_PROVIDER_IDS.has(oauthOption.oauthProviderId)
+    ) {
+      continue;
+    }
     options.push({
       value: oauthOption.value,
       label: oauthOption.label,

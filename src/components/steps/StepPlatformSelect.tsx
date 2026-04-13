@@ -2,7 +2,7 @@ import { useWizard } from "../../context/WizardContext";
 import { PLATFORM_CAPABILITIES } from "../../platforms";
 
 export default function StepPlatformSelect() {
-  const { state, dispatch } = useWizard();
+  const { state, dispatch, onSwitchPlatform } = useWizard();
   const { platform } = state;
 
   const setField = (field: string, value: unknown) =>
@@ -19,7 +19,13 @@ export default function StepPlatformSelect() {
             key={option.id}
             data-testid={`platform-card-${option.id}`}
             className={`mode-card ${platform === option.id ? "active" : ""}`}
-            onClick={() => setField("platform", option.id)}
+            onClick={() => {
+              if (onSwitchPlatform) {
+                onSwitchPlatform(option.id);
+                return;
+              }
+              setField("platform", option.id);
+            }}
             style={{
               padding: "2rem",
               borderRadius: "12px",

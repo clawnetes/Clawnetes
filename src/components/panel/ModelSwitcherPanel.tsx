@@ -13,7 +13,7 @@ import {
   createDefaultProviderAuth,
   OAUTH_METHODS_BY_PROVIDER,
 } from "../../utils/providerAuth";
-import type { ProviderAuthConfig } from "../../types";
+import type { AgentPlatform, ProviderAuthConfig } from "../../types";
 import { TEXT_ENTRY_PROPS } from "../ui/textEntryProps";
 
 interface ModelSwitcherPanelProps {
@@ -29,6 +29,7 @@ interface ModelSwitcherPanelProps {
   onProviderAuthChange?: (provider: string, auth: ProviderAuthConfig) => void | Promise<void>;
   onStartOAuth?: (provider: string, authMethod: string, oauthProviderId: string) => Promise<ProviderAuthConfig>;
   onDetectLocalModels?: (provider: "ollama" | "lmstudio" | "local", baseUrl?: string) => Promise<string[]>;
+  platform?: AgentPlatform;
 }
 
 const ALL_PROVIDERS = Object.keys(MODELS_BY_PROVIDER);
@@ -145,14 +146,16 @@ function AuthSection({
   existingAuth,
   draftAuth,
   onDraftAuthChange,
+  platform = "openclaw",
 }: {
   provider: string;
   existingAuth: ProviderAuthConfig | undefined;
   draftAuth: ProviderAuthConfig;
   onDraftAuthChange: (auth: ProviderAuthConfig) => void;
+  platform?: AgentPlatform;
 }) {
   const [editing, setEditing] = useState(false);
-  const authOptions = getProviderAuthOptions(provider);
+  const authOptions = getProviderAuthOptions(provider, platform);
   const hasExistingCredential = existingAuth
     ? isOAuthMethod(existingAuth.auth_method)
       ? !!existingAuth.profile_key
@@ -430,6 +433,7 @@ function ModelSwitcherPanel({
   onProviderAuthChange,
   onStartOAuth,
   onDetectLocalModels,
+  platform = "openclaw",
 }: ModelSwitcherPanelProps) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -840,6 +844,7 @@ function ModelSwitcherPanel({
                 existingAuth={providerAuths[draftProvider]}
                 draftAuth={draftAuth}
                 onDraftAuthChange={setDraftAuth}
+                platform={platform}
               />
             )}
 
@@ -989,6 +994,7 @@ function ModelSwitcherPanel({
                 existingAuth={providerAuths[fbDraftProvider]}
                 draftAuth={fbDraftAuth || createDefaultProviderAuth(fbDraftProvider)}
                 onDraftAuthChange={setFbDraftAuth}
+                platform={platform}
               />
             )}
 

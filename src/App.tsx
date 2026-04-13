@@ -26,10 +26,12 @@ import {
 } from "./utils/wizardControllers";
 import Dropdown from "./components/Dropdown";
 import type { AgentTypeId, AgentConfigData, BusinessFunctionId, ChatTranscriptScrollSnapshot, CronJobConfig, GatewayChatBootstrap, ProviderAuthConfig, ToolPolicy } from "./types";
-import { useWizardState, fieldSetter } from "./hooks/useWizardState";
+import { useWizardState, fieldSetter, INITIAL_WIZARD_STATE, PLATFORM_DEFAULTS } from "./hooks/useWizardState";
 import { WizardContext } from "./context/WizardContext";
 import { clearAllChatShellStorage } from "./lib/chatShellStorage";
 import {
+  getPreferredEnvironment,
+  getPreferredEnvironmentForType,
   loadEnvironments,
   removeEnvironment,
   upsertEnvironment,
@@ -71,10 +73,26 @@ import ConfigureDrawer from "./components/chat/ConfigureDrawer";
 import { TEXT_ENTRY_PROPS } from "./components/ui/textEntryProps";
 import { HERMES_SUPPORTED_MODEL_PROVIDERS } from "./platforms/hermes";
 
-const HERMES_SUPPORTED_OAUTH_PROVIDER_IDS = new Set(["openai-codex", "google-gemini-cli"]);
+const HERMES_SUPPORTED_OAUTH_PROVIDER_IDS = new Set(["openai-codex"]);
 const LOCAL_CHAT_BOOTSTRAP_TIMEOUT_MS = 15_000;
 const REMOTE_CHAT_BOOTSTRAP_TIMEOUT_MS = 30_000;
 const CHAT_CONFIG_REFRESH_TIMEOUT_MS = 15_000;
+
+function buildConfigScopeKey(input: {
+  platform: string;
+  targetEnvironment: string;
+  remoteIp?: string;
+  remoteUser?: string;
+}) {
+  const remoteFingerprint = input.targetEnvironment === "cloud"
+    ? `${input.remoteUser || ""}@${input.remoteIp || ""}`
+    : "";
+  return [
+    input.platform,
+    input.targetEnvironment,
+    remoteFingerprint,
+  ].join("|");
+}
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -395,6 +413,118 @@ function App() {
     };
   }, [remoteIp, remotePassword, remotePrivateKeyPath, remoteUser, targetEnvironment]);
 
+  const currentConfigScopeKey = buildConfigScopeKey({
+    platform,
+    targetEnvironment,
+    remoteIp,
+    remoteUser,
+  });
+  const currentConfigScopeKeyRef = useRef(currentConfigScopeKey);
+  const configLoadGenerationRef = useRef(0);
+  const previousPlatformRef = useRef(platform);
+  const previousTargetEnvironmentRef = useRef(targetEnvironment);
+  const skipNextPlatformScopeSyncRef = useRef(false);
+  const skipNextTargetEnvironmentScopeSyncRef = useRef(false);
+
+  useEffect(() => {
+    currentConfigScopeKeyRef.current = currentConfigScopeKey;
+  }, [currentConfigScopeKey]);
+
+  const buildScopeResetUpdates = useCallback((input: {
+    platform: "openclaw" | "hermes";
+    targetEnvironment: "local" | "cloud";
+    env: StoredEnvironment | null;
+  }) => ({
+    platform: input.platform,
+    ...PLATFORM_DEFAULTS[input.platform],
+    targetEnvironment: input.targetEnvironment,
+    remoteIp: input.targetEnvironment === "cloud" ? input.env?.remoteIp || "" : "",
+    remoteUser: input.targetEnvironment === "cloud" ? input.env?.remoteUser || "" : "",
+    remotePassword: input.targetEnvironment === "cloud" ? input.env?.remotePassword || "" : "",
+    remotePrivateKeyPath: input.targetEnvironment === "cloud" ? input.env?.remotePrivateKeyPath || "" : "",
+    sshStatus: "idle",
+    sshError: "",
+    tunnelActive: false,
+    userName: INITIAL_WIZARD_STATE.userName,
+    agentName: INITIAL_WIZARD_STATE.agentName,
+    selectedPersona: INITIAL_WIZARD_STATE.selectedPersona,
+    agentEmoji: INITIAL_WIZARD_STATE.agentEmoji,
+    agentType: INITIAL_WIZARD_STATE.agentType,
+    apiKey: INITIAL_WIZARD_STATE.apiKey,
+    authMethod: INITIAL_WIZARD_STATE.authMethod,
+    provider: INITIAL_WIZARD_STATE.provider,
+    model: INITIAL_WIZARD_STATE.model,
+    telegramToken: INITIAL_WIZARD_STATE.telegramToken,
+    messagingChannel: INITIAL_WIZARD_STATE.messagingChannel,
+    whatsappDmPolicy: INITIAL_WIZARD_STATE.whatsappDmPolicy,
+    whatsappPhoneNumber: INITIAL_WIZARD_STATE.whatsappPhoneNumber,
+    whatsappPhoneSubmitted: INITIAL_WIZARD_STATE.whatsappPhoneSubmitted,
+    whatsappQrDataUrl: INITIAL_WIZARD_STATE.whatsappQrDataUrl,
+    whatsappPaired: INITIAL_WIZARD_STATE.whatsappPaired,
+    whatsappQrStep: INITIAL_WIZARD_STATE.whatsappQrStep,
+    whatsappQrLoading: INITIAL_WIZARD_STATE.whatsappQrLoading,
+    pairingCode: INITIAL_WIZARD_STATE.pairingCode,
+    pairingInput: INITIAL_WIZARD_STATE.pairingInput,
+    pairingStatus: INITIAL_WIZARD_STATE.pairingStatus,
+    isPaired: INITIAL_WIZARD_STATE.isPaired,
+    serviceKeys: INITIAL_WIZARD_STATE.serviceKeys,
+    providerAuths: { anthropic: createDefaultProviderAuth("anthropic") },
+    providerAuthBusy: {},
+    providerAuthErrors: {},
+    oauthCompletionRunning: false,
+    oauthCompletionStarted: false,
+    oauthCompletionResults: {},
+    gatewayPort: PLATFORM_DEFAULTS[input.platform].gatewayPort,
+    gatewayBind: PLATFORM_DEFAULTS[input.platform].gatewayBind,
+    gatewayAuthMode: PLATFORM_DEFAULTS[input.platform].gatewayAuthMode,
+    tailscaleMode: INITIAL_WIZARD_STATE.tailscaleMode,
+    nodeManager: INITIAL_WIZARD_STATE.nodeManager,
+    selectedSkills: [...INITIAL_WIZARD_STATE.selectedSkills],
+    sandboxMode: INITIAL_WIZARD_STATE.sandboxMode,
+    toolPolicy: { ...INITIAL_WIZARD_STATE.toolPolicy, allow: [...INITIAL_WIZARD_STATE.toolPolicy.allow], deny: [...INITIAL_WIZARD_STATE.toolPolicy.deny] },
+    enableFallbacks: INITIAL_WIZARD_STATE.enableFallbacks,
+    fallbackModels: [...INITIAL_WIZARD_STATE.fallbackModels],
+    heartbeatMode: INITIAL_WIZARD_STATE.heartbeatMode,
+    idleTimeoutMs: INITIAL_WIZARD_STATE.idleTimeoutMs,
+    toolsMd: INITIAL_WIZARD_STATE.toolsMd,
+    agentsMd: INITIAL_WIZARD_STATE.agentsMd,
+    heartbeatMd: INITIAL_WIZARD_STATE.heartbeatMd,
+    memoryMd: INITIAL_WIZARD_STATE.memoryMd,
+    memoryEnabled: INITIAL_WIZARD_STATE.memoryEnabled,
+    identityMd: INITIAL_WIZARD_STATE.identityMd,
+    userMd: INITIAL_WIZARD_STATE.userMd,
+    soulMd: INITIAL_WIZARD_STATE.soulMd,
+    initialWorkspace: { ...INITIAL_WIZARD_STATE.initialWorkspace },
+    workspaceModified: false,
+    cronJobs: [],
+    enableMultiAgent: false,
+    numAgents: 1,
+    agentConfigs: [],
+    currentAgentConfigIdx: 0,
+    ollamaModels: [],
+    ollamaDetecting: false,
+    lmstudioBaseUrl: INITIAL_WIZARD_STATE.lmstudioBaseUrl,
+    lmstudioModels: [],
+    lmstudioDetecting: false,
+    localBaseUrl: INITIAL_WIZARD_STATE.localBaseUrl,
+    localModels: [],
+    localDetecting: false,
+    thinkingLevel: INITIAL_WIZARD_STATE.thinkingLevel,
+    hermesMaxTurns: INITIAL_WIZARD_STATE.hermesMaxTurns,
+    hermesReasoningEffort: INITIAL_WIZARD_STATE.hermesReasoningEffort,
+    hermesPersonality: INITIAL_WIZARD_STATE.hermesPersonality,
+    hermesTerminalBackend: INITIAL_WIZARD_STATE.hermesTerminalBackend,
+    hermesMemoryEnabled: INITIAL_WIZARD_STATE.hermesMemoryEnabled,
+    hermesVerbose: INITIAL_WIZARD_STATE.hermesVerbose,
+    hermesSmartRouting: INITIAL_WIZARD_STATE.hermesSmartRouting,
+    hermesModelBaseUrl: INITIAL_WIZARD_STATE.hermesModelBaseUrl,
+    hermesApiServerEnabled: INITIAL_WIZARD_STATE.hermesApiServerEnabled,
+    hermesApiServerKey: INITIAL_WIZARD_STATE.hermesApiServerKey,
+    hermesApiServerCorsOrigins: INITIAL_WIZARD_STATE.hermesApiServerCorsOrigins,
+    hermesRawConfigYaml: INITIAL_WIZARD_STATE.hermesRawConfigYaml,
+    hermesRawEnv: INITIAL_WIZARD_STATE.hermesRawEnv,
+  }), []);
+
   const persistSelectedEnvironment = useCallback(() => {
     const saved = upsertEnvironment({
       platform,
@@ -404,7 +534,7 @@ function App() {
       remotePassword: targetEnvironment === "cloud" ? remotePassword : undefined,
       remotePrivateKeyPath: targetEnvironment === "cloud" ? remotePrivateKeyPath : undefined,
     });
-    setActiveEnvironmentId(saved.id);
+    setActiveEnvironmentId(saved.id, saved.platform);
     setStoredEnvironments(loadEnvironments());
     return saved;
   }, [platform, targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath]);
@@ -417,6 +547,9 @@ function App() {
     const bootstrapTimeoutMs = targetEnvironment === "cloud"
       ? REMOTE_CHAT_BOOTSTRAP_TIMEOUT_MS
       : LOCAL_CHAT_BOOTSTRAP_TIMEOUT_MS;
+    const scopeKey = currentConfigScopeKey;
+    const bootstrapGeneration = configLoadGenerationRef.current;
+    const refreshGeneration = configLoadGenerationRef.current + 1;
 
     persistSelectedEnvironment();
     setChatConnecting(true);
@@ -444,6 +577,13 @@ function App() {
             bootstrapLabel,
           );
 
+      if (
+        configLoadGenerationRef.current !== bootstrapGeneration
+        || currentConfigScopeKeyRef.current !== scopeKey
+      ) {
+        return;
+      }
+
       setChatBootstrap(bootstrap);
       setAppScreen("chat");
       setChatConnecting(false);
@@ -457,22 +597,47 @@ function App() {
           : "Loading the saved OpenClaw configuration",
       ).then(
         () => {
-          setChatWorkspaceWarning("");
+          if (
+            configLoadGenerationRef.current === refreshGeneration
+            && currentConfigScopeKeyRef.current === scopeKey
+          ) {
+            setChatWorkspaceWarning("");
+          }
         },
         (error) => {
           console.warn("Chat configuration refresh failed:", error);
-          setChatWorkspaceWarning(String(error));
+          if (
+            configLoadGenerationRef.current === refreshGeneration
+            && currentConfigScopeKeyRef.current === scopeKey
+          ) {
+            setChatWorkspaceWarning(String(error));
+          }
         },
       ).finally(() => {
-        setChatConfigLoading(false);
+        if (
+          configLoadGenerationRef.current === refreshGeneration
+          && currentConfigScopeKeyRef.current === scopeKey
+        ) {
+          setChatConfigLoading(false);
+        }
       });
     } catch (error) {
-      setChatBootstrap(null);
-      setChatBootstrapError(String(error));
+      if (
+        configLoadGenerationRef.current === bootstrapGeneration
+        && currentConfigScopeKeyRef.current === scopeKey
+      ) {
+        setChatBootstrap(null);
+        setChatBootstrapError(String(error));
+      }
     } finally {
-      setChatConnecting(false);
+      if (
+        configLoadGenerationRef.current === bootstrapGeneration
+        && currentConfigScopeKeyRef.current === scopeKey
+      ) {
+        setChatConnecting(false);
+      }
     }
-  }, [buildActiveRemoteConfig, gatewayPort, persistSelectedEnvironment, platform, targetEnvironment]);
+  }, [buildActiveRemoteConfig, currentConfigScopeKey, gatewayPort, persistSelectedEnvironment, platform, targetEnvironment]);
 
   useEffect(() => { void checkSystem(true, false); setStoredEnvironments(loadEnvironments()); }, []);
 
@@ -487,30 +652,26 @@ function App() {
     const env = envs.find((e) => e.id === envId);
     if (!env) return;
 
-    setActiveEnvironmentId(env.id);
-    dispatch({ type: "SET_FIELD", field: "platform", value: env.platform });
+    skipNextPlatformScopeSyncRef.current = true;
+    skipNextTargetEnvironmentScopeSyncRef.current = true;
+    configLoadGenerationRef.current += 1;
+    initialConfigRef.current = null;
+    setActiveEnvironmentId(env.id, env.platform);
+    dispatch({
+      type: "BATCH_UPDATE",
+      updates: buildScopeResetUpdates({
+        platform: env.platform,
+        targetEnvironment: env.type,
+        env,
+      }),
+    });
     setChatBootstrapError("");
     setChatWorkspaceWarning("");
+    setChatConnecting(false);
     setChatConfigLoading(false);
-
-    if (env.type === "cloud") {
-      setTargetEnvironment("cloud");
-      setRemoteIp(env.remoteIp || "");
-      setRemoteUser(env.remoteUser || "");
-      setRemotePassword(env.remotePassword || "");
-      setRemotePrivateKeyPath(env.remotePrivateKeyPath || "");
-      setChatBootstrap(null);
-      return;
-    }
-
-    // Local — switch immediately
-    setTargetEnvironment("local");
-    setRemoteIp("");
-    setRemoteUser("");
-    setRemotePassword("");
-    setRemotePrivateKeyPath("");
+    setActiveAgentId("main");
     setChatBootstrap(null);
-  }, [dispatch, setTargetEnvironment, setRemoteIp, setRemoteUser, setRemotePassword, setRemotePrivateKeyPath]);
+  }, [buildScopeResetUpdates, dispatch]);
 
   const handleRemoveEnvironment = useCallback((envId: string) => {
     const env = loadEnvironments().find((entry) => entry.id === envId);
@@ -526,17 +687,108 @@ function App() {
   }, [activeStoredEnvironmentId]);
 
   const handleAddEnvironment = useCallback(() => {
-    setTargetEnvironment("cloud");
-    setRemoteIp("");
-    setRemoteUser("");
-    setRemotePassword("");
-    setRemotePrivateKeyPath("");
-    setSshStatus("idle");
-    setSshError("");
+    skipNextTargetEnvironmentScopeSyncRef.current = true;
+    configLoadGenerationRef.current += 1;
+    initialConfigRef.current = null;
+    dispatch({
+      type: "BATCH_UPDATE",
+      updates: buildScopeResetUpdates({
+        platform,
+        targetEnvironment: "cloud",
+        env: null,
+      }),
+    });
+    setStoredEnvironments(loadEnvironments());
     setStep(1);
     setAddingEnvFromChat(true);
     setAppScreen("setup");
-  }, [setTargetEnvironment, setRemoteIp, setRemoteUser, setRemotePassword, setRemotePrivateKeyPath, setSshStatus, setSshError, setStep]);
+    setChatConnecting(false);
+    setChatBootstrap(null);
+    setChatBootstrapError("");
+    setChatWorkspaceWarning("");
+    setChatConfigLoading(false);
+  }, [buildScopeResetUpdates, dispatch, platform, setStep]);
+
+  const handleSwitchPlatform = useCallback((nextPlatform: "openclaw" | "hermes") => {
+    const preferredEnvironment = getPreferredEnvironment(nextPlatform);
+    skipNextPlatformScopeSyncRef.current = true;
+    skipNextTargetEnvironmentScopeSyncRef.current = true;
+    configLoadGenerationRef.current += 1;
+    initialConfigRef.current = null;
+    dispatch({
+      type: "BATCH_UPDATE",
+      updates: buildScopeResetUpdates({
+        platform: nextPlatform,
+        targetEnvironment: preferredEnvironment?.type || "local",
+        env: preferredEnvironment,
+      }),
+    });
+    if (preferredEnvironment) {
+      setActiveEnvironmentId(preferredEnvironment.id, nextPlatform);
+    }
+    setStoredEnvironments(loadEnvironments());
+    setActiveAgentId("main");
+    setChatBootstrap(null);
+    setChatBootstrapError("");
+    setChatWorkspaceWarning("");
+    setChatConnecting(false);
+    setChatConfigLoading(false);
+  }, [buildScopeResetUpdates, dispatch]);
+
+  const handleSwitchTargetEnvironment = useCallback((nextTargetEnvironment: "local" | "cloud") => {
+    const preferredEnvironment = getPreferredEnvironmentForType(platform, nextTargetEnvironment);
+    skipNextTargetEnvironmentScopeSyncRef.current = true;
+    configLoadGenerationRef.current += 1;
+    initialConfigRef.current = null;
+    dispatch({
+      type: "BATCH_UPDATE",
+      updates: buildScopeResetUpdates({
+        platform,
+        targetEnvironment: nextTargetEnvironment,
+        env: preferredEnvironment,
+      }),
+    });
+    if (preferredEnvironment) {
+      setActiveEnvironmentId(preferredEnvironment.id, platform);
+    }
+    setStoredEnvironments(loadEnvironments());
+    setChatBootstrap(null);
+    setChatBootstrapError("");
+    setChatWorkspaceWarning("");
+    setChatConnecting(false);
+    setChatConfigLoading(false);
+    setActiveAgentId("main");
+  }, [buildScopeResetUpdates, dispatch, platform]);
+
+  useEffect(() => {
+    if (platform === previousPlatformRef.current) {
+      return;
+    }
+    previousPlatformRef.current = platform;
+
+    if (skipNextPlatformScopeSyncRef.current) {
+      skipNextPlatformScopeSyncRef.current = false;
+      return;
+    }
+
+    handleSwitchPlatform(platform);
+  }, [handleSwitchPlatform, platform]);
+
+  useEffect(() => {
+    if (targetEnvironment === previousTargetEnvironmentRef.current) {
+      return;
+    }
+    previousTargetEnvironmentRef.current = targetEnvironment;
+
+    if (skipNextTargetEnvironmentScopeSyncRef.current) {
+      skipNextTargetEnvironmentScopeSyncRef.current = false;
+      return;
+    }
+
+    if (targetEnvironment === "local" || targetEnvironment === "cloud") {
+      handleSwitchTargetEnvironment(targetEnvironment);
+    }
+  }, [handleSwitchTargetEnvironment, targetEnvironment]);
 
   const handleBackToChat = useCallback(() => {
     setAddingEnvFromChat(false);
@@ -684,20 +936,20 @@ function App() {
   }
 
   function getProviderDefaultModel(targetProvider: string, auths: Record<string, ProviderAuthConfig> = providerAuths): string {
-    return getDefaultModelForProvider(getBaseProvider(targetProvider), auths, DEFAULT_MODELS);
+    return getDefaultModelForProvider(getBaseProvider(targetProvider), auths, DEFAULT_MODELS, platform);
   }
 
   function getProviderModelOptions(targetProvider: string, auths: Record<string, ProviderAuthConfig> = providerAuths) {
-    return getDisplayModelOptions(getBaseProvider(targetProvider), auths, MODELS_BY_PROVIDER);
+    return getDisplayModelOptions(getBaseProvider(targetProvider), auths, MODELS_BY_PROVIDER, platform);
   }
 
   function remapAllModelSelections(nextProviderAuths: Record<string, ProviderAuthConfig>) {
-    setModel(prev => applyModelProviderAuth(prev, nextProviderAuths));
-    setFallbackModels(prev => prev.map(modelRef => applyModelProviderAuth(modelRef, nextProviderAuths)));
+    setModel(prev => applyModelProviderAuth(prev, nextProviderAuths, platform));
+    setFallbackModels(prev => prev.map(modelRef => applyModelProviderAuth(modelRef, nextProviderAuths, platform)));
     setAgentConfigs(prev => prev.map(agent => ({
       ...agent,
-      model: applyModelProviderAuth(agent.model, nextProviderAuths),
-      fallbackModels: agent.fallbackModels.map(modelRef => applyModelProviderAuth(modelRef, nextProviderAuths)),
+      model: applyModelProviderAuth(agent.model, nextProviderAuths, platform),
+      fallbackModels: agent.fallbackModels.map(modelRef => applyModelProviderAuth(modelRef, nextProviderAuths, platform)),
     })));
   }
 
@@ -831,22 +1083,23 @@ function App() {
       },
     });
 
-    if (successfulItems.length > 0 && targetEnvironment !== "cloud") {
+    if (successfulItems.length > 0) {
       try {
         const oauthPayload = {
           ...buildConfigPayload(configPayloadInput, nextProviderAuths),
           preserve_state: true,
         };
+        const remote = targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null;
         if (platform === "hermes") {
           await invoke("configure_platform", {
             platform: "hermes",
             config: oauthPayload,
-            remote: null,
+            remote,
           });
         } else {
           await invoke("configure_agent", {
             config: oauthPayload,
-            remote: null,
+            remote,
           });
         }
       } catch (e: any) {
@@ -867,13 +1120,7 @@ function App() {
   function renderProviderAuthEditor(targetProvider: string, options?: { keyPrefix?: string; showProviderLabel?: boolean; showMissingWarning?: boolean; marginTop?: string }) {
     const normalizedProvider = getBaseProvider(targetProvider);
     const auth = getProviderAuth(normalizedProvider);
-    const authOptions = getProviderAuthOptions(normalizedProvider).filter((option) => (
-      platform !== "hermes"
-        || !isOAuthMethod(option.value)
-        || ("oauthProviderId" in option
-          && typeof option.oauthProviderId === "string"
-          && HERMES_SUPPORTED_OAUTH_PROVIDER_IDS.has(option.oauthProviderId))
-    ));
+    const authOptions = getProviderAuthOptions(normalizedProvider, platform);
     const effectiveAuthMethod = auth.auth_method;
     const selectedAuthOption = authOptions.find((option) => option.value === effectiveAuthMethod);
     const hasCredential = isOAuthMethod(effectiveAuthMethod) ? !!auth.profile_key : !!auth.token;
@@ -1304,6 +1551,7 @@ function App() {
       normalizedProvider,
       initial.api_key || "",
       initial.auth_method || "token",
+      platform,
     );
     const normalizedTopLevelSelection = normalizeSkillAndToolSelection(
       initial.skills || [],
@@ -1322,7 +1570,7 @@ Managed by Clawnetes.`;
       provider: normalizedProvider,
       api_key: initialProviderAuths[normalizedProvider]?.token || initial.api_key,
       auth_method: initialProviderAuths[normalizedProvider]?.auth_method || initial.auth_method,
-      model: applyModelProviderAuth(initial.model, initialProviderAuths),
+      model: applyModelProviderAuth(initial.model, initialProviderAuths, platform),
       user_name: initial.user_name,
       agent_name: initial.agent_name,
       agent_vibe: initial.agent_vibe || "",
@@ -1341,7 +1589,7 @@ Managed by Clawnetes.`;
       allowed_tools: normalizedTopLevelToolPolicy.allow,
       denied_tools: normalizedTopLevelToolPolicy.deny,
       fallback_models: (initial.fallback_models && initial.fallback_models.length > 0)
-        ? initial.fallback_models.map((model: string) => applyModelProviderAuth(model, initialProviderAuths))
+        ? initial.fallback_models.map((model: string) => applyModelProviderAuth(model, initialProviderAuths, platform))
         : null,
       heartbeat_mode: initial.heartbeat_mode,
       idle_timeout_ms: initial.heartbeat_mode === "idle" ? initial.idle_timeout_ms : null,
@@ -1360,9 +1608,9 @@ Managed by Clawnetes.`;
         return {
           id: a.id,
           name: a.name,
-          model: applyModelProviderAuth(a.model, initialProviderAuths),
+          model: applyModelProviderAuth(a.model, initialProviderAuths, platform),
           fallback_models: (a.fallback_models && a.fallback_models.length > 0)
-            ? a.fallback_models.map((model: string) => applyModelProviderAuth(model, initialProviderAuths))
+            ? a.fallback_models.map((model: string) => applyModelProviderAuth(model, initialProviderAuths, platform))
             : null,
           skills: normalizedAgentSelection.skills.length > 0 ? normalizedAgentSelection.skills : null,
           vibe: a.vibe || "",
@@ -1558,6 +1806,8 @@ Managed by Clawnetes.`,
   ]);
 
   const loadExistingConfig = useCallback(async () => {
+    const scopeKey = currentConfigScopeKey;
+    const generation = ++configLoadGenerationRef.current;
     return loadExistingConfigController({
       state: {
         platform,
@@ -1632,9 +1882,14 @@ Managed by Clawnetes.`,
       setHermesApiServerCorsOrigins: fieldSetter(dispatch, "hermesApiServerCorsOrigins"),
       setHermesRawConfigYaml: fieldSetter(dispatch, "hermesRawConfigYaml"),
       setHermesRawEnv: fieldSetter(dispatch, "hermesRawEnv"),
+      shouldApply: () => (
+        generation === configLoadGenerationRef.current
+        && currentConfigScopeKeyRef.current === scopeKey
+      ),
     });
   }, [
     availableSkillIds,
+    currentConfigScopeKey,
     getLoadedAgentToolPolicy,
     getLoadedTopLevelToolPolicy,
     initialConfigRef,
@@ -1828,15 +2083,19 @@ Managed by Clawnetes.`,
   // ── Panel handlers (for right panel in chat) ──
 
   const saveUpdatedConfig = useCallback(async (payload: any) => {
+    if (chatConfigLoading) {
+      throw new Error("Configuration is still loading for the selected platform/environment scope.");
+    }
     const remote = targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null;
     if (platform === "hermes") {
       await invoke("configure_platform", { platform: "hermes", config: { ...payload, preserve_state: true }, remote });
     } else {
       await invoke("configure_agent", { config: { ...payload, preserve_state: true }, remote });
     }
-  }, [platform, targetEnvironment, buildActiveRemoteConfig]);
+  }, [chatConfigLoading, platform, targetEnvironment, buildActiveRemoteConfig]);
 
   const handlePanelModelChange = useCallback(async (newModel: string) => {
+    if (chatConfigLoading) return;
     let nextAgentConfigs = configPayloadRef.current.agentConfigs;
     const nextProvider = getBaseProviderFromModel(newModel) || configPayloadRef.current.provider;
 
@@ -1881,9 +2140,10 @@ Managed by Clawnetes.`,
     } catch (e) {
       console.error("Failed to update model:", e);
     }
-  }, [activeAgentId, platform, restartGatewayAfterPanelUpdate, setAgentConfigs, setModel, setProvider, setApiKey, setAuthMethod, targetEnvironment, buildActiveRemoteConfig, saveUpdatedConfig]);
+  }, [activeAgentId, chatConfigLoading, platform, restartGatewayAfterPanelUpdate, setAgentConfigs, setModel, setProvider, setApiKey, setAuthMethod, targetEnvironment, buildActiveRemoteConfig, saveUpdatedConfig]);
 
   const handlePanelFallbacksChange = useCallback(async (newFallbacks: string[]) => {
+    if (chatConfigLoading) return;
     setFallbackModels(newFallbacks);
     try {
       const payload = buildConfigPayload({ ...configPayloadRef.current, fallbackModels: newFallbacks });
@@ -1892,9 +2152,10 @@ Managed by Clawnetes.`,
     } catch (e) {
       console.error("Failed to update fallback models:", e);
     }
-  }, [restartGatewayAfterPanelUpdate, setFallbackModels]);
+  }, [chatConfigLoading, restartGatewayAfterPanelUpdate, setFallbackModels]);
 
   const handlePanelLocalBaseUrlChange = useCallback(async (provider: "lmstudio" | "local", baseUrl: string) => {
+    if (chatConfigLoading) return;
     if (provider === "lmstudio") {
       setLmstudioBaseUrl(baseUrl);
     } else {
@@ -1911,9 +2172,10 @@ Managed by Clawnetes.`,
     } catch (e) {
       console.error("Failed to update local base URL:", e);
     }
-  }, [buildActiveRemoteConfig, restartGatewayAfterPanelUpdate, setLmstudioBaseUrl, setLocalBaseUrl, targetEnvironment]);
+  }, [buildActiveRemoteConfig, chatConfigLoading, restartGatewayAfterPanelUpdate, setLmstudioBaseUrl, setLocalBaseUrl, targetEnvironment]);
 
   const handlePanelProviderAuthChange = useCallback(async (targetProvider: string, auth: ProviderAuthConfig) => {
+    if (chatConfigLoading) return;
     const nextProviderAuths = mergeProviderAuth(configPayloadRef.current.providerAuths, targetProvider, auth);
     updateProviderAuth(targetProvider, auth);
     
@@ -1935,10 +2197,14 @@ Managed by Clawnetes.`,
     } catch (e) {
       console.error("Failed to update provider auth:", e);
     }
-  }, [restartGatewayAfterPanelUpdate, setApiKey, setAuthMethod, targetEnvironment, buildActiveRemoteConfig]);
+  }, [chatConfigLoading, restartGatewayAfterPanelUpdate, setApiKey, setAuthMethod, targetEnvironment, buildActiveRemoteConfig]);
 
   const handlePanelStartOAuth = useCallback(async (targetProvider: string, targetAuthMethod: string, oauthProviderId: string): Promise<ProviderAuthConfig> => {
-    const result = await invoke<ProviderAuthConfig>("start_provider_auth", {
+    if (chatConfigLoading) {
+      throw new Error("Configuration is still loading for the selected platform/environment scope.");
+    }
+    const result = await invoke<ProviderAuthConfig>("start_platform_provider_auth", {
+      platform,
       provider: targetProvider,
       method: targetAuthMethod,
       oauthProviderId,
@@ -1966,7 +2232,7 @@ Managed by Clawnetes.`,
       console.error("OAuth succeeded but saving failed:", e);
     }
     return result;
-  }, [targetEnvironment, buildActiveRemoteConfig, restartGatewayAfterPanelUpdate, setApiKey, setAuthMethod]);
+  }, [chatConfigLoading, platform, targetEnvironment, buildActiveRemoteConfig, restartGatewayAfterPanelUpdate, setApiKey, setAuthMethod]);
 
   const handlePanelDetectLocalModels = useCallback(async (provider: "ollama" | "lmstudio" | "local", baseUrl?: string): Promise<string[]> => {
     const remote = targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null;
@@ -1983,6 +2249,7 @@ Managed by Clawnetes.`,
   const [toolsSaving, setToolsSaving] = useState(false);
 
   const handlePanelSaveSkillsConfig = useCallback(async (newSkills: string[], newServiceKeys: Record<string, string>) => {
+    if (chatConfigLoading) return;
     setSkillsSaving(true);
     setSelectedSkills(newSkills);
     setServiceKeys(newServiceKeys);
@@ -1999,9 +2266,10 @@ Managed by Clawnetes.`,
     } finally {
       setSkillsSaving(false);
     }
-  }, [restartGatewayAfterPanelUpdate, setSelectedSkills, setServiceKeys]);
+  }, [chatConfigLoading, restartGatewayAfterPanelUpdate, setSelectedSkills, setServiceKeys]);
 
   const handleSaveToolPolicy = useCallback(async (newPolicy: ToolPolicy) => {
+    if (chatConfigLoading) return;
     setToolsSaving(true);
     setToolPolicy(newPolicy);
     try {
@@ -2016,13 +2284,14 @@ Managed by Clawnetes.`,
     } finally {
       setToolsSaving(false);
     }
-  }, [restartGatewayAfterPanelUpdate, setToolPolicy]);
+  }, [chatConfigLoading, restartGatewayAfterPanelUpdate, setToolPolicy]);
 
   const handleSaveAdvancedSettings = useCallback(async (
     newHeartbeatMode: string,
     newIdleTimeoutMs: number,
     newSandboxMode: string
   ) => {
+    if (chatConfigLoading) return;
     setLoading(true);
     setHeartbeatMode(newHeartbeatMode);
     setIdleTimeoutMs(newIdleTimeoutMs);
@@ -2041,9 +2310,10 @@ Managed by Clawnetes.`,
     } finally {
       setLoading(false);
     }
-  }, [restartGatewayAfterPanelUpdate, setHeartbeatMode, setIdleTimeoutMs, setSandboxMode, setLoading]);
+  }, [chatConfigLoading, restartGatewayAfterPanelUpdate, setHeartbeatMode, setIdleTimeoutMs, setSandboxMode, setLoading]);
 
   const handleSaveHermesSettings = useCallback(async (updates: Record<string, any>) => {
+    if (chatConfigLoading) return;
     setLoading(true);
     if ("hermesTerminalBackend" in updates) setHermesTerminalBackend(updates.hermesTerminalBackend);
     if ("hermesMaxTurns" in updates) setHermesMaxTurns(updates.hermesMaxTurns);
@@ -2087,10 +2357,12 @@ Managed by Clawnetes.`,
     setHermesRawConfigYaml,
     setHermesRawEnv,
     saveUpdatedConfig,
+    chatConfigLoading,
     restartGatewayAfterPanelUpdate
   ]);
 
   const handlePanelIdentitySave = useCallback(async (tab: string, content: string) => {
+    if (chatConfigLoading) return;
     const currentConfig = configPayloadRef.current;
 
     // Update the local state for the changed tab
@@ -2125,7 +2397,7 @@ Managed by Clawnetes.`,
     } catch (e) {
       console.error(`Failed to save ${tab}:`, e);
     }
-  }, [targetEnvironment, buildActiveRemoteConfig, platform, saveUpdatedConfig, setAgentsMd, setHeartbeatMd, setIdentityMd, setMemoryMd, setSoulMd, setToolsMd]);
+  }, [chatConfigLoading, targetEnvironment, buildActiveRemoteConfig, platform, saveUpdatedConfig, setAgentsMd, setHeartbeatMd, setIdentityMd, setMemoryMd, setSoulMd, setToolsMd]);
 
   const handlePanelSetupIntegration = useCallback(async (skillId: string) => {
     if (!selectedSkills.includes(skillId)) {
@@ -2135,6 +2407,7 @@ Managed by Clawnetes.`,
   }, [handlePanelSaveSkillsConfig, selectedSkills, serviceKeys]);
 
   const handlePanelAddAgent = useCallback(async (newAgent: AgentConfigData) => {
+    if (chatConfigLoading) return;
     const currentConfig = configPayloadRef.current;
     const nextAgentConfigs = [...currentConfig.agentConfigs, newAgent];
 
@@ -2153,10 +2426,10 @@ Managed by Clawnetes.`,
     } catch (e) {
       console.error("Failed to add agent:", e);
     }
-  }, [targetEnvironment, buildActiveRemoteConfig, restartGatewayAfterPanelUpdate, setAgentConfigs, setEnableMultiAgent, setNumAgents]);
+  }, [chatConfigLoading, restartGatewayAfterPanelUpdate, setAgentConfigs, setEnableMultiAgent, setNumAgents]);
 
   const handlePanelRemoveAgent = useCallback(async (agentId: string) => {
-    if (!agentId || agentId === "main") return;
+    if (!agentId || agentId === "main" || chatConfigLoading) return;
 
     const currentConfig = configPayloadRef.current;
     const nextAgentConfigs = currentConfig.agentConfigs.filter((agent) => agent.id !== agentId);
@@ -2175,23 +2448,20 @@ Managed by Clawnetes.`,
         agentConfigs: nextAgentConfigs,
         enableMultiAgent: nextEnableMultiAgent,
       });
-      await invoke("configure_agent", {
-        config: { ...payload, preserve_state: true },
-        remote: targetEnvironment === "cloud" ? buildActiveRemoteConfig() : null,
-      });
+      await saveUpdatedConfig(payload);
       await restartGatewayAfterPanelUpdate();
     } catch (e) {
       console.error("Failed to remove agent:", e);
     }
   }, [
     activeAgentId,
-    buildActiveRemoteConfig,
+    chatConfigLoading,
     restartGatewayAfterPanelUpdate,
+    saveUpdatedConfig,
     setActiveAgentId,
     setAgentConfigs,
     setEnableMultiAgent,
     setNumAgents,
-    targetEnvironment,
   ]);
 
   const getStepStatus = (stepId: number) => {
@@ -2309,7 +2579,14 @@ Managed by Clawnetes.`,
           : `Are you absolutely sure you want to completely remove ${maintenancePlatformName} and all its data?`;
 
   return (
-    <WizardContext.Provider value={{ state, dispatch }}>
+    <WizardContext.Provider
+      value={{
+        state,
+        dispatch,
+        onSwitchPlatform: handleSwitchPlatform,
+        onSwitchTargetEnvironment: handleSwitchTargetEnvironment,
+      }}
+    >
     <div className="app-container">
       {appScreen === "loading" ? (
         <main className="main-content">
@@ -2341,12 +2618,7 @@ Managed by Clawnetes.`,
             returnScrollSnapshot={pendingChatReturnScrollSnapshot}
             onConsumeReturnScrollSnapshot={() => setPendingChatReturnScrollSnapshot(null)}
             platform={platform}
-            onSwitchPlatform={(p) => {
-              dispatch({ type: "SET_FIELD", field: "platform", value: p });
-              setChatBootstrap(null);
-              setChatBootstrapError("");
-              setChatWorkspaceWarning("");
-            }}
+            onSwitchPlatform={handleSwitchPlatform}
             environments={storedEnvironments}
             activeEnvironmentId={activeStoredEnvironmentId}
             onSwitchEnvironment={handleSwitchEnvironment}

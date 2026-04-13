@@ -16,8 +16,11 @@ export interface StoredEnvironment {
 }
 
 const ENVIRONMENTS_KEY = "clawnetes.environments.v1";
-const ACTIVE_ENV_KEY = "clawnetes.environments.active.v1";
+const ACTIVE_ENV_KEY = "clawnetes.environments.active.v2";
+const LEGACY_ACTIVE_ENV_KEY = "clawnetes.environments.active.v1";
 const LEGACY_REMOTE_KEY = "clawnetes.remote.lastConnection.v1";
+
+type ActiveEnvironmentMap = Partial<Record<AgentPlatform, string>>;
 
 function readJson<T>(key: string): T | null {
   const storage = getSafeLocalStorage();
@@ -48,6 +51,46 @@ function removeKey(key: string): void {
   } catch {
     // Ignore storage failures.
   }
+}
+
+function isValidActiveEnvironmentMap(value: unknown): value is ActiveEnvironmentMap {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.entries(value).every(([platform, id]) => (
+    (platform === "openclaw" || platform === "hermes")
+    && typeof id === "string"
+  ));
+}
+
+function loadActiveEnvironmentMap(): ActiveEnvironmentMap {
+  const current = readJson<unknown>(ACTIVE_ENV_KEY);
+  if (isValidActiveEnvironmentMap(current)) {
+    return current;
+  }
+
+  const legacyId = readJson<string>(LEGACY_ACTIVE_ENV_KEY);
+  if (!legacyId) {
+    return {};
+  }
+
+  const legacyEnv = loadEnvironments().find((env) => env.id === legacyId);
+  if (!legacyEnv) {
+    removeKey(LEGACY_ACTIVE_ENV_KEY);
+    return {};
+  }
+
+  const migrated: ActiveEnvironmentMap = { [legacyEnv.platform]: legacyEnv.id };
+  writeJson(ACTIVE_ENV_KEY, migrated);
+  removeKey(LEGACY_ACTIVE_ENV_KEY);
+  return migrated;
+}
+
+function saveActiveEnvironmentMap(map: ActiveEnvironmentMap): void {
+  if (Object.keys(map).length === 0) {
+    removeKey(ACTIVE_ENV_KEY);
+  } else {
+    writeJson(ACTIVE_ENV_KEY, map);
+  }
+  removeKey(LEGACY_ACTIVE_ENV_KEY);
 }
 
 function isValidEnvironment(env: unknown): env is StoredEnvironment {
@@ -139,17 +182,87 @@ export function upsertEnvironment(env: {
 }
 
 export function removeEnvironment(id: string): void {
-  const envs = loadEnvironments().filter((e) => e.id !== id);
-  saveEnvironments(envs);
-  if (getActiveEnvironmentId() === id) {
+  const envs = loadEnvironments();
+  const removed = envs.find((e) => e.id === id);
+  const nextEnvs = envs.filter((e) => e.id !== id);
+  saveEnvironments(nextEnvs);
+
+  if (removed) {
+    const activeMap = loadActiveEnvironmentMap();
+    if (activeMap[removed.platform] === id) {
+      delete activeMap[removed.platform];
+      saveActiveEnvironmentMap(activeMap);
+    }
+  } else if (getActiveEnvironmentId() === id) {
     removeKey(ACTIVE_ENV_KEY);
+    removeKey(LEGACY_ACTIVE_ENV_KEY);
   }
 }
 
-export function getActiveEnvironmentId(): string | null {
-  return readJson<string>(ACTIVE_ENV_KEY);
+export function getActiveEnvironmentId(platform?: AgentPlatform): string | null {
+  const activeMap = loadActiveEnvironmentMap();
+  if (platform) {
+    return activeMap[platform] || null;
+  }
+
+  const legacyId = readJson<string>(LEGACY_ACTIVE_ENV_KEY);
+  if (legacyId) {
+    return legacyId;
+  }
+
+  const preferredPlatform = activeMap.hermes ? "hermes" : "openclaw";
+  return activeMap[preferredPlatform] || null;
 }
 
-export function setActiveEnvironmentId(id: string): void {
-  writeJson(ACTIVE_ENV_KEY, id);
+export function setActiveEnvironmentId(id: string, platform?: AgentPlatform): void {
+  const activeMap = loadActiveEnvironmentMap();
+  const resolvedPlatform = platform || loadEnvironments().find((env) => env.id === id)?.platform;
+  if (!resolvedPlatform) {
+    writeJson(LEGACY_ACTIVE_ENV_KEY, id);
+    return;
+  }
+  activeMap[resolvedPlatform] = id;
+  saveActiveEnvironmentMap(activeMap);
+  writeJson(LEGACY_ACTIVE_ENV_KEY, id);
+}
+
+export function getPreferredEnvironment(platform: AgentPlatform): StoredEnvironment | null {
+  const environments = loadEnvironments()
+    .filter((env) => env.platform === platform)
+    .sort((left, right) => right.lastUsedAt - left.lastUsedAt);
+  if (environments.length === 0) {
+    return null;
+  }
+
+  const activeId = getActiveEnvironmentId(platform);
+  if (activeId) {
+    const active = environments.find((env) => env.id === activeId);
+    if (active) {
+      return active;
+    }
+  }
+
+  return environments[0];
+}
+
+export function getPreferredEnvironmentForType(
+  platform: AgentPlatform,
+  type: "local" | "cloud",
+): StoredEnvironment | null {
+  const environments = loadEnvironments()
+    .filter((env) => env.platform === platform && env.type === type)
+    .sort((left, right) => right.lastUsedAt - left.lastUsedAt);
+  if (environments.length === 0) {
+    return null;
+  }
+
+  const activeId = getActiveEnvironmentId(platform);
+  if (activeId) {
+    const active = environments.find((env) => env.id === activeId);
+    if (active) {
+      return active;
+    }
+  }
+
+  return environments[0];
 }

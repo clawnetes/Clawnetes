@@ -9,7 +9,7 @@ interface StepEnvironmentProps {
 }
 
 export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemoteSystem }: StepEnvironmentProps) {
-  const { state, dispatch } = useWizard();
+  const { state, dispatch, onSwitchTargetEnvironment } = useWizard();
   const {
     targetEnvironment, remoteIp, remoteUser, remotePassword, remotePrivateKeyPath,
     sshStatus, sshError, platform
@@ -26,6 +26,10 @@ export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemo
       <p className="step-description">Where will you be running {platformLabel}?</p>
       <div className="mode-card-container">
         <div className={`mode-card ${targetEnvironment === "local" ? "active" : ""}`} onClick={() => {
+          if (onSwitchTargetEnvironment) {
+            onSwitchTargetEnvironment("local");
+            return;
+          }
           setField("targetEnvironment", "local");
           setField("sshStatus", "idle");
         }}>
@@ -33,6 +37,10 @@ export default function StepEnvironment({ handleSshCheck, checkSystem, checkRemo
           <p>Run {platformLabel} directly on your computer (macOS/Linux/Windows)</p>
         </div>
         <div className={`mode-card ${targetEnvironment === "cloud" ? "active" : ""}`} onClick={() => {
+          if (onSwitchTargetEnvironment) {
+            onSwitchTargetEnvironment("cloud");
+            return;
+          }
           setField("targetEnvironment", "cloud");
         }}>
           <h3>☁️ Cloud Server</h3>
