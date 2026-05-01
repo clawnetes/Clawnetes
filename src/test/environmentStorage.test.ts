@@ -6,6 +6,8 @@ import {
   upsertEnvironment,
   removeEnvironment,
   getActiveEnvironmentId,
+  getPreferredEnvironment,
+  getPreferredEnvironmentForType,
   setActiveEnvironmentId,
 } from "../lib/environmentStorage";
 
@@ -119,9 +121,54 @@ describe("environmentStorage", () => {
     expect(getActiveEnvironmentId()).toBeNull();
   });
 
-  it("setActiveEnvironmentId and getActiveEnvironmentId round-trip", () => {
-    setActiveEnvironmentId("env-123");
-    expect(getActiveEnvironmentId()).toBe("env-123");
+  it("setActiveEnvironmentId and getActiveEnvironmentId round-trip for a saved environment", () => {
+    const env = upsertEnvironment({ type: "local", platform: "openclaw" });
+    setActiveEnvironmentId(env.id, env.platform);
+    expect(getActiveEnvironmentId()).toBe(env.id);
+  });
+
+  it("tracks active environments independently per platform", () => {
+    const openclaw = upsertEnvironment({ type: "local", platform: "openclaw" });
+    const hermes = upsertEnvironment({ type: "local", platform: "hermes" });
+
+    setActiveEnvironmentId(openclaw.id, "openclaw");
+    setActiveEnvironmentId(hermes.id, "hermes");
+
+    expect(getActiveEnvironmentId("openclaw")).toBe(openclaw.id);
+    expect(getActiveEnvironmentId("hermes")).toBe(hermes.id);
+    expect(getActiveEnvironmentId()).toBe(hermes.id);
+  });
+
+  it("returns the platform-specific preferred environment", () => {
+    const openclawLocal = upsertEnvironment({ type: "local", platform: "openclaw" });
+    const hermesRemote = upsertEnvironment({
+      type: "cloud",
+      platform: "hermes",
+      remoteIp: "10.0.0.8",
+      remoteUser: "ubuntu",
+    });
+
+    setActiveEnvironmentId(openclawLocal.id, "openclaw");
+    setActiveEnvironmentId(hermesRemote.id, "hermes");
+
+    expect(getPreferredEnvironment("openclaw")?.id).toBe(openclawLocal.id);
+    expect(getPreferredEnvironment("hermes")?.id).toBe(hermesRemote.id);
+  });
+
+  it("returns the preferred environment for the requested platform and environment type", () => {
+    const openclawLocal = upsertEnvironment({ type: "local", platform: "openclaw" });
+    const openclawCloud = upsertEnvironment({
+      type: "cloud",
+      platform: "openclaw",
+      remoteIp: "10.0.0.12",
+      remoteUser: "ubuntu",
+    });
+
+    setActiveEnvironmentId(openclawCloud.id, "openclaw");
+
+    expect(getPreferredEnvironmentForType("openclaw", "cloud")?.id).toBe(openclawCloud.id);
+    expect(getPreferredEnvironmentForType("openclaw", "local")?.id).toBe(openclawLocal.id);
+    expect(getPreferredEnvironmentForType("hermes", "cloud")).toBeNull();
   });
 
   it("handles corrupt localStorage data gracefully", () => {

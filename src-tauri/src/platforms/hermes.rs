@@ -366,6 +366,62 @@ fn update_env_contents(existing: &str, updates: &[(&str, String)]) -> String {
     rendered
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct HermesClawnetesMeta {
+    version: u8,
+    #[serde(default)]
+    provider_auths: HashMap<String, crate::types::ProviderAuthData>,
+}
+
+fn sanitize_provider_auths_for_meta(
+    provider_auths: &HashMap<String, crate::types::ProviderAuthData>,
+) -> HashMap<String, crate::types::ProviderAuthData> {
+    provider_auths
+        .iter()
+        .map(|(provider, auth)| {
+            let mut sanitized = auth.clone();
+            sanitized.token.clear();
+            (provider.clone(), sanitized)
+        })
+        .collect()
+}
+
+fn build_hermes_provider_auths(
+    config: &AgentConfig,
+) -> HashMap<String, crate::types::ProviderAuthData> {
+    let mut provider_auths = config.provider_auths.clone().unwrap_or_default();
+    provider_auths
+        .entry(config.provider.clone())
+        .or_insert(crate::types::ProviderAuthData {
+            auth_method: config
+                .auth_method
+                .clone()
+                .unwrap_or_else(|| "token".to_string()),
+            token: String::new(),
+            profile_key: None,
+            profile: None,
+            oauth_provider_id: None,
+        });
+    sanitize_provider_auths_for_meta(&provider_auths)
+}
+
+fn serialize_hermes_meta(config: &AgentConfig) -> Result<String, ClawError> {
+    serde_json::to_string_pretty(&HermesClawnetesMeta {
+        version: 1,
+        provider_auths: build_hermes_provider_auths(config),
+    })
+    .map_err(|error| {
+        ClawError::System(format!(
+            "Failed to serialize Hermes Clawnetes metadata: {}",
+            error
+        ))
+    })
+}
+
+fn parse_hermes_meta(contents: &str) -> HermesClawnetesMeta {
+    serde_json::from_str(contents).unwrap_or_default()
+}
+
 fn build_structured_hermes_files(
     config: &AgentConfig,
     existing_yaml: &str,
@@ -403,6 +459,10 @@ fn build_structured_hermes_files(
     } else {
         remove_yaml_path(&mut root, &["model", "base_url"]);
     }
+    
+    // Always remove legacy YAML-based credentials in favor of .env
+    remove_yaml_path(&mut root, &["model", "api_key"]);
+    remove_yaml_path(&mut root, &["model", "api"]);
 
     if let Some(backend) = config
         .hermes_terminal_backend
@@ -600,6 +660,8 @@ fn configure_with<E: CommandExecutor>(
         build_structured_hermes_files(config, &existing_yaml, &existing_env)?;
     write_hermes_file(executor, &home, "config.yaml", &rendered_yaml)?;
     write_hermes_file(executor, &home, ".env", &rendered_env)?;
+    let rendered_meta = serialize_hermes_meta(config)?;
+    write_hermes_file(executor, &home, "clawnetes-meta.json", &rendered_meta)?;
 
     Ok("Hermes Agent configured successfully.".to_string())
 }
@@ -616,7 +678,13 @@ fn get_config_with<E: CommandExecutor>(executor: &E) -> Result<CurrentConfig, Cl
         &home,
         "cat \"$HERMES_HOME/.env\" 2>/dev/null || true",
     )?;
+    let meta_str = hermes_run(
+        executor,
+        &home,
+        "cat \"$HERMES_HOME/clawnetes-meta.json\" 2>/dev/null || true",
+    )?;
     let env = parse_dotenv(&env_str);
+    let meta = parse_hermes_meta(&meta_str);
     let yaml =
         serde_yaml::from_str::<YamlValue>(&yaml_str).unwrap_or(YamlValue::Mapping(Mapping::new()));
     let root = yaml.as_mapping().cloned().unwrap_or_default();
@@ -671,6 +739,18 @@ fn get_config_with<E: CommandExecutor>(executor: &E) -> Result<CurrentConfig, Cl
     let api_key = provider_api_key_env(&provider)
         .and_then(|env_key| env.get(env_key).cloned())
         .unwrap_or_default();
+    let mut provider_auths = meta.provider_auths;
+    let current_provider_auth = provider_auths
+        .entry(provider.clone())
+        .or_insert(crate::types::ProviderAuthData {
+            auth_method: "token".to_string(),
+            token: String::new(),
+            profile_key: None,
+            profile: None,
+            oauth_provider_id: None,
+        });
+    current_provider_auth.token = api_key.clone();
+    let auth_method = current_provider_auth.auth_method.clone();
 
     let gateway_port = env
         .get("API_SERVER_PORT")
@@ -709,7 +789,7 @@ fn get_config_with<E: CommandExecutor>(executor: &E) -> Result<CurrentConfig, Cl
         platform: "hermes".to_string(),
         provider,
         api_key,
-        auth_method: "token".to_string(),
+        auth_method,
         model,
         user_name: "".to_string(),
         agent_name: "Hermes Agent".to_string(),
@@ -724,7 +804,7 @@ fn get_config_with<E: CommandExecutor>(executor: &E) -> Result<CurrentConfig, Cl
         node_manager: "pip".to_string(),
         skills: vec![],
         service_keys: HashMap::new(),
-        provider_auths: HashMap::new(),
+        provider_auths,
         sandbox_mode: "none".to_string(),
         tools_mode: "all".to_string(),
         tools_profile: None,
@@ -767,8 +847,6 @@ fn get_config_with<E: CommandExecutor>(executor: &E) -> Result<CurrentConfig, Cl
         hermes_raw_env: Some(env_str),
     })
 }
-
-use std::net::TcpStream;
 
 fn prepare_chat_bootstrap_with<E: CommandExecutor>(
     executor: &E,
@@ -1131,11 +1209,13 @@ mod tests {
     fn get_config_reads_api_server_and_tokens() {
         let yaml_cmd = "export HERMES_HOME='/tmp/test-home/.hermes'; cat \"$HERMES_HOME/config.yaml\" 2>/dev/null || true".to_string();
         let env_cmd = "export HERMES_HOME='/tmp/test-home/.hermes'; cat \"$HERMES_HOME/.env\" 2>/dev/null || true".to_string();
+        let meta_cmd = "export HERMES_HOME='/tmp/test-home/.hermes'; cat \"$HERMES_HOME/clawnetes-meta.json\" 2>/dev/null || true".to_string();
         let executor = FakeExecutor {
             success_commands: std::collections::HashSet::new(),
             files: HashMap::from([
                 (yaml_cmd, "model:\n  provider: anthropic\n  default: claude-sonnet-4\nAPI_SERVER_PORT: 9999\nAPI_SERVER_HOST: 0.0.0.0\n".to_string()),
                 (env_cmd, "ANTHROPIC_API_KEY=sk-ant\nTELEGRAM_BOT_TOKEN=bot\nAPI_SERVER_KEY=secret\n".to_string()),
+                (meta_cmd, String::new()),
             ]),
         };
 
@@ -1145,6 +1225,59 @@ mod tests {
         assert_eq!(current.gateway_port, 9999);
         assert_eq!(current.telegram_token, "bot");
         assert_eq!(current.api_key, "sk-ant");
+    }
+
+    #[test]
+    fn get_config_reads_provider_auth_metadata() {
+        let yaml_cmd = "export HERMES_HOME='/tmp/test-home/.hermes'; cat \"$HERMES_HOME/config.yaml\" 2>/dev/null || true".to_string();
+        let env_cmd = "export HERMES_HOME='/tmp/test-home/.hermes'; cat \"$HERMES_HOME/.env\" 2>/dev/null || true".to_string();
+        let meta_cmd = "export HERMES_HOME='/tmp/test-home/.hermes'; cat \"$HERMES_HOME/clawnetes-meta.json\" 2>/dev/null || true".to_string();
+        let executor = FakeExecutor {
+            success_commands: std::collections::HashSet::new(),
+            files: HashMap::from([
+                (
+                    yaml_cmd,
+                    "model:\n  provider: openai\n  default: gpt-5.4\n".to_string(),
+                ),
+                (env_cmd, "API_SERVER_KEY=secret\n".to_string()),
+                (
+                    meta_cmd,
+                    serde_json::json!({
+                        "version": 1,
+                        "provider_auths": {
+                            "openai": {
+                                "auth_method": "openai-codex",
+                                "token": "",
+                                "profile_key": "openai-codex:default",
+                                "profile": {
+                                    "type": "oauth",
+                                    "provider": "openai-codex"
+                                },
+                                "oauth_provider_id": "openai-codex"
+                            }
+                        }
+                    })
+                    .to_string(),
+                ),
+            ]),
+        };
+
+        let current = get_config_with(&executor).expect("config should load");
+        assert_eq!(current.auth_method, "openai-codex");
+        assert_eq!(
+            current
+                .provider_auths
+                .get("openai")
+                .and_then(|auth| auth.profile_key.as_deref()),
+            Some("openai-codex:default")
+        );
+        assert_eq!(
+            current
+                .provider_auths
+                .get("openai")
+                .and_then(|auth| auth.oauth_provider_id.as_deref()),
+            Some("openai-codex")
+        );
     }
 
     #[test]
@@ -1184,6 +1317,31 @@ mod tests {
             remote_bootstrap.api_base_url.as_deref(),
             Some("http://127.0.0.1:28789/v1")
         );
+    }
+
+    #[test]
+    fn structured_write_removes_stale_model_credentials_and_blank_base_url() {
+        let mut config = sample_agent_config();
+        config.hermes_model_base_url = Some("   ".to_string()); // Blank value
+
+        let existing_yaml = "model:\n  provider: google\n  api_key: stale-key\n  api: old-api\n  base_url: old-url\n";
+        let existing_env = "";
+
+        let (rendered_yaml, _rendered_env) =
+            build_structured_hermes_files(&config, existing_yaml, existing_env)
+                .expect("structured write should succeed");
+
+        let parsed_yaml =
+            serde_yaml::from_str::<YamlValue>(&rendered_yaml).expect("yaml should stay valid");
+        let root = parsed_yaml
+            .as_mapping()
+            .expect("yaml root should be a mapping");
+        let model = get_mapping(root, "model").expect("model mapping should exist");
+
+        // Stale keys should be removed
+        assert!(model.get(YamlValue::String("api_key".to_string())).is_none());
+        assert!(model.get(YamlValue::String("api".to_string())).is_none());
+        assert!(model.get(YamlValue::String("base_url".to_string())).is_none());
     }
 
     #[test]
@@ -1259,9 +1417,42 @@ mod tests {
     }
 
     #[test]
+    fn serialize_hermes_meta_strips_tokens_but_keeps_oauth_metadata() {
+        let config = AgentConfig {
+            provider_auths: Some(HashMap::from([(
+                "openai".to_string(),
+                crate::types::ProviderAuthData {
+                    auth_method: "openai-codex".to_string(),
+                    token: "sk-secret".to_string(),
+                    profile_key: Some("openai-codex:default".to_string()),
+                    profile: Some(serde_json::json!({
+                        "type": "oauth",
+                        "provider": "openai-codex"
+                    })),
+                    oauth_provider_id: Some("openai-codex".to_string()),
+                },
+            )])),
+            ..sample_agent_config()
+        };
+
+        let rendered = serialize_hermes_meta(&config).expect("metadata should serialize");
+        let parsed = parse_hermes_meta(&rendered);
+        let openai = parsed
+            .provider_auths
+            .get("openai")
+            .expect("openai auth should persist");
+
+        assert_eq!(openai.token, "");
+        assert_eq!(openai.auth_method, "openai-codex");
+        assert_eq!(openai.profile_key.as_deref(), Some("openai-codex:default"));
+        assert_eq!(openai.oauth_provider_id.as_deref(), Some("openai-codex"));
+    }
+
+    #[test]
     fn get_config_maps_gemini_provider_back_to_ui_google() {
         let yaml_cmd = "export HERMES_HOME='/tmp/test-home/.hermes'; cat \"$HERMES_HOME/config.yaml\" 2>/dev/null || true".to_string();
         let env_cmd = "export HERMES_HOME='/tmp/test-home/.hermes'; cat \"$HERMES_HOME/.env\" 2>/dev/null || true".to_string();
+        let meta_cmd = "export HERMES_HOME='/tmp/test-home/.hermes'; cat \"$HERMES_HOME/clawnetes-meta.json\" 2>/dev/null || true".to_string();
         let executor = FakeExecutor {
             success_commands: std::collections::HashSet::new(),
             files: HashMap::from([
@@ -1270,6 +1461,7 @@ mod tests {
                     "model:\n  provider: gemini\n  default: gemini-3.1-pro-preview\n".to_string(),
                 ),
                 (env_cmd, "GEMINI_API_KEY=gemini-secret\n".to_string()),
+                (meta_cmd, "".to_string()),
             ]),
         };
 

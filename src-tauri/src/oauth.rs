@@ -1119,13 +1119,13 @@ pub fn create_local_terminal_artifacts(
     fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to prepare temp auth dir: {}", e))?;
 
     let suffix = rand::thread_rng().gen::<u64>();
-    let marker_path = temp_dir.join(format!("openclaw-auth-{}.exit", suffix));
+    let marker_path = temp_dir.join(format!("clawnetes-auth-{}.exit", suffix));
     let extension = if matches!(platform, TerminalPlatform::Macos) {
         "command"
     } else {
         "sh"
     };
-    let script_path = temp_dir.join(format!("openclaw-auth-{}.{}", suffix, extension));
+    let script_path = temp_dir.join(format!("clawnetes-auth-{}.{}", suffix, extension));
     let script = build_unix_terminal_script(platform, command, &marker_path.to_string_lossy());
     fs::write(&script_path, script)
         .map_err(|e| format!("Failed to write temp auth script: {}", e))?;
@@ -1156,14 +1156,14 @@ pub fn wait_for_local_marker(marker_path: &Path, timeout: Duration) -> Result<()
             }
             if exit_code == 127 {
                 return Err(
-                    "OpenClaw auth exited with status 127. OpenClaw CLI was not found in the launched shell. Make sure your shell startup files add OpenClaw to PATH."
+                    "Authentication flow exited with status 127. The required CLI was not found in the launched shell. Make sure the target CLI is on PATH."
                         .to_string(),
                 );
             }
-            return Err(format!("OpenClaw auth exited with status {}.", exit_code));
+            return Err(format!("Authentication flow exited with status {}.", exit_code));
         }
         if started.elapsed() > timeout {
-            return Err("Timed out waiting for the OpenClaw auth terminal to finish.".to_string());
+            return Err("Timed out waiting for the authentication terminal to finish.".to_string());
         }
         thread::sleep(Duration::from_millis(500));
     }
@@ -1182,14 +1182,14 @@ pub fn wait_for_wsl_marker(marker_path: &str, timeout: Duration) -> Result<(), S
             }
             if exit_code == 127 {
                 return Err(
-                    "OpenClaw auth exited with status 127. OpenClaw CLI was not found in the launched shell. Make sure your shell startup files add OpenClaw to PATH."
+                    "Authentication flow exited with status 127. The required CLI was not found in the launched shell. Make sure the target CLI is on PATH."
                         .to_string(),
                 );
             }
-            return Err(format!("OpenClaw auth exited with status {}.", exit_code));
+            return Err(format!("Authentication flow exited with status {}.", exit_code));
         }
         if started.elapsed() > timeout {
-            return Err("Timed out waiting for the OpenClaw auth terminal to finish.".to_string());
+            return Err("Timed out waiting for the authentication terminal to finish.".to_string());
         }
         thread::sleep(Duration::from_millis(500));
     }
@@ -1249,7 +1249,7 @@ pub fn launch_provider_auth_terminal(command: &str) -> Result<(), String> {
     if !launched {
         let _ = fs::remove_file(&script_path);
         return Err(last_error.unwrap_or_else(|| {
-            "No supported terminal emulator was found for OpenClaw auth.".to_string()
+            "No supported terminal emulator was found for the authentication flow.".to_string()
         }));
     }
 
@@ -1265,7 +1265,7 @@ pub fn launch_provider_auth_terminal(command: &str) -> Result<(), String> {
     let marker_dir = format!("{}/.openclaw/tmp", home);
     wsl_mkdir_p(&marker_dir)?;
     let marker_path = format!(
-        "{}/openclaw-auth-{}.exit",
+        "{}/clawnetes-auth-{}.exit",
         marker_dir,
         rand::thread_rng().gen::<u64>()
     );
@@ -1285,7 +1285,7 @@ pub fn launch_provider_auth_terminal(command: &str) -> Result<(), String> {
 
     if !launched {
         return Err(last_error.unwrap_or_else(|| {
-            "No supported Windows terminal launcher was found for OpenClaw auth.".to_string()
+            "No supported Windows terminal launcher was found for the authentication flow.".to_string()
         }));
     }
 
@@ -1617,8 +1617,8 @@ mod tests {
             std::env::temp_dir().join(format!("clawnetes-oauth-marker-{}", uuid::Uuid::new_v4()));
         fs::write(&marker_path, "127").expect("write marker");
         let err = wait_for_local_marker(&marker_path, Duration::from_secs(1)).unwrap_err();
-        assert!(err.contains("OpenClaw auth exited with status 127."));
-        assert!(err.contains("OpenClaw CLI was not found"));
+        assert!(err.contains("Authentication flow exited with status 127."));
+        assert!(err.contains("required CLI was not found"));
     }
 
     #[test]

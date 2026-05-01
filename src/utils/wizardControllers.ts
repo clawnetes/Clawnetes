@@ -617,6 +617,7 @@ export interface ConfigLoaderController {
   setHermesApiServerCorsOrigins: Setter<string>;
   setHermesRawConfigYaml: Setter<string>;
   setHermesRawEnv: Setter<string>;
+  shouldApply?: () => boolean;
 }
 
 export async function loadExistingConfig(controller: ConfigLoaderController): Promise<boolean> {
@@ -628,10 +629,15 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
     const config: any = controller.state.platform === "hermes"
       ? await invoke("get_platform_config", { platform: "hermes", remote: remoteConfig })
       : await invoke("get_current_config", { remote: remoteConfig });
+    if (controller.shouldApply && !controller.shouldApply()) {
+      return false;
+    }
     console.log("Loaded existing config:", config);
     if (!config || typeof config !== "object") {
       controller.initialConfigRef.current = null;
-      controller.setMaintenanceStatus("No existing configuration found.");
+      if (!controller.shouldApply || controller.shouldApply()) {
+        controller.setMaintenanceStatus("No existing configuration found.");
+      }
       return false;
     }
 
@@ -646,13 +652,14 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
       normalizedProvider,
       config.api_key || "",
       config.auth_method || "token",
+      controller.state.platform,
     );
 
     controller.setProvider(normalizedProvider);
     controller.setApiKey(normalizedProviderAuths[normalizedProvider]?.token || config.api_key);
     controller.setAuthMethod(normalizedProviderAuths[normalizedProvider]?.auth_method || config.auth_method);
     controller.setProviderAuths(normalizedProviderAuths);
-    controller.setModel(normalizeModelRefForUi(config.model, normalizedProviderAuths));
+    controller.setModel(normalizeModelRefForUi(config.model, normalizedProviderAuths, controller.state.platform));
     controller.setUserName(config.user_name);
     controller.setAgentName(config.agent_name);
     controller.setAgentEmoji(config.agent_emoji || "🦞");
@@ -678,7 +685,7 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
     controller.setSandboxMode(toUiSandboxMode(config.sandbox_mode));
     controller.setToolPolicy(controller.getLoadedTopLevelToolPolicy(config));
     controller.setFallbackModels(
-      fallbackModelRefs.map((modelRef: string) => normalizeModelRefForUi(modelRef, normalizedProviderAuths)),
+      fallbackModelRefs.map((modelRef: string) => normalizeModelRefForUi(modelRef, normalizedProviderAuths, controller.state.platform)),
     );
     controller.setEnableFallbacks(fallbackModelRefs.length > 0);
     controller.setHeartbeatMode(config.heartbeat_mode);
@@ -745,9 +752,9 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
           return {
             id: agent.id,
             name: agent.name,
-            model: normalizeModelRefForUi(agent.model, normalizedProviderAuths),
+            model: normalizeModelRefForUi(agent.model, normalizedProviderAuths, controller.state.platform),
             fallbackModels: (agent.fallback_models || []).map((modelRef: string) =>
-              normalizeModelRefForUi(modelRef, normalizedProviderAuths),
+              normalizeModelRefForUi(modelRef, normalizedProviderAuths, controller.state.platform),
             ),
             skills: normalizedAgentSelection.skills,
             vibe: agent.vibe,
@@ -771,11 +778,18 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
     }
 
     try {
-      if (controller.state.platform !== "hermes" && loadedMessagingChannel !== "none") {
+      if (
+        controller.state.platform !== "hermes"
+        && loadedMessagingChannel !== "none"
+        && (!controller.shouldApply || controller.shouldApply())
+      ) {
         const linked: boolean = await invoke("check_messaging_link_status", {
           channel: loadedMessagingChannel,
           remote: remoteConfig,
         });
+        if (controller.shouldApply && !controller.shouldApply()) {
+          return false;
+        }
         if (loadedMessagingChannel === "telegram") {
           controller.setIsPaired(linked);
         } else if (loadedMessagingChannel === "whatsapp") {
@@ -787,15 +801,23 @@ export async function loadExistingConfig(controller: ConfigLoaderController): Pr
       console.warn("Failed to refresh messaging link state:", error);
     }
 
+    if (controller.shouldApply && !controller.shouldApply()) {
+      return false;
+    }
+
     controller.setMaintenanceStatus("✅ Configuration loaded.");
     controller.setMode("advanced");
     return true;
   } catch (error) {
     console.error("Failed to load config:", error);
-    controller.setMaintenanceStatus(`❌ Failed to load config: ${error}`);
+    if (!controller.shouldApply || controller.shouldApply()) {
+      controller.setMaintenanceStatus(`❌ Failed to load config: ${error}`);
+    }
     return false;
   } finally {
-    controller.setLoading(false);
+    if (!controller.shouldApply || controller.shouldApply()) {
+      controller.setLoading(false);
+    }
   }
 }
 

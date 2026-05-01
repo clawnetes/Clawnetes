@@ -29,6 +29,16 @@ vi.mock("../lib/tauri", () => ({
 import App from "../App";
 import { invoke } from "../lib/tauri";
 import { INITIAL_WIZARD_STATE, wizardReducer } from "../hooks/useWizardState";
+import { setActiveEnvironmentId, upsertEnvironment } from "../lib/environmentStorage";
+
+beforeEach(() => {
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: window.localStorage,
+  });
+  localStorage.clear();
+  vi.mocked(invoke).mockClear();
+});
 
 async function navigateToConnectBrain() {
   const user = userEvent.setup();
@@ -169,6 +179,86 @@ describe("Wizard Step List", () => {
 
     expect(screen.getByTestId("input-remote-ip")).toHaveValue("");
     expect(screen.getByTestId("input-remote-user")).toHaveValue("");
+  });
+
+  it("restores the preferred environment for the selected platform in setup", async () => {
+    const hermesCloud = upsertEnvironment({
+      type: "cloud",
+      platform: "hermes",
+      remoteIp: "10.0.0.44",
+      remoteUser: "hermes-user",
+    });
+    setActiveEnvironmentId(hermesCloud.id, "hermes");
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Start Setup")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("Start Setup"));
+    await waitFor(() => {
+      expect(screen.getByText("Agent Platform")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("platform-card-hermes"));
+    await waitFor(() => {
+      expect(screen.getByTestId("platform-card-hermes")).toHaveClass("active");
+    });
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("input-remote-ip")).toHaveValue("10.0.0.44");
+    });
+    expect(screen.getByTestId("input-remote-ip")).toHaveValue("10.0.0.44");
+    expect(screen.getByTestId("input-remote-user")).toHaveValue("hermes-user");
+  });
+
+  it("restores the preferred cloud environment when switching between local and cloud in setup", async () => {
+    const openclawCloud = upsertEnvironment({
+      type: "cloud",
+      platform: "openclaw",
+      remoteIp: "10.0.0.55",
+      remoteUser: "deploy",
+    });
+    setActiveEnvironmentId(openclawCloud.id, "openclaw");
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Start Setup")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("Start Setup"));
+    await waitFor(() => {
+      expect(screen.getByText("Agent Platform")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Target Environment")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("☁️ Cloud Server"));
+    await waitFor(() => {
+      expect(screen.getByTestId("input-remote-ip")).toHaveValue("10.0.0.55");
+    });
+    expect(screen.getByTestId("input-remote-user")).toHaveValue("deploy");
+
+    await user.clear(screen.getByTestId("input-remote-ip"));
+    await user.type(screen.getByTestId("input-remote-ip"), "10.9.9.9");
+    expect(screen.getByTestId("input-remote-ip")).toHaveValue("10.9.9.9");
+
+    await user.click(screen.getByText("💻 Local Machine"));
+    expect(screen.queryByTestId("input-remote-ip")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("☁️ Cloud Server"));
+    await waitFor(() => {
+      expect(screen.getByTestId("input-remote-ip")).toHaveValue("10.0.0.55");
+    });
+    expect(screen.getByTestId("input-remote-user")).toHaveValue("deploy");
   });
 });
 
@@ -446,6 +536,56 @@ describe("Platform state", () => {
       expect(screen.getByTestId("step-hermes-review")).toBeInTheDocument();
       expect(screen.getByText("Finalizing Hermes Installation")).toBeInTheDocument();
     });
+  });
+
+  it("clears the Hermes Model Base URL when the provider is changed", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText("Start Setup")).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Start Setup"));
+    await waitFor(() => {
+      expect(screen.getByTestId("platform-card-openclaw")).toBeInTheDocument();
+      expect(screen.getByText("Agent Platform")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("platform-card-hermes"));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("Target Environment")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("System Check")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("Security Baseline")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "I Understand" }));
+    await waitFor(() => {
+      expect(screen.getByText("Hermes Configuration")).toBeInTheDocument();
+    });
+
+    const baseUrlInput = screen.getByLabelText("Model Base URL");
+    await user.type(baseUrlInput, "http://127.0.0.1:8001/v1");
+    expect(baseUrlInput).toHaveValue("http://127.0.0.1:8001/v1");
+
+    const providerDropdown = screen.getByTestId("dropdown-hermes-provider");
+    const triggerBtn = providerDropdown.querySelector('button');
+    if (triggerBtn) await user.click(triggerBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("Google Gemini")).toBeInTheDocument();
+    });
+    const geminiOption = screen.getByText("Google Gemini");
+    await user.click(geminiOption);
+
+    expect(baseUrlInput).toHaveValue("");
   });
 });
 

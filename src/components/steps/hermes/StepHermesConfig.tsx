@@ -44,10 +44,13 @@ export default function StepHermesConfig({
           testId="dropdown-hermes-provider"
           value={provider}
           onChange={(nextProvider) => {
-            setField("provider", nextProvider);
-            const defaultModel = getProviderDefaultModel(nextProvider);
-            if (defaultModel) {
-              setField("model", defaultModel);
+            if (nextProvider !== provider) {
+              setField("provider", nextProvider);
+              setField("hermesModelBaseUrl", "");
+              const defaultModel = getProviderDefaultModel(nextProvider);
+              if (defaultModel) {
+                setField("model", defaultModel);
+              }
             }
           }}
           options={Object.keys(MODELS_BY_PROVIDER).map((providerId) => ({

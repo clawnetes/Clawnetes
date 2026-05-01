@@ -299,6 +299,26 @@ describe("ModelSwitcherPanel", () => {
     expect(onModelChange).not.toHaveBeenCalled();
   });
 
+  it("does not show unsupported Google OAuth options for Hermes", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ModelSwitcherPanel
+        currentModel="anthropic/claude-opus-4-6"
+        fallbackModels={[]}
+        onModelChange={vi.fn()}
+        providerAuths={{}}
+        platform="hermes"
+      />,
+    );
+
+    await user.click(screen.getByTestId("provider-dropdown").querySelector("button")!);
+    await user.click(screen.getByTestId("dropdown-option-google"));
+
+    expect(screen.queryByTestId("auth-method-google-gemini-cli")).not.toBeInTheDocument();
+    expect(screen.getByTestId("auth-token-input")).toBeInTheDocument();
+  });
+
   it("waits for provider auth persistence before saving a Gemini model", async () => {
     const user = userEvent.setup();
     const order: string[] = [];
