@@ -442,7 +442,7 @@ function App() {
     remoteUser: input.targetEnvironment === "cloud" ? input.env?.remoteUser || "" : "",
     remotePassword: input.targetEnvironment === "cloud" ? input.env?.remotePassword || "" : "",
     remotePrivateKeyPath: input.targetEnvironment === "cloud" ? input.env?.remotePrivateKeyPath || "" : "",
-    sshStatus: "idle",
+    sshStatus: "idle" as const,
     sshError: "",
     tunnelActive: false,
     userName: INITIAL_WIZARD_STATE.userName,
@@ -2103,9 +2103,10 @@ Managed by Clawnetes.`,
       console.error(`Rejected unsupported Hermes model provider: ${nextProvider}`);
       return;
     }
-    
+
     let nextApiKey = configPayloadRef.current.apiKey;
     let nextAuthMethod = configPayloadRef.current.authMethod;
+    let nextHermesModelBaseUrl = configPayloadRef.current.hermesModelBaseUrl;
 
     const isMain = !activeAgentId || activeAgentId === "main" || platform === "hermes";
 
@@ -2121,6 +2122,11 @@ Managed by Clawnetes.`,
       nextApiKey = nextAuth.token;
       nextAuthMethod = nextAuth.auth_method;
 
+      if (platform === "hermes" && nextProvider !== configPayloadRef.current.provider) {
+        nextHermesModelBaseUrl = "";
+        setHermesModelBaseUrl("");
+      }
+
       setProvider(nextProvider);
       setModel(newModel);
       setApiKey(nextApiKey);
@@ -2134,13 +2140,14 @@ Managed by Clawnetes.`,
         model: isMain ? newModel : configPayloadRef.current.model,
         apiKey: isMain ? nextApiKey : configPayloadRef.current.apiKey,
         authMethod: isMain ? nextAuthMethod : configPayloadRef.current.authMethod,
+        ...(platform === "hermes" && isMain ? { hermesModelBaseUrl: nextHermesModelBaseUrl } : {})
       });
       await saveUpdatedConfig(payload);
       await restartGatewayAfterPanelUpdate();
     } catch (e) {
       console.error("Failed to update model:", e);
     }
-  }, [activeAgentId, chatConfigLoading, platform, restartGatewayAfterPanelUpdate, setAgentConfigs, setModel, setProvider, setApiKey, setAuthMethod, targetEnvironment, buildActiveRemoteConfig, saveUpdatedConfig]);
+  }, [activeAgentId, chatConfigLoading, platform, restartGatewayAfterPanelUpdate, setAgentConfigs, setModel, setProvider, setApiKey, setAuthMethod, setHermesModelBaseUrl, targetEnvironment, buildActiveRemoteConfig, saveUpdatedConfig]);
 
   const handlePanelFallbacksChange = useCallback(async (newFallbacks: string[]) => {
     if (chatConfigLoading) return;

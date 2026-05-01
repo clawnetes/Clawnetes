@@ -459,6 +459,10 @@ fn build_structured_hermes_files(
     } else {
         remove_yaml_path(&mut root, &["model", "base_url"]);
     }
+    
+    // Always remove legacy YAML-based credentials in favor of .env
+    remove_yaml_path(&mut root, &["model", "api_key"]);
+    remove_yaml_path(&mut root, &["model", "api"]);
 
     if let Some(backend) = config
         .hermes_terminal_backend
@@ -1313,6 +1317,31 @@ mod tests {
             remote_bootstrap.api_base_url.as_deref(),
             Some("http://127.0.0.1:28789/v1")
         );
+    }
+
+    #[test]
+    fn structured_write_removes_stale_model_credentials_and_blank_base_url() {
+        let mut config = sample_agent_config();
+        config.hermes_model_base_url = Some("   ".to_string()); // Blank value
+
+        let existing_yaml = "model:\n  provider: google\n  api_key: stale-key\n  api: old-api\n  base_url: old-url\n";
+        let existing_env = "";
+
+        let (rendered_yaml, _rendered_env) =
+            build_structured_hermes_files(&config, existing_yaml, existing_env)
+                .expect("structured write should succeed");
+
+        let parsed_yaml =
+            serde_yaml::from_str::<YamlValue>(&rendered_yaml).expect("yaml should stay valid");
+        let root = parsed_yaml
+            .as_mapping()
+            .expect("yaml root should be a mapping");
+        let model = get_mapping(root, "model").expect("model mapping should exist");
+
+        // Stale keys should be removed
+        assert!(model.get(YamlValue::String("api_key".to_string())).is_none());
+        assert!(model.get(YamlValue::String("api".to_string())).is_none());
+        assert!(model.get(YamlValue::String("base_url".to_string())).is_none());
     }
 
     #[test]

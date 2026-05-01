@@ -537,6 +537,56 @@ describe("Platform state", () => {
       expect(screen.getByText("Finalizing Hermes Installation")).toBeInTheDocument();
     });
   });
+
+  it("clears the Hermes Model Base URL when the provider is changed", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText("Start Setup")).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Start Setup"));
+    await waitFor(() => {
+      expect(screen.getByTestId("platform-card-openclaw")).toBeInTheDocument();
+      expect(screen.getByText("Agent Platform")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("platform-card-hermes"));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("Target Environment")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("System Check")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText("Security Baseline")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "I Understand" }));
+    await waitFor(() => {
+      expect(screen.getByText("Hermes Configuration")).toBeInTheDocument();
+    });
+
+    const baseUrlInput = screen.getByLabelText("Model Base URL");
+    await user.type(baseUrlInput, "http://127.0.0.1:8001/v1");
+    expect(baseUrlInput).toHaveValue("http://127.0.0.1:8001/v1");
+
+    const providerDropdown = screen.getByTestId("dropdown-hermes-provider");
+    const triggerBtn = providerDropdown.querySelector('button');
+    if (triggerBtn) await user.click(triggerBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("Google Gemini")).toBeInTheDocument();
+    });
+    const geminiOption = screen.getByText("Google Gemini");
+    await user.click(geminiOption);
+
+    expect(baseUrlInput).toHaveValue("");
+  });
 });
 
 describe("BusinessFunctionId includes custom-team", () => {
